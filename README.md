@@ -323,24 +323,25 @@ Session activity is also written in JSON-lines format to `dark_nexus_YYYYMMDD.lo
 
 ---
 
-## Requirements
+## Requirements and Installation
 
 - Linux (Kali recommended)
 - `g++` with C++17 support
 - `curl` `whois` `dig` `traceroute` `openssl` `ping`
 
+---
+ 
 ```bash
 sudo apt update
+
 sudo apt install build-essential g++ libssl-dev curl whois dnsutils traceroute iputils-ping -y
 
----
-
-## Installation
-
-```bash
 git clone https://github.com/fkmrshl/dark-nexus.git
+
 cd dark-nexus
+
 g++ -std=c++17 -O3 -march=native -flto=auto -pthread dark_nexus.cpp -o dark_nexus -lssl -lcrypto
+
 sudo ./dark_nexus
 ```
 
