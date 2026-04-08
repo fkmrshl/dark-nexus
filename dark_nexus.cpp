@@ -1740,7 +1740,7 @@ static void osint_scan(const std::string& username){
 // ================================================================
 //  9. TRACEROUTE 
 // ================================================================
-// All tuneable parameters live here — change these instead of
+// All tuneable parameters live here - change these instead of
 // hunting through the code if you need to adjust behavior.
 struct TraceConfig {
     std::string target;
@@ -1759,7 +1759,7 @@ struct TraceConfig {
 };
  
 // Holds the raw result of a single packet sent to one hop.
-// rtt_ms < 0 means the probe timed out — no response came back.
+// rtt_ms < 0 means the probe timed out - no response came back.
 struct ProbeResult {
     int ttl              = 0;
     int probe_id         = 0;
@@ -1774,7 +1774,7 @@ struct ProbeResult {
 };
  
 // Aggregated statistics for a single hop after all probes are done.
-// compute() does the math — call it once after filling rtts[].
+// compute() does the math - call it once after filling rtts[].
 struct HopStats {
     int ttl = 0;
     std::string addr;
@@ -1809,7 +1809,7 @@ struct HopStats {
     }
 };
  
-// Core engine — owns no state between runs, fully reentrant.
+// Core engine - owns no state between runs, fully reentrant.
 // Each TracerouteEngine instance is tied to one config + one thread pool.
 class TracerouteEngine {
 public:
@@ -1843,7 +1843,7 @@ public:
         return true;
     }
  
-    // PTR record lookup — best effort, returns empty string on failure.
+    // PTR record lookup - best effort, returns empty string on failure.
     // We don't cache results; callers should avoid calling this in a tight loop.
     static std::string reverse_dns(const std::string& ip) {
         struct sockaddr_in sa{};
@@ -1884,7 +1884,7 @@ public:
         close(fds[0]);
         int st; waitpid(pid, &st, 0);
         std::string result(buf);
-        // dig wraps TXT records in quotes — strip them
+        // dig wraps TXT records in quotes - strip them
         result.erase(std::remove(result.begin(), result.end(), '"'), result.end());
         while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
             result.pop_back();
@@ -1903,7 +1903,7 @@ public:
         return "";
     }
  
-    // ICMP Echo probe — the classic traceroute method. Works against
+    // ICMP Echo probe - the classic traceroute method. Works against
     // virtually every host but is frequently rate-limited by routers.
     // We send one echo request and wait for either TTL-exceeded or
     // echo-reply. Up to 3 receive attempts to filter out unrelated traffic.
@@ -1928,7 +1928,7 @@ public:
         dest.sin_family = AF_INET;
         inet_pton(AF_INET, target_ip.c_str(), &dest.sin_addr);
  
-        // Build the echo request — sequence encodes TTL+probe so we
+        // Build the echo request - sequence encodes TTL+probe so we
         // can match replies even when probes are running in parallel
         struct { struct icmphdr hdr; char data[56]; } packet{};
         packet.hdr.type             = ICMP_ECHO;
@@ -1975,7 +1975,7 @@ public:
                 pr.reply_ttl = ip_hdr->ttl;
                 break;
             }
-            // Got an echo reply — we reached the destination
+            // Got an echo reply - we reached the destination
             if (icmp_reply->type == ICMP_ECHOREPLY) {
                 uint16_t recv_id = ntohs(icmp_reply->un.echo.id);
                 if (recv_id == (uint16_t)(getpid() & 0xFFFF)) {
@@ -2004,7 +2004,7 @@ public:
         return pr;
     }
  
-    // UDP probe — traditional Unix traceroute approach. We send to a
+    // UDP probe - traditional Unix traceroute approach. We send to a
     // high-numbered port that's almost certainly not listening, so the
     // destination returns ICMP port-unreachable when we finally arrive.
     // Port increments per probe to avoid being dropped by stateful firewalls.
@@ -2074,7 +2074,7 @@ public:
         return pr;
     }
  
-    // TCP SYN probe on port 80 — useful when ICMP and UDP are blocked
+    // TCP SYN probe on port 80 - useful when ICMP and UDP are blocked
     // by firewalls but HTTP traffic is allowed through. We initiate a
     // connection and wait for either a TTL-exceeded ICMP from a router
     // or a SYN-ACK from the destination itself.
@@ -2100,7 +2100,7 @@ public:
         dest.sin_port   = htons(80);
         inet_pton(AF_INET, target_ip.c_str(), &dest.sin_addr);
  
-        // Non-blocking connect so we don't block the thread pool worker
+        // Non blocking connect so we don't block the thread pool worker
         fcntl(sock_send, F_SETFL, O_NONBLOCK);
         auto t_start = std::chrono::high_resolution_clock::now();
         connect(sock_send, (struct sockaddr*)&dest, sizeof(dest));
@@ -2230,7 +2230,7 @@ private:
     ThreadPool& pool_;
 };
  
-// Visual latency indicator — 9-segment bar colored green→yellow→red.
+// Visual latency indicator - 9-segment bar colored green→yellow→red.
 // Gives a quick at-a-glance feel for how bad a hop is without reading numbers.
 static std::string rtt_bar(double rtt_ms) {
     if (rtt_ms < 0) return std::string(GRAY) + "         " + RESET;
@@ -2245,7 +2245,7 @@ static std::string rtt_bar(double rtt_ms) {
     return bar;
 }
  
-// Short human-readable name for each protocol mode — used in headers and
+// Short human-readable name for each protocol mode - used in headers and
 // the comparison table so the user knows what they're looking at.
 static const char* proto_label(TraceConfig::Protocol p) {
     switch (p) {
@@ -2265,7 +2265,7 @@ static void traceroute(const std::string& target) {
     TraceConfig cfg;
     cfg.target = target;
  
-    // Let the user pick a protocol — or 0 to run all three
+    // Let the user pick a protocol - or 0 to run all three
     std::cout << YELLOW << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
     std::string pc;
     std::getline(std::cin >> std::ws, pc);
@@ -2281,7 +2281,7 @@ static void traceroute(const std::string& target) {
         try { cfg.queries_per_hop = std::max(1, std::min(10, std::stoi(qc))); } catch (...) {}
     }
  
-    // Resolve hostname to IP — fall back to treating input as a raw IP
+    // Resolve hostname to IP - fall back to treating input as a raw IP
     std::string target_ip;
     {
         target_ip = resolve(target);
@@ -2333,12 +2333,12 @@ static void traceroute(const std::string& target) {
     // Use the first protocol pass as the primary output for the hop table
     auto hops = all_results[0].second;
  
-    // Render each hop row — timeouts get a star line, live hops get full stats
+    // Render each hop row timeouts get a star line, live hops get full stats
     for (auto& hs : hops) {
         std::cout << CYAN << "  " << std::setw(3) << hs.ttl << "  ";
  
         if (hs.received == 0) {
-            // Every probe for this TTL timed out — router is silently dropping
+            // Every probe for this TTL timed out router is silently dropping
             std::cout << YELLOW << std::left << std::setw(18) << "*"
                       << std::setw(27) << "request timeout"
                       << GRAY  << std::string(36, ' ')
@@ -2355,7 +2355,7 @@ static void traceroute(const std::string& target) {
                   << std::left << std::setw(18) << display_ip
                   << CYAN      << std::setw(27) << sanitize(display_host);
  
-        // Format a millisecond value for the table — negative means no data
+        // Format a millisecond value for the table - negative means no data
         auto fmt_ms = [](double ms) -> std::string {
             if (ms < 0) return "*       ";
             std::ostringstream ss;
@@ -2425,7 +2425,7 @@ static void traceroute(const std::string& target) {
         std::cout << CYAN  << "  [reached]       " << (last.is_target ? GREEN "yes" : RED "no (TTL exhausted)")
                   << "\n" << RESET;
  
-        // Simple threshold-based verdict — good enough for a quick read
+        // Simple threshold-based verdict - good enough for a quick read
         std::cout << "\n";
         double avg_rtt = (total_hops > 0) ? total_latency / total_hops : 0;
         if      (avg_rtt < 20 && total_loss == 0 && timeout_hops == 0)
@@ -2438,7 +2438,7 @@ static void traceroute(const std::string& target) {
             std::cout << RED    << "  [quality] POOR -- high latency or significant loss\n" << RESET;
     }
  
-    // Cross-protocol comparison table — only shown in mode 0
+    // Cross protocol comparison table - only shown in mode 0
     if (all_modes && all_results.size() > 1) {
         print_section("PROTOCOL COMPARISON");
         std::cout << "\n" << BOLD << WHITE
