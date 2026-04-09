@@ -41,7 +41,7 @@
 #include <netinet/udp.h>
 #include <arpa/inet.h>
  
-// ─── colors ──────────────────────────────────────────────────────
+//  colors 
 #define RESET   "\033[0m"
 #define RED     "\033[31m"
 #define GREEN   "\033[32m"
@@ -55,10 +55,8 @@
  
 std::mutex g_print_mtx;
  
-// ================================================================
 //  thread pool
 //  proper task queue with futures, replaces raw thread vectors
-// ================================================================
 class ThreadPool {
 public:
     explicit ThreadPool(size_t n = std::thread::hardware_concurrency())
@@ -118,10 +116,8 @@ private:
     std::atomic<int>  active_{0};
 };
  
-// ================================================================
 //  logger
 //  json-line format, per-session log file
-// ================================================================
 enum class LogLevel { DEBUG, INFO, WARN, ERROR };
  
 class Logger {
@@ -169,9 +165,7 @@ private:
 #define LOG_WARN(mod,msg)  Logger::get().log(LogLevel::WARN,  mod, msg)
 #define LOG_ERR(mod,msg)   Logger::get().log(LogLevel::ERROR, mod, msg)
  
-// ================================================================
 //  process -- safe exec via fork+execvp, no shell
-// ================================================================
 struct ProcResult {
     std::string out, err;
     int code = -1;
@@ -259,9 +253,7 @@ static std::string safe_curl(const std::string& url, int t=8) {
                       "-L","-A","Mozilla/5.0","--",url}, t+2);
 }
  
-// ================================================================
 //  input validation and sanitization
-// ================================================================
 static bool valid_target(const std::string& s) {
     if (s.empty() || s.size()>253) return false;
     static const std::regex ok(R"(^[a-zA-Z0-9.\-_:/@]+$)");
@@ -287,9 +279,7 @@ static std::string sanitize(const std::string& s) {
     return o;
 }
  
-// ================================================================
 //  network helpers
-// ================================================================
 static std::string resolve(const std::string& host) {
     addrinfo hints{}, *res;
     hints.ai_family = AF_INET;
@@ -330,9 +320,7 @@ static std::string ptr_lookup(const std::string& ip) {
     return "";
 }
  
-// ================================================================
 //  ICMP CHECKSUM
-// ================================================================
 static uint16_t icmp_cksum(const void* data, int len) {
     const uint16_t* buf=(const uint16_t*)data;
     uint32_t sum=0;
@@ -342,9 +330,7 @@ static uint16_t icmp_cksum(const void* data, int len) {
     return (uint16_t)~sum;
 }
  
-// ================================================================
 //  SERVICE DB
-// ================================================================
 static std::string svc(int port) {
     static std::map<int,std::string> db={
         {21,"FTP"},{22,"SSH"},{23,"Telnet"},{25,"SMTP"},{53,"DNS"},
@@ -410,9 +396,7 @@ static std::string banner(const std::string& ip, int port, int ms=1500) {
     return sanitize(result);
 }
  
-// ================================================================
 //  JSON EXPORT
-// ================================================================
 struct ScanResult {
     std::string target, timestamp;
     std::vector<std::pair<int,std::string>> open_ports;
@@ -453,9 +437,7 @@ static void export_json(const std::string& fname) {
     LOG_INFO("export", "json saved: "+fname);
 }
  
-// ================================================================
 //  JSON VALUE EXTRACTOR
-// ================================================================
 static std::string json_val(const std::string& json, const std::string& key) {
     auto pos=json.find("\""+key+"\"");
     if(pos==std::string::npos) return "";
@@ -469,9 +451,7 @@ static std::string json_val(const std::string& json, const std::string& key) {
     return v;
 }
  
-// ================================================================
 //  UI HELPERS
-// ================================================================
 static int term_width() {
     struct winsize w;
     if (ioctl(STDOUT_FILENO,TIOCGWINSZ,&w)==0&&w.ws_col>0) return w.ws_col;
@@ -530,11 +510,7 @@ static const std::vector<int> TOP1000 = {
     27017,50070
 };
  
-// ================================================================
 //  1. PORT SCAN
-// ================================================================
-
-// forward declaration for os guess
 static std::string guess_os_from_ports(const std::vector<int>& open);
 
 // prioritize common ports
@@ -779,7 +755,7 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
 }
 
 // connect with retry, distinguishes open / closed / filtered
-// returns {latency_ms, is_filtered}  -- latency < 0 means not open
+// returns {latency_ms, is_filtered}  - latency < 0 means not open
 static std::pair<int, bool> probe_with_retry(const std::string& ip, int port,
                                               int timeout_ms, int retries)
 {
@@ -806,7 +782,7 @@ static std::pair<int, bool> probe_with_retry(const std::string& ip, int port,
 
         if (errno != EINPROGRESS) {
             close(fd);
-            return {-1, false}; // RST -> closed
+            return {-1, false}; // RST closed
         }
 
         fd_set wfds, efds;
@@ -849,9 +825,7 @@ static int sev_rank(const std::string& s) {
     return 3;
 }
 
-// ================================================================
 //  port_scan -- main scan entry
-// ================================================================
 static void port_scan(const std::string& ip, int start, int end_port) {
     print_header("PORT SCAN // " + ip);
 
@@ -865,7 +839,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
                   << " (" << ports.size() << " ports)\n" << RESET;
     }
 
-    // -- calibration --
+    // calibration 
     print_section("PHASE 0 // CALIBRATION");
     std::cout << YELLOW << "  measuring target latency...\n" << RESET;
 
@@ -880,7 +854,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
     if (!hostname.empty() && hostname != ip)
         std::cout << CYAN << "  ptr: " << hostname << "\n" << RESET;
 
-    // -- discovery sweep --
+    //  discovery sweep 
     print_section("PHASE 1 // DISCOVERY");
     std::cout << YELLOW << "  sweeping " << ports.size() << " ports...\n" << RESET;
 
@@ -960,7 +934,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
         return;
     }
 
-    // -- deep analysis: banners, versions, vulns --
+    //  deep analysis: banners, versions, vulns 
     print_section("PHASE 2 // DEEP ANALYSIS");
     std::cout << YELLOW << "  analyzing " << open_hits.size() << " open ports...\n" << RESET;
 
@@ -1011,7 +985,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
     draw_progress(deep_total, deep_total, "done");
     std::cout << "\n";
 
-    // -- results table --
+    //  results table 
     print_section("PHASE 3 // RESULTS");
 
     std::cout << "\n" << BOLD << WHITE
@@ -1056,7 +1030,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
         std::cout << "\n" << RESET;
     }
 
-    // -- vuln report --
+    // vuln report 
     if (!all_vulns.empty()) {
         print_section("VULNERABILITY HINTS");
         std::cout << "\n";
@@ -1092,14 +1066,14 @@ static void port_scan(const std::string& ip, int start, int end_port) {
             std::cout << YELLOW << "\n  [!] high severity issues - review recommended\n" << RESET;
     }
 
-    // -- OS guess from open ports --
+    // OS guess from open ports 
     std::string os_hint = guess_os_from_ports(open_port_list);
     if (os_hint != "unknown") {
         std::cout << "\n" << CYAN << "  os hint (ports): " << WHITE << os_hint << RESET << "\n";
         g_result.os_guess = os_hint;
     }
 
-    // -- final stats --
+    // final stats 
     print_section("SCAN STATS");
     auto total_time = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - scan_start).count();
@@ -1121,10 +1095,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
              " time=" + std::to_string((int)total_time) + "s");
 }
 
-// ================================================================
 //  2. NETWORK SCAN -- two-phase: discovery then port scan
-// ================================================================
- 
 static std::string guess_os_from_ports(const std::vector<int>& open) {
     auto has=[&](int p){return std::find(open.begin(),open.end(),p)!=open.end();};
     if(has(3389)||has(5985)||has(5986)||has(445)||has(135)) return "Windows";
@@ -1228,9 +1199,7 @@ static void net_scan(const std::string& subnet) {
     LOG_INFO("net_scan","done subnet="+subnet+" alive="+std::to_string(alive_c));
 }
  
-// ================================================================
 //  3. OS DETECTION -- weighted port fingerprint + TTL analysis
-// ================================================================
 static void os_detect(const std::string& ip) {
     print_header("ADVANCED OS DETECTION // " + ip);
  
@@ -1382,9 +1351,7 @@ static void os_detect(const std::string& ip) {
     LOG_INFO("os_detect","target="+ip+" verdict="+verdict);
 }
  
-// ================================================================
 //  4. IP FULL INTELLIGENCE
-// ================================================================
 static void ip_intel(const std::string& ip) {
     print_header("IP INTELLIGENCE // " + ip);
     g_result.target=ip; g_result.timestamp=now_str();
@@ -1492,10 +1459,7 @@ static void ip_intel(const std::string& ip) {
     LOG_INFO("ip_intel","done target="+ip);
 }
  
-// ================================================================
 //  5. DNS LOOKUP -- parallel async queries + SPF + DNSSEC
-// ================================================================
- 
 static std::vector<std::string> split_lines(const std::string& s){
     std::vector<std::string> v; std::istringstream ss(s); std::string l;
     while(std::getline(ss,l)) if(!l.empty()) v.push_back(l);
@@ -1553,7 +1517,7 @@ static void dns_lookup(const std::string& domain){
         if(line.find("v=spf1")!=std::string::npos){
             std::cout<<GREEN<<"  [SPF] "<<sanitize(line)<<RESET<<"\n";
             spf_found=true;
-            // expand include: chains
+            // expand include chains
             std::regex re_inc(R"(include:(\S+)|redirect=(\S+))");
             std::smatch m; std::string s=line;
             while(std::regex_search(s,m,re_inc)){
@@ -1580,7 +1544,7 @@ static void dns_lookup(const std::string& domain){
     if(!ds.empty()||!dnskey.empty()) std::cout<<GREEN<<"  [+] DNSSEC enabled\n"<<RESET;
     else std::cout<<YELLOW<<"  [-] DNSSEC not detected\n"<<RESET;
  
-    // Zone transfer -- try all NS
+    // Zone transfer try all NS
     std::cout<<YELLOW<<"\n  -- Zone Transfer (AXFR) --\n"<<RESET;
     auto ns_raw=dig_short(domain,"NS",6);
     for(auto ns:split_lines(ns_raw)){
@@ -1596,9 +1560,7 @@ static void dns_lookup(const std::string& domain){
     LOG_INFO("dns_lookup","done domain="+domain);
 }
  
-// ================================================================
 //  6. WHOIS
-// ================================================================
 static void whois_lookup(const std::string& target){
     print_header("WHOIS // " + target);
     std::vector<std::string> keys={"Domain","Registrar","Created","Updated","Expir","Name Server","CIDR","NetRange","OrgName","Country","RegDate","NetName","inetnum","netname","descr","origin","Email","Phone","Address"};
@@ -1619,9 +1581,7 @@ static void whois_lookup(const std::string& target){
     }
 }
  
-// ================================================================
 //  7. SITE -> IP
-// ================================================================
 static void site_lookup(const std::string& raw){
     print_header("SITE -> IP // " + raw);
     std::string s=raw;
@@ -1637,9 +1597,7 @@ static void site_lookup(const std::string& raw){
     ip_intel(ip);
 }
  
-// ================================================================
-//  8. OSINT -- 50 platforms + web mentions
-// ================================================================
+//  8. OSINT - 50 platforms + web mentions
 static void osint_scan(const std::string& username){
     print_header("OSINT // " + username);
     struct Site{std::string name,url,dead,cat;};
@@ -1737,11 +1695,9 @@ static void osint_scan(const std::string& username){
     LOG_INFO("osint","done username="+username+" found="+std::to_string(found.size()));
 }
  
-// ================================================================
 //  9. TRACEROUTE 
-// ================================================================
 // All tuneable parameters live here - change these instead of
-// hunting through the code if you need to adjust behavior.
+// hunting through the code if you need to adjust behavior
 struct TraceConfig {
     std::string target;
     int max_hops        = 40;
@@ -2480,9 +2436,7 @@ static void traceroute(const std::string& target) {
     LOG_INFO("traceroute", "done target=" + target + " hops=" + std::to_string(hops.size()));
 }
  
-// ================================================================
 //  10. FULL RECON
-// ================================================================
 static void full_recon(const std::string& ip){
     std::cout<<"\n"<<MAGENTA<<BOLD
              <<"  +"<<std::string(56,'=')<<"+\n"
@@ -2494,9 +2448,7 @@ static void full_recon(const std::string& ip){
     port_scan(ip,0,0);
 }
  
-// ================================================================
 //  11. SUBDOMAIN SCAN
-// ================================================================
 static void subdomain_scan(const std::string& domain) {
     print_header("SUBDOMAIN SCAN // " + domain);
 
@@ -2522,7 +2474,7 @@ static void subdomain_scan(const std::string& domain) {
     std::atomic<bool> has_wildcard{false};
     std::set<std::string> wildcard_ips;
 
-    // ===================== WORDLIST =====================
+    // WORDLIST 
     static const std::vector<std::string> wordlist = {
         "www","mail","ftp","admin","api","dev","test","staging","blog","shop",
         "cdn","static","vpn","remote","portal","app","m","mobile","secure",
@@ -2576,7 +2528,7 @@ static void subdomain_scan(const std::string& domain) {
         "rest","soap","rpc","grpc","proto","ws","sse","poll"
     };
 
-    // ============ wildcard detection ============
+    // wildcard detection
     print_section("WILDCARD CHECK");
     std::string wc_test = "randomnxdomain7742test." + domain;
     std::string wc_ip = resolve(wc_test);
@@ -2593,7 +2545,7 @@ static void subdomain_scan(const std::string& domain) {
         std::cout << GREEN << "  [+] no wildcard DNS\n" << RESET;
     }
 
-    // ============ passive sources (crt.sh) ============
+    // passive sources (crt.sh)
     print_section("PASSIVE ENUM (crt.sh)");
     std::cout << YELLOW << "  querying certificate transparency logs...\n" << RESET;
 
@@ -2624,7 +2576,7 @@ static void subdomain_scan(const std::string& domain) {
         std::cout << GRAY << "  [-] crt.sh unavailable or empty\n" << RESET;
     }
 
-    // ============ merge wordlist + passive ============
+    // merge wordlist + passive
     std::vector<std::string> all_subs;
     std::set<std::string> dedup;
 
@@ -2641,7 +2593,7 @@ static void subdomain_scan(const std::string& domain) {
     std::cout << YELLOW << "  checking " << total << " subdomains (" << wordlist.size()
               << " wordlist + " << passive_subs.size() << " passive)...\n\n" << RESET;
 
-    // ============ parallel resolution ============
+    // parallel resolution
     ThreadPool pool(std::min(MAX_THREADS, total));
     std::vector<std::future<void>> futs;
     futs.reserve(total);
@@ -2802,7 +2754,7 @@ static void subdomain_scan(const std::string& domain) {
     draw_progress(total, total, std::to_string(found_count.load()) + " found");
     std::cout << "\n";
 
-    // ============ sort and summary ============
+    // sort and summary
     std::sort(results.begin(), results.end(), [](const SubResult& a, const SubResult& b) {
         return a.sub < b.sub;
     });
@@ -2869,7 +2821,7 @@ static void subdomain_scan(const std::string& domain) {
         if (!r.server.empty()) server_stats[r.server]++;
     }
 
-    // ============ statistics ============
+    // statistics
     print_section("STATISTICS");
     std::cout << CYAN << "  [total found]     " << WHITE << results.size() << "\n" << RESET;
     std::cout << CYAN << "  [checked]         " << WHITE << total << "\n" << RESET;
@@ -2891,7 +2843,7 @@ static void subdomain_scan(const std::string& domain) {
         }
     }
 
-    // ============ takeover hints ============
+    // takeover hints
     print_section("TAKEOVER CANDIDATES");
     static const std::vector<std::pair<std::string, std::string>> takeover_sigs = {
         {"github.io",        "GitHub Pages"},
@@ -2938,9 +2890,7 @@ static void subdomain_scan(const std::string& domain) {
     LOG_INFO("subdomain_scan", "done domain=" + domain + " found=" + std::to_string(results.size()));
 }
 
-// ================================================================
 //  BANNER + MENU
-// ================================================================
 static void print_banner(){
     write(STDOUT_FILENO,"\033[2J\033[H",7);
     std::cout<<"\n"<<WHITE<<BOLD;
@@ -2982,9 +2932,7 @@ static void print_menu(){
     std::cout<<"\n"<<GREEN<<BOLD<<"  DARK NEXUS~# "<<RESET;
 }
  
-// ================================================================
 //  MAIN
-// ================================================================
 int main(){
     // init logger
     Logger::get().init("dark_nexus.log", LogLevel::INFO);
