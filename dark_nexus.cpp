@@ -56,7 +56,6 @@
 std::mutex g_print_mtx;
  
 //  thread pool
-//  proper task queue with futures replaces raw thread vectors
 class ThreadPool {
 public:
     explicit ThreadPool(size_t n = std::thread::hardware_concurrency())
