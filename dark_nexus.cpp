@@ -56,7 +56,7 @@
 std::mutex g_print_mtx;
  
 //  thread pool
-//  proper task queue with futures, replaces raw thread vectors
+//  proper task queue with futures replaces raw thread vectors
 class ThreadPool {
 public:
     explicit ThreadPool(size_t n = std::thread::hardware_concurrency())
@@ -165,7 +165,7 @@ private:
 #define LOG_WARN(mod,msg)  Logger::get().log(LogLevel::WARN,  mod, msg)
 #define LOG_ERR(mod,msg)   Logger::get().log(LogLevel::ERROR, mod, msg)
  
-//  process safe exec via fork+execvp, no shell
+//  process safe exec via fork execvp no shell
 struct ProcResult {
     std::string out, err;
     int code = -1;
@@ -489,7 +489,7 @@ static void print_row(const std::string& label, const std::string& val) {
     std::cout<<CYAN<<"  ["<<WHITE<<std::left<<std::setw(16)<<label<<CYAN<<"] "<<RESET<<sanitize(val)<<"\n";
 }
  
-// top-1000 default ports
+// top 1000 default ports
 static const std::vector<int> TOP1000 = {
     1,3,4,6,7,9,13,17,19,20,21,22,23,24,25,26,30,32,33,37,42,43,49,53,
     70,79,80,81,82,83,84,85,88,89,90,99,100,106,109,110,111,113,119,125,
@@ -533,11 +533,10 @@ static std::string extract_version(const std::string& banner_raw, int port) {
 }
 
 // quick vuln hints based on port + version + banner
-// not a real vuln scanner, just flags the obvious stuff
 struct VulnHint {
     std::string cve;
     std::string desc;
-    std::string severity; // CRIT, HIGH, MED, INFO
+    std::string severity; // CRIT HIGH MED INFO
 };
 
 static std::vector<VulnHint> check_vulns(int port, const std::string& version_str,
@@ -602,7 +601,7 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
     return vulns;
 }
 
-// protocol-aware banner grab, sends proper probes per service
+// protocol aware banner grab, sends proper probes per service
 static std::string smart_banner(const std::string& ip, int port, int ms = 2000) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return "";
