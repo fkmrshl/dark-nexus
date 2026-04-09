@@ -117,7 +117,7 @@ private:
 };
  
 //  logger
-//  json-line format, per-session log file
+//  json line format per session log file
 enum class LogLevel { DEBUG, INFO, WARN, ERROR };
  
 class Logger {
@@ -165,7 +165,7 @@ private:
 #define LOG_WARN(mod,msg)  Logger::get().log(LogLevel::WARN,  mod, msg)
 #define LOG_ERR(mod,msg)   Logger::get().log(LogLevel::ERROR, mod, msg)
  
-//  process -- safe exec via fork+execvp, no shell
+//  process safe exec via fork+execvp, no shell
 struct ProcResult {
     std::string out, err;
     int code = -1;
@@ -268,7 +268,7 @@ static bool valid_username(const std::string& s) {
  
 static bool valid_port(int p) { return p>=1 && p<=65535; }
  
-// strip ansi/escape sequences prevents terminal injection via banners
+// strip ansi escape sequences prevents terminal injection via banners
 static std::string sanitize(const std::string& s) {
     std::string o; o.reserve(s.size());
     for (size_t i=0;i<s.size();i++) {
