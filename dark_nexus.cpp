@@ -115,8 +115,7 @@ private:
     std::atomic<int>  active_{0};
 };
  
-//  logger
-//  json line format per session log file
+//  logger 
 enum class LogLevel { DEBUG, INFO, WARN, ERROR };
  
 class Logger {
@@ -164,7 +163,7 @@ private:
 #define LOG_WARN(mod,msg)  Logger::get().log(LogLevel::WARN,  mod, msg)
 #define LOG_ERR(mod,msg)   Logger::get().log(LogLevel::ERROR, mod, msg)
  
-//  process safe exec via fork execvp no shell
+//  process safe exec fork execvp no shell
 struct ProcResult {
     std::string out, err;
     int code = -1;
@@ -319,7 +318,7 @@ static std::string ptr_lookup(const std::string& ip) {
     return "";
 }
  
-//  ICMP CHECKSUM
+// icmp chek
 static uint16_t icmp_cksum(const void* data, int len) {
     const uint16_t* buf=(const uint16_t*)data;
     uint32_t sum=0;
@@ -329,7 +328,7 @@ static uint16_t icmp_cksum(const void* data, int len) {
     return (uint16_t)~sum;
 }
  
-//  SERVICE DB
+//  servise db
 static std::string svc(int port) {
     static std::map<int,std::string> db={
         {21,"FTP"},{22,"SSH"},{23,"Telnet"},{25,"SMTP"},{53,"DNS"},
@@ -368,7 +367,7 @@ static std::string banner(const std::string& ip, int port, int ms=1500) {
     setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv));
     sockaddr_in sa{}; sa.sin_family=AF_INET; sa.sin_port=htons(port);
     inet_pton(AF_INET,ip.c_str(),&sa.sin_addr);
-    // non-blocking connect
+    // non blocking connect
     fcntl(fd,F_SETFL,O_NONBLOCK);
     connect(fd,(sockaddr*)&sa,sizeof(sa));
     fd_set wfds; FD_ZERO(&wfds); FD_SET(fd,&wfds);
@@ -395,7 +394,7 @@ static std::string banner(const std::string& ip, int port, int ms=1500) {
     return sanitize(result);
 }
  
-//  JSON EXPORT
+//  json export
 struct ScanResult {
     std::string target, timestamp;
     std::vector<std::pair<int,std::string>> open_ports;
@@ -436,7 +435,7 @@ static void export_json(const std::string& fname) {
     LOG_INFO("export", "json saved: "+fname);
 }
  
-//  JSON VALUE EXTRACTOR
+//  json value
 static std::string json_val(const std::string& json, const std::string& key) {
     auto pos=json.find("\""+key+"\"");
     if(pos==std::string::npos) return "";
@@ -450,7 +449,7 @@ static std::string json_val(const std::string& json, const std::string& key) {
     return v;
 }
  
-//  UI HELPERS
+//  helprs
 static int term_width() {
     struct winsize w;
     if (ioctl(STDOUT_FILENO,TIOCGWINSZ,&w)==0&&w.ws_col>0) return w.ws_col;
@@ -509,7 +508,7 @@ static const std::vector<int> TOP1000 = {
     27017,50070
 };
  
-//  1. PORT SCAN
+// port scan
 static std::string guess_os_from_ports(const std::vector<int>& open);
 
 // prioritize common ports
@@ -531,11 +530,11 @@ static std::string extract_version(const std::string& banner_raw, int port) {
     return "";
 }
 
-// quick vuln hints based on port + version + banner
+// quick vuln hints based on port version banner
 struct VulnHint {
     std::string cve;
     std::string desc;
-    std::string severity; // CRIT HIGH MED INFO
+    std::string severity; // crit high med info
 };
 
 static std::vector<VulnHint> check_vulns(int port, const std::string& version_str,
@@ -547,7 +546,7 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
     std::string vl = version_str;
     std::transform(vl.begin(), vl.end(), vl.begin(), ::tolower);
 
-    // SSH
+    // ssh
     if (port == 22 && vl.find("openssh") != std::string::npos) {
         std::regex re_ver("openssh[_\\s]([0-9]+)\\.([0-9]+)");
         std::smatch m;
@@ -563,7 +562,7 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
         }
     }
 
-    // FTP
+    // ftp
     if (port == 21) {
         if (bl.find("anonymous") != std::string::npos || bl.find("anon") != std::string::npos)
             vulns.push_back({"N/A", "anonymous FTP possibly allowed", "MED"});
@@ -571,7 +570,7 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
             vulns.push_back({"CVE-2011-2523", "vsFTPd 2.3.4 backdoor", "CRIT"});
     }
 
-    // flag critical exposed services
+    // flag critical
     if (port == 445 || port == 139)
         vulns.push_back({"CHECK", "SMB exposed - EternalBlue/SMBGhost/PrintNightmare", "HIGH"});
     if (port == 23)
@@ -593,14 +592,14 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
     if (port == 11211)
         vulns.push_back({"CHECK", "Memcached exposed - DDoS amplification", "HIGH"});
 
-    // check version disclosure on web ports
+    // check version web ports
     if ((port == 80 || port == 443 || port == 8080 || port == 8443) && !version_str.empty())
         vulns.push_back({"INFO", "server version disclosed: " + version_str, "INFO"});
 
     return vulns;
 }
 
-// protocol aware banner grab, sends proper probes per service
+// protocol aware banner grab
 static std::string smart_banner(const std::string& ip, int port, int ms = 2000) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return "";
@@ -650,13 +649,13 @@ static std::string smart_banner(const std::string& ip, int port, int ms = 2000) 
             probe = "version\r\n";
             break;
         default:
-            break; // ssh/ftp/pop3 etc send banner on connect
+            break; // wait for leak grab banner and bail
     }
 
     if (!probe.empty())
         send(fd, probe.c_str(), probe.size(), MSG_NOSIGNAL);
 
-    // read response in chunks, bail early if we got something
+    // skim chunks bail on first hit
     std::string result;
     char buf[2048];
     int waited = 0;
@@ -669,21 +668,21 @@ static std::string smart_banner(const std::string& ip, int port, int ms = 2000) 
             result.append(buf, n);
         } else {
             waited += 300;
-            if (!result.empty()) break; // got data, dont hang around
+            if (!result.empty()) break; // smash and grab no time for chitchat
         }
     }
     close(fd);
 
     result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
 
-    // HTTP: strip body, only want headers
+    // drop payload: keep headers only
     if (port == 80 || port == 8080 || port == 8888 || port == 8000 ||
         port == 443 || port == 8443 || port == 3000 || port == 9090) {
         auto hdr_end = result.find("\n\n");
         if (hdr_end != std::string::npos) result = result.substr(0, hdr_end);
     }
 
-    // first line only for display
+    // grab banner kill stream early
     auto nl = result.find('\n');
     std::string first_line = (nl != std::string::npos) ? result.substr(0, nl) : result;
     if (first_line.size() > 80) first_line = first_line.substr(0, 80) + "...";
@@ -691,7 +690,7 @@ static std::string smart_banner(const std::string& ip, int port, int ms = 2000) 
     return sanitize(first_line);
 }
 
-// measure RTT to target and tune scan params accordingly
+// link calibration sync timing with pipe latency
 struct AdaptiveConfig {
     int connect_ms;
     int banner_ms;
@@ -727,7 +726,7 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
     }
 
     if (rtts.empty()) {
-        // cant reach anything, go conservative
+        // no response: scale down PPS / increase timeouts
         cfg.connect_ms = 1500;
         cfg.banner_ms = 3000;
         cfg.retry_count = 2;
@@ -739,12 +738,12 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
     std::sort(rtts.begin(), rtts.end());
     cfg.median_rtt = rtts[rtts.size() / 2];
 
-    // 3x median, clamped
+    // 3x median spike clamp to safe limit
     cfg.connect_ms = std::max(200, std::min(3000, cfg.median_rtt * 3));
     cfg.banner_ms  = std::max(500, std::min(5000, cfg.median_rtt * 5));
     cfg.retry_count = (cfg.median_rtt < 50) ? 1 : 2;
 
-    // fast = more threads
+    // crank threads maxing pps
     if (cfg.median_rtt < 20)       cfg.pool_size = 300;
     else if (cfg.median_rtt < 100) cfg.pool_size = 150;
     else                           cfg.pool_size = 60;
@@ -752,8 +751,7 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
     return cfg;
 }
 
-// connect with retry, distinguishes open / closed / filtered
-// returns {latency_ms, is_filtered}  - latency < 0 means not open
+// map entry point: check liveness & filter flag
 static std::pair<int, bool> probe_with_retry(const std::string& ip, int port,
                                               int timeout_ms, int retries)
 {
@@ -780,7 +778,7 @@ static std::pair<int, bool> probe_with_retry(const std::string& ip, int port,
 
         if (errno != EINPROGRESS) {
             close(fd);
-            return {-1, false}; // RST closed
+            return {-1, false}; // rst closed
         }
 
         fd_set wfds, efds;
@@ -802,14 +800,14 @@ static std::pair<int, bool> probe_with_retry(const std::string& ip, int port,
 
         close(fd);
 
-        // sel == 0 -> timeout, likely filtered
+        // no response on select port likely behind firewall
         if (sel == 0) {
             if (attempt == retries) return {-1, true}; // all attempts timed out
             usleep(50000);
             continue;
         }
 
-        // sel < 0 -> select error, bail
+        // select() fail pipe broken, bail out
         return {-1, false};
     }
     return {-1, true};
@@ -823,7 +821,7 @@ static int sev_rank(const std::string& s) {
     return 3;
 }
 
-//  port_scan -- main scan entry
+//  init scan entry point for l4 sweep
 static void port_scan(const std::string& ip, int start, int end_port) {
     print_header("PORT SCAN // " + ip);
 
@@ -932,7 +930,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
         return;
     }
 
-    //  deep analysis: banners, versions, vulns 
+    // deep scan: banner grab version audit
     print_section("PHASE 2 // DEEP ANALYSIS");
     std::cout << YELLOW << "  analyzing " << open_hits.size() << " open ports...\n" << RESET;
 
@@ -950,7 +948,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
     std::atomic<int> deep_done{0};
     int deep_total = open_hits.size();
 
-    // fewer threads here, banner grabs are slower and we dont want to flood
+    // scale down: throttle threads for l7 stability
     {
         int dpool = std::min(30, deep_total);
         ThreadPool deep_pool(dpool);
@@ -1064,7 +1062,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
             std::cout << YELLOW << "\n  [!] high severity issues - review recommended\n" << RESET;
     }
 
-    // OS guess from open ports 
+    // os guess from open ports 
     std::string os_hint = guess_os_from_ports(open_port_list);
     if (os_hint != "unknown") {
         std::cout << "\n" << CYAN << "  os hint (ports): " << WHITE << os_hint << RESET << "\n";
@@ -1093,7 +1091,7 @@ static void port_scan(const std::string& ip, int start, int end_port) {
              " time=" + std::to_string((int)total_time) + "s");
 }
 
-//  2. NETWORK SCAN -- two-phase: discovery then port scan
+//ual phase hit discovery then pivot to port scan
 static std::string guess_os_from_ports(const std::vector<int>& open) {
     auto has=[&](int p){return std::find(open.begin(),open.end(),p)!=open.end();};
     if(has(3389)||has(5985)||has(5986)||has(445)||has(135)) return "Windows";
@@ -1151,7 +1149,7 @@ static void net_scan(const std::string& subnet) {
  
     std::cout<<CYAN<<"\n  found "<<alive_c<<" hosts -- phase 2: port scan...\n\n"<<RESET;
  
-    // phase 2: port scan alive hosts
+    // phase 2 port scan alive hosts
     std::vector<HostInfo*> alive_hosts;
     for(auto& h:hosts) if(h.alive) alive_hosts.push_back(&h);
  
@@ -1197,7 +1195,7 @@ static void net_scan(const std::string& subnet) {
     LOG_INFO("net_scan","done subnet="+subnet+" alive="+std::to_string(alive_c));
 }
  
-//  3. OS DETECTION -- weighted port fingerprint + TTL analysis
+//  os detect mapping kernel via ttl and port weights
 static void os_detect(const std::string& ip) {
     print_header("ADVANCED OS DETECTION // " + ip);
  
@@ -1271,7 +1269,7 @@ static void os_detect(const std::string& ip) {
     }
     std::cout<<CYAN<<"  open: "<<RESET<<open_c<<"/"<<checks.size()<<"\n";
  
-    // TTL analysis (5 pings for stability)
+    // ttl check 5ping burst for stable baseline
     print_section("TTL ANALYSIS");
     auto pout=safe_exec({"ping","-c5","-W1",ip},8);
     std::vector<int> ttls;
@@ -1332,7 +1330,7 @@ static void os_detect(const std::string& ip) {
     int best=0;
     for(int i=1;i<4;i++) if(score[i]>score[best]) best=i;
  
-    // ttl-based boost
+    // ttl based boost
     if(ttl>=120&&ttl<=128) score[0]+=5;
     else if(ttl>=60&&ttl<=64) score[1]+=5;
     else if(ttl>=250) score[3]+=5;
@@ -1349,7 +1347,7 @@ static void os_detect(const std::string& ip) {
     LOG_INFO("os_detect","target="+ip+" verdict="+verdict);
 }
  
-//  4. IP FULL INTELLIGENCE
+// full intel global pivot across l3 l7 metadata
 static void ip_intel(const std::string& ip) {
     print_header("IP INTELLIGENCE // " + ip);
     g_result.target=ip; g_result.timestamp=now_str();
@@ -1457,7 +1455,7 @@ static void ip_intel(const std::string& ip) {
     LOG_INFO("ip_intel","done target="+ip);
 }
  
-//  5. DNS LOOKUP -- parallel async queries + SPF + DNSSEC
+//  async dns parallel resolution spf dnssec audit
 static std::vector<std::string> split_lines(const std::string& s){
     std::vector<std::string> v; std::istringstream ss(s); std::string l;
     while(std::getline(ss,l)) if(!l.empty()) v.push_back(l);
@@ -1474,7 +1472,7 @@ static std::string dig_full(const std::string& domain, const std::string& type, 
 static void dns_lookup(const std::string& domain){
     print_header("DNS LOOKUP // " + domain);
  
-    // A + AAAA + PTR in parallel
+    // A AAAA PTR discovery
     std::cout<<YELLOW<<"\n  -- A / AAAA / PTR --\n"<<RESET;
     auto fut_a    = std::async(std::launch::async, dig_short, domain, "A",    6);
     auto fut_aaaa = std::async(std::launch::async, dig_short, domain, "AAAA", 6);
@@ -1529,20 +1527,20 @@ static void dns_lookup(const std::string& domain){
     }
     if(!spf_found) std::cout<<RED<<"  [!] no SPF -- email spoofing may be possible\n"<<RESET;
  
-    // DMARC
+    // dmarc
     std::cout<<YELLOW<<"\n  -- DMARC --\n"<<RESET;
     auto dmarc=dig_full("_dmarc."+domain,"TXT",5);
     if(dmarc.empty()) std::cout<<YELLOW<<"  [-] no DMARC\n"<<RESET;
     else std::cout<<GREEN<<sanitize(dmarc)<<RESET;
  
-    // DNSSEC
+    // dnssec
     std::cout<<YELLOW<<"\n  -- DNSSEC --\n"<<RESET;
     auto ds=dig_short(domain,"DS",5);
     auto dnskey=dig_short(domain,"DNSKEY",5);
     if(!ds.empty()||!dnskey.empty()) std::cout<<GREEN<<"  [+] DNSSEC enabled\n"<<RESET;
     else std::cout<<YELLOW<<"  [-] DNSSEC not detected\n"<<RESET;
  
-    // Zone transfer try all NS
+    // all ns
     std::cout<<YELLOW<<"\n  -- Zone Transfer (AXFR) --\n"<<RESET;
     auto ns_raw=dig_short(domain,"NS",6);
     for(auto ns:split_lines(ns_raw)){
@@ -1558,7 +1556,7 @@ static void dns_lookup(const std::string& domain){
     LOG_INFO("dns_lookup","done domain="+domain);
 }
  
-//  6. WHOIS
+//  whois
 static void whois_lookup(const std::string& target){
     print_header("WHOIS // " + target);
     std::vector<std::string> keys={"Domain","Registrar","Created","Updated","Expir","Name Server","CIDR","NetRange","OrgName","Country","RegDate","NetName","inetnum","netname","descr","origin","Email","Phone","Address"};
@@ -1579,7 +1577,7 @@ static void whois_lookup(const std::string& target){
     }
 }
  
-//  7. SITE -> IP
+//  site ip
 static void site_lookup(const std::string& raw){
     print_header("SITE -> IP // " + raw);
     std::string s=raw;
@@ -1595,7 +1593,7 @@ static void site_lookup(const std::string& raw){
     ip_intel(ip);
 }
  
-//  8. OSINT - 50 platforms + web mentions
+// osint
 static void osint_scan(const std::string& username){
     print_header("OSINT // " + username);
     struct Site{std::string name,url,dead,cat;};
@@ -1693,17 +1691,15 @@ static void osint_scan(const std::string& username){
     LOG_INFO("osint","done username="+username+" found="+std::to_string(found.size()));
 }
  
-//  9. TRACEROUTE 
-// All tuneable parameters live here - change these instead of
-// hunting through the code if you need to adjust behavior
+// tracceroute
 struct TraceConfig {
     std::string target;
     int max_hops        = 40;
-    int queries_per_hop = 5;   // more probes = better loss/jitter stats, but slower
+    int queries_per_hop = 5;   // probe density
     int timeout_ms      = 2000;
-    int parallel_hops   = 8;   // how many TTL levels we probe simultaneously
+    int parallel_hops   = 8;   // window size how many hops we fire at once
     int src_port        = 33434;
-    int dst_port        = 33434; // standard traceroute UDP base port
+    int dst_port        = 33434; // udp seed initial destination port for ttl increment
     bool resolve_dns    = true;
     bool detect_mtu     = true;
     bool show_jitter    = true;
@@ -1712,29 +1708,27 @@ struct TraceConfig {
     enum Protocol { ICMP, UDP, TCP_SYN } protocol = ICMP;
 };
  
-// Holds the raw result of a single packet sent to one hop.
-// rtt_ms < 0 means the probe timed out - no response came back.
+//hop packet raw buffer for single probe telemetry
 struct ProbeResult {
     int ttl              = 0;
     int probe_id         = 0;
     std::string addr;
     std::string hostname;
-    double rtt_ms        = -1.0;   // <0 = timeout
+    double rtt_ms        = -1.0;   //<0 = timeout
     bool reached_target  = false;
     int icmp_type        = -1;
     int icmp_code        = -1;
     int reply_ttl        = 0;
-    int mtu_suggestion   = 0;      // populated when we get ICMP frag-needed
+    int mtu_suggestion   = 0;      //icmp unreachable frag needed
 };
  
-// Aggregated statistics for a single hop after all probes are done.
-// compute() does the math - call it once after filling rtts[].
+//hop stats aggregated telemetry for path analysis
 struct HopStats {
     int ttl = 0;
     std::string addr;
     std::string hostname;
     std::string asn_info;
-    std::vector<double> rtts;  // only successful probe RTTs go in here
+    std::vector<double> rtts;  
     int sent    = 0;
     int received = 0;
     double min_rtt = 0, max_rtt = 0, avg_rtt = 0, stddev = 0, jitter = 0;
@@ -1751,8 +1745,7 @@ struct HopStats {
         double var = 0;
         for (auto r : rtts) var += (r - avg_rtt) * (r - avg_rtt);
         stddev = std::sqrt(var / rtts.size());
-        // jitter = mean absolute deviation between consecutive samples,
-        // same formula VoIP equipment typically uses
+        // jitter calc mean absolute deviation
         if (rtts.size() > 1) {
             double j = 0;
             for (size_t i = 1; i < rtts.size(); i++)
@@ -1763,15 +1756,13 @@ struct HopStats {
     }
 };
  
-// Core engine - owns no state between runs, fully reentrant.
-// Each TracerouteEngine instance is tied to one config + one thread pool.
+// engine core stateless design for full reentrancy
 class TracerouteEngine {
 public:
     explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool)
         : cfg_(cfg), pool_(pool) {}
  
-    // Standard one's complement checksum used in ICMP headers.
-    // Works on any buffer; handles odd-length payloads correctly.
+    // integrity heck bitwise sum for icmp error detection
     static uint16_t icmp_checksum(const void* data, int len) {
         auto p = reinterpret_cast<const uint16_t*>(data);
         uint32_t sum = 0;
@@ -1782,8 +1773,7 @@ public:
         return static_cast<uint16_t>(~sum);
     }
  
-    // Resolve the configured target hostname to an IPv4 address.
-    // Returns false if DNS fails or the result is not AF_INET.
+    // target resolver mandatory a record lookup
     bool resolve_target(std::string& out_ip) {
         struct addrinfo hints{}, *res = nullptr;
         hints.ai_family   = AF_INET;
@@ -1797,8 +1787,7 @@ public:
         return true;
     }
  
-    // PTR record lookup - best effort, returns empty string on failure.
-    // We don't cache results; callers should avoid calling this in a tight loop.
+    // reverse dns best effort ptr lookup
     static std::string reverse_dns(const std::string& ip) {
         struct sockaddr_in sa{};
         sa.sin_family = AF_INET;
@@ -1810,16 +1799,13 @@ public:
         return "";
     }
  
-    // Query Team Cymru's DNS-based ASN service to get the AS number
-    // and description for an IP. Spawns dig via fork so we don't pull
-    // in a DNS library dependency. Returns empty string if dig isn't
-    // installed or the query times out.
+    // cymru lookup fork based asn discovery via dig
     static std::string as_lookup(const std::string& ip) {
         struct in_addr addr;
         if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return "";
         uint8_t* o = reinterpret_cast<uint8_t*>(&addr.s_addr);
         std::ostringstream query;
-        // Cymru format: reverse the octets, append .origin.asn.cymru.com
+        // cymru fmt
         query << (int)o[3] << "." << (int)o[2] << "."
               << (int)o[1] << "." << (int)o[0] << ".origin.asn.cymru.com";
         std::string q = query.str();
@@ -1838,12 +1824,10 @@ public:
         close(fds[0]);
         int st; waitpid(pid, &st, 0);
         std::string result(buf);
-        // dig wraps TXT records in quotes - strip them
+        // quote trimmer strip wrapper quotes from dig txt output
         result.erase(std::remove(result.begin(), result.end(), '"'), result.end());
         while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
             result.pop_back();
-        // Response format: "ASN | prefix | CC | registry | description"
-        // We only care about the first and last fields
         auto pipe_pos = result.find('|');
         if (pipe_pos != std::string::npos) {
             std::string asn = result.substr(0, pipe_pos);
@@ -1857,10 +1841,7 @@ public:
         return "";
     }
  
-    // ICMP Echo probe - the classic traceroute method. Works against
-    // virtually every host but is frequently rate-limited by routers.
-    // We send one echo request and wait for either TTL-exceeded or
-    // echo-reply. Up to 3 receive attempts to filter out unrelated traffic.
+    // icmp echo probe classic ping style trace
     ProbeResult probe_icmp(int ttl, int probe_id, const std::string& target_ip) {
         ProbeResult pr;
         pr.ttl = ttl;
@@ -1882,8 +1863,7 @@ public:
         dest.sin_family = AF_INET;
         inet_pton(AF_INET, target_ip.c_str(), &dest.sin_addr);
  
-        // Build the echo request - sequence encodes TTL+probe so we
-        // can match replies even when probes are running in parallel
+        // packet builder  encode ttl probe id into icmp sequence
         struct { struct icmphdr hdr; char data[56]; } packet{};
         packet.hdr.type             = ICMP_ECHO;
         packet.hdr.code             = 0;
@@ -1902,8 +1882,7 @@ public:
         struct sockaddr_in from{};
         socklen_t fromlen = sizeof(from);
  
-        // Retry loop handles the case where we receive an unrelated ICMP
-        // packet from a different probe running concurrently
+        // packet arbiter retry logic to discard non matching concurrent traffic
         for (int attempts = 0; attempts < 3; attempts++) {
             ssize_t n = recvfrom(sock_recv, buf, sizeof(buf), 0,
                                  (struct sockaddr*)&from, &fromlen);
@@ -1920,7 +1899,7 @@ public:
             char addr_str[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &from.sin_addr, addr_str, sizeof(addr_str));
  
-            // Intermediate hop replied with TTL exceeded
+            // ttl expired handler process reply from non terminal hop
             if (icmp_reply->type == ICMP_TIME_EXCEEDED && icmp_reply->code == ICMP_EXC_TTL) {
                 pr.addr      = addr_str;
                 pr.rtt_ms    = rtt;
@@ -1929,7 +1908,7 @@ public:
                 pr.reply_ttl = ip_hdr->ttl;
                 break;
             }
-            // Got an echo reply - we reached the destination
+            // destination hit terminal hop identified via direct reply
             if (icmp_reply->type == ICMP_ECHOREPLY) {
                 uint16_t recv_id = ntohs(icmp_reply->un.echo.id);
                 if (recv_id == (uint16_t)(getpid() & 0xFFFF)) {
@@ -1941,7 +1920,7 @@ public:
                     break;
                 }
             }
-            // Destination unreachable with frag-needed = path MTU discovery hit
+            // pmtu hit destination unreachable via fragment required flag
             if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_FRAG_NEEDED) {
                 pr.addr           = addr_str;
                 pr.rtt_ms         = rtt;
@@ -1958,10 +1937,7 @@ public:
         return pr;
     }
  
-    // UDP probe - traditional Unix traceroute approach. We send to a
-    // high-numbered port that's almost certainly not listening, so the
-    // destination returns ICMP port-unreachable when we finally arrive.
-    // Port increments per probe to avoid being dropped by stateful firewalls.
+    // udp unix probe traditional high port trace
     ProbeResult probe_udp(int ttl, int probe_id, const std::string& target_ip) {
         ProbeResult pr;
         pr.ttl = ttl;
@@ -2013,10 +1989,10 @@ public:
                 pr.icmp_code = icmp_reply->code;
                 pr.reply_ttl = ip_hdr->ttl;
  
-                // ICMP port unreachable = destination reached
+                // udp termination destination found via closed port rejection
                 if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_PORT_UNREACH)
                     pr.reached_target = true;
-                // MTU hint
+                // mtu hint
                 if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_FRAG_NEEDED)
                     pr.mtu_suggestion = ntohs(icmp_reply->un.frag.mtu);
             }
@@ -2028,10 +2004,7 @@ public:
         return pr;
     }
  
-    // TCP SYN probe on port 80 - useful when ICMP and UDP are blocked
-    // by firewalls but HTTP traffic is allowed through. We initiate a
-    // connection and wait for either a TTL-exceeded ICMP from a router
-    // or a SYN-ACK from the destination itself.
+    // // tcp syn probe bypass firewalls via port 80
     ProbeResult probe_tcp_syn(int ttl, int probe_id, const std::string& target_ip) {
         ProbeResult pr;
         pr.ttl = ttl;
@@ -2054,12 +2027,12 @@ public:
         dest.sin_port   = htons(80);
         inet_pton(AF_INET, target_ip.c_str(), &dest.sin_addr);
  
-        // Non blocking connect so we don't block the thread pool worker
+        // non blocking socket initiate connection without stalling the worker
         fcntl(sock_send, F_SETFL, O_NONBLOCK);
         auto t_start = std::chrono::high_resolution_clock::now();
         connect(sock_send, (struct sockaddr*)&dest, sizeof(dest));
  
-        // Primary path: router returns ICMP TTL exceeded on the raw socket
+        // router intercept capture intermediate hop response from raw-input
         char buf[512];
         struct sockaddr_in from{};
         socklen_t fromlen = sizeof(from);
@@ -2086,7 +2059,7 @@ public:
                     pr.reached_target = true;
             }
         } else {
-            // Fallback: destination sent SYN-ACK, the socket became writable
+            // fallback discovery detect terminal hop via socket state change
             fd_set wfds; FD_ZERO(&wfds); FD_SET(sock_send, &wfds);
             struct timeval stv{0, 10000};
             if (select(sock_send + 1, nullptr, &wfds, nullptr, &stv) > 0) {
@@ -2104,10 +2077,7 @@ public:
         return pr;
     }
  
-    // Main trace loop. Probes TTL values in sliding windows so we're
-    // hitting multiple hops at once rather than waiting hop-by-hop.
-    // Window size = cfg_.parallel_hops. Stops as soon as any probe
-    // in the window reports reached_target = true.
+    // batch processor parallel ttl
     std::vector<HopStats> run(const std::string& target_ip) {
         std::vector<HopStats> hops;
         bool reached = false;
@@ -2116,14 +2086,14 @@ public:
             int end = std::min(base + cfg_.parallel_hops - 1, cfg_.max_hops);
             int count = end - base + 1;
  
-            // 2D matrix: results[hop_index][probe_index]
+            // hop index probe index
             std::vector<std::vector<ProbeResult>> results(count,
                 std::vector<ProbeResult>(cfg_.queries_per_hop));
  
             std::vector<std::future<void>> futs;
             futs.reserve(count * cfg_.queries_per_hop);
  
-            // Submit all probes in this window at once
+            // submit all probes
             for (int h = 0; h < count; h++) {
                 for (int p = 0; p < cfg_.queries_per_hop; p++) {
                     int ttl = base + h;
@@ -2141,10 +2111,10 @@ public:
                     }));
                 }
             }
-            // Wait for every probe in this window to finish before moving on
+            // wait for every probe in this window
             for (auto& f : futs) f.get();
  
-            // Collapse the raw probes into per-hop statistics
+            // collapse the raw probes into per hop statistics
             for (int h = 0; h < count; h++) {
                 HopStats hs;
                 hs.ttl  = base + h;
@@ -2168,7 +2138,7 @@ public:
                 }
                 hs.compute();
  
-                // AS lookup happens after aggregation so we only query once per hop
+                // deduplicated resolver run single cymru lookup per unique hop
                 if (!hs.addr.empty() && cfg_.as_lookup)
                     hs.asn_info = as_lookup(hs.addr);
  
@@ -2184,8 +2154,7 @@ private:
     ThreadPool& pool_;
 };
  
-// Visual latency indicator - 9-segment bar colored green→yellow→red.
-// Gives a quick at-a-glance feel for how bad a hop is without reading numbers.
+// heat map indicator color coded latency bar for rapid hop assessment
 static std::string rtt_bar(double rtt_ms) {
     if (rtt_ms < 0) return std::string(GRAY) + "         " + RESET;
     int buckets[] = {5, 15, 30, 60, 100, 200, 500, 1000, 2000};
@@ -2199,8 +2168,7 @@ static std::string rtt_bar(double rtt_ms) {
     return bar;
 }
  
-// Short human-readable name for each protocol mode - used in headers and
-// the comparison table so the user knows what they're looking at.
+// protocol alias human readable labels for trace mode headers
 static const char* proto_label(TraceConfig::Protocol p) {
     switch (p) {
         case TraceConfig::ICMP:    return "ICMP Echo";
@@ -2210,16 +2178,14 @@ static const char* proto_label(TraceConfig::Protocol p) {
     return "?";
 }
  
-// Entry point called from main(). Handles user input, drives the engine,
-// and renders everything to the terminal. Mode 0 runs all three protocols
-// back-to-back and prints a comparison table at the end.
+// trace runner driver for sequential probing and ui rendering
 static void traceroute(const std::string& target) {
     print_header("ADVANCED TRACEROUTE // " + target);
  
     TraceConfig cfg;
     cfg.target = target;
  
-    // Let the user pick a protocol - or 0 to run all three
+    // input handler capture protocol selection or batch mode trigger
     std::cout << YELLOW << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
     std::string pc;
     std::getline(std::cin >> std::ws, pc);
@@ -2235,7 +2201,7 @@ static void traceroute(const std::string& target) {
         try { cfg.queries_per_hop = std::max(1, std::min(10, std::stoi(qc))); } catch (...) {}
     }
  
-    // Resolve hostname to IP - fall back to treating input as a raw IP
+    // addr resolver resolve hostname with raw ip fallback
     std::string target_ip;
     {
         target_ip = resolve(target);
@@ -2249,8 +2215,7 @@ static void traceroute(const std::string& target) {
         }
     }
  
-    // Encapsulates one full protocol pass: prints the hop table header,
-    // runs the engine, and returns the raw hop data for later analysis.
+    // trace session execute single protocol pass and buffer results
     auto run_pass = [&](TraceConfig::Protocol proto) -> std::vector<HopStats> {
         TraceConfig pcfg = cfg;
         pcfg.protocol = proto;
@@ -2272,7 +2237,7 @@ static void traceroute(const std::string& target) {
         return engine.run(target_ip);
     };
  
-    // Collect results from one or all three protocol passes
+    // collect results
     std::vector<std::pair<TraceConfig::Protocol, std::vector<HopStats>>> all_results;
  
     if (all_modes) {
@@ -2284,15 +2249,12 @@ static void traceroute(const std::string& target) {
         all_results.push_back({cfg.protocol, run_pass(cfg.protocol)});
     }
  
-    // Use the first protocol pass as the primary output for the hop table
     auto hops = all_results[0].second;
  
-    // Render each hop row timeouts get a star line, live hops get full stats
     for (auto& hs : hops) {
         std::cout << CYAN << "  " << std::setw(3) << hs.ttl << "  ";
  
         if (hs.received == 0) {
-            // Every probe for this TTL timed out router is silently dropping
             std::cout << YELLOW << std::left << std::setw(18) << "*"
                       << std::setw(27) << "request timeout"
                       << GRAY  << std::string(36, ' ')
@@ -2309,7 +2271,6 @@ static void traceroute(const std::string& target) {
                   << std::left << std::setw(18) << display_ip
                   << CYAN      << std::setw(27) << sanitize(display_host);
  
-        // Format a millisecond value for the table - negative means no data
         auto fmt_ms = [](double ms) -> std::string {
             if (ms < 0) return "*       ";
             std::ostringstream ss;
@@ -2329,7 +2290,6 @@ static void traceroute(const std::string& target) {
             std::cout << (hs.loss_pct > 0 ? RED : GREEN) << std::setw(6) << loss_str;
         }
  
-        // Only show MTU if we actually got a frag-needed ICMP back
         if (hs.mtu > 0)
             std::cout << MAGENTA << "  MTU:" << hs.mtu;
  
@@ -2343,7 +2303,6 @@ static void traceroute(const std::string& target) {
             std::cout << "\n" << GREEN << BOLD << "  [+] destination reached in " << hs.ttl << " hops\n" << RESET;
     }
  
-    // Per-run summary with an overall quality verdict
     print_section("TRACE SUMMARY");
  
     if (!hops.empty()) {
@@ -2379,7 +2338,6 @@ static void traceroute(const std::string& target) {
         std::cout << CYAN  << "  [reached]       " << (last.is_target ? GREEN "yes" : RED "no (TTL exhausted)")
                   << "\n" << RESET;
  
-        // Simple threshold-based verdict - good enough for a quick read
         std::cout << "\n";
         double avg_rtt = (total_hops > 0) ? total_latency / total_hops : 0;
         if      (avg_rtt < 20 && total_loss == 0 && timeout_hops == 0)
@@ -2392,7 +2350,6 @@ static void traceroute(const std::string& target) {
             std::cout << RED    << "  [quality] POOR -- high latency or significant loss\n" << RESET;
     }
  
-    // Cross protocol comparison table - only shown in mode 0
     if (all_modes && all_results.size() > 1) {
         print_section("PROTOCOL COMPARISON");
         std::cout << "\n" << BOLD << WHITE
@@ -2434,7 +2391,7 @@ static void traceroute(const std::string& target) {
     LOG_INFO("traceroute", "done target=" + target + " hops=" + std::to_string(hops.size()));
 }
  
-//  10. FULL RECON
+// full recon
 static void full_recon(const std::string& ip){
     std::cout<<"\n"<<MAGENTA<<BOLD
              <<"  +"<<std::string(56,'=')<<"+\n"
@@ -2446,7 +2403,7 @@ static void full_recon(const std::string& ip){
     port_scan(ip,0,0);
 }
  
-//  11. SUBDOMAIN SCAN
+// subdmn scan
 static void subdomain_scan(const std::string& domain) {
     print_header("SUBDOMAIN SCAN // " + domain);
 
@@ -2472,7 +2429,7 @@ static void subdomain_scan(const std::string& domain) {
     std::atomic<bool> has_wildcard{false};
     std::set<std::string> wildcard_ips;
 
-    // WORDLIST 
+    // wordlist 
     static const std::vector<std::string> wordlist = {
         "www","mail","ftp","admin","api","dev","test","staging","blog","shop",
         "cdn","static","vpn","remote","portal","app","m","mobile","secure",
@@ -2543,7 +2500,7 @@ static void subdomain_scan(const std::string& domain) {
         std::cout << GREEN << "  [+] no wildcard DNS\n" << RESET;
     }
 
-    // passive sources (crt.sh)
+    // passive sources crtsh
     print_section("PASSIVE ENUM (crt.sh)");
     std::cout << YELLOW << "  querying certificate transparency logs...\n" << RESET;
 
@@ -2574,7 +2531,7 @@ static void subdomain_scan(const std::string& domain) {
         std::cout << GRAY << "  [-] crt.sh unavailable or empty\n" << RESET;
     }
 
-    // merge wordlist + passive
+    // merge wordlist passive
     std::vector<std::string> all_subs;
     std::set<std::string> dedup;
 
@@ -2888,7 +2845,7 @@ static void subdomain_scan(const std::string& domain) {
     LOG_INFO("subdomain_scan", "done domain=" + domain + " found=" + std::to_string(results.size()));
 }
 
-//  BANNER + MENU
+// banner
 static void print_banner(){
     write(STDOUT_FILENO,"\033[2J\033[H",7);
     std::cout<<"\n"<<WHITE<<BOLD;
@@ -2930,7 +2887,7 @@ static void print_menu(){
     std::cout<<"\n"<<GREEN<<BOLD<<"  DARK NEXUS~# "<<RESET;
 }
  
-//  MAIN
+//  main
 int main(){
     // init logger
     Logger::get().init("dark_nexus.log", LogLevel::INFO);
