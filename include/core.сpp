@@ -1,0 +1,197 @@
+#pragma once
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <future>
+#include <queue>
+#include <condition_variable>
+#include <functional>
+#include <sstream>
+#include <iomanip>
+#include <fstream>
+#include <map>
+#include <set>
+#include <algorithm>
+#include <numeric>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cmath>
+#include <regex>
+#include <chrono>
+#include <netdb.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
+#include <arpa/inet.h>
+
+#define RESET   "\033[0m"
+#define RED     "\033[31m"
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define MAGENTA "\033[35m"
+#define CYAN    "\033[36m"
+#define WHITE   "\033[97m"
+#define BOLD    "\033[1m"
+#define DIM     "\033[2m"
+#define GRAY    "\033[90m"
+
+extern std::mutex g_print_mtx;
+
+class ThreadPool {
+public:
+    explicit ThreadPool(size_t n = std::thread::hardware_concurrency()) : stop_(false) {
+        if (n == 0) n = 4;
+        for (size_t i = 0; i < n; ++i) {
+            workers_.emplace_back([this] {
+                for (;;) {
+                    std::function<void()> task;
+                    {
+                        std::unique_lock<std::mutex> lk(mtx_);
+                        cv_.wait(lk, [this]{ return stop_ || !tasks_.empty(); });
+                        if (stop_ && tasks_.empty()) return;
+                        task = std::move(tasks_.front());
+                        tasks_.pop();
+                    }
+                    active_++;
+                    task();
+                    active_--;
+                    done_cv_.notify_all();
+                }
+            });
+        }
+    }
+
+    template<class F, class... Args>
+    auto submit(F&& f, Args&&... args) -> std::future<typename std::invoke_result<F,Args...>::type> {
+        using R = typename std::invoke_result<F,Args...>::type;
+        auto task = std::make_shared<std::packaged_task<R()>>(std::bind(std::forward<F>(f), std::forward<Args>(args)...));
+        auto fut = task->get_future();
+        { std::lock_guard<std::mutex> lk(mtx_); tasks_.emplace([task]{ (*task)(); }); }
+        cv_.notify_one();
+        return fut;
+    }
+
+    void wait() {
+        std::unique_lock<std::mutex> lk(mtx_);
+        done_cv_.wait(lk, [this]{ return tasks_.empty() && active_ == 0; });
+    }
+
+    ~ThreadPool() {
+        { std::unique_lock<std::mutex> lk(mtx_); stop_ = true; }
+        cv_.notify_all();
+        for (auto& w : workers_) w.join();
+    }
+
+private:
+    std::vector<std::thread> workers_;
+    std::queue<std::function<void()>> tasks_;
+    mutable std::mutex mtx_;
+    std::condition_variable cv_, done_cv_;
+    std::atomic<bool> stop_;
+    std::atomic<int>  active_{0};
+};
+
+enum class LogLevel { DEBUG, INFO, WARN, ERROR };
+
+class Logger {
+public:
+    static Logger& get() { static Logger l; return l; }
+
+    void init(const std::string& path, LogLevel min = LogLevel::INFO) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (file_.is_open()) file_.close();
+        file_.open(path, std::ios::app);
+        min_ = min;
+    }
+
+    void log(LogLevel lv, const std::string& mod, const std::string& msg) {
+        if (lv < min_) return;
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto now = std::chrono::system_clock::now();
+        auto t   = std::chrono::system_clock::to_time_t(now);
+        char ts[32]; strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", localtime(&t));
+        if (file_.is_open())
+            file_ << "{\"t\":\"" << ts << "\",\"lv\":\"" << lvstr(lv)
+                  << "\",\"mod\":\"" << mod << "\",\"msg\":\""
+                  << esc(msg) << "\"}\n";
+    }
+
+private:
+    Logger() = default;
+    std::ofstream file_;
+    std::mutex mtx_;
+    LogLevel min_ = LogLevel::INFO;
+
+    static const char* lvstr(LogLevel l) {
+        switch(l){ case LogLevel::DEBUG: return "DBG";
+                   case LogLevel::INFO:  return "INF";
+                   case LogLevel::WARN:  return "WRN";
+                   case LogLevel::ERROR: return "ERR"; }
+        return "?";
+    }
+    static std::string esc(const std::string& s) {
+        std::string o; for(char c:s){ if(c=='"') o+="\\\""; else if(c=='\\') o+="\\\\"; else if(c==10) o+="\\n"; else o+=c; } return o;
+    }
+};
+
+#define LOG_INFO(mod,msg)  Logger::get().log(LogLevel::INFO,  mod, msg)
+#define LOG_WARN(mod,msg)  Logger::get().log(LogLevel::WARN,  mod, msg)
+#define LOG_ERR(mod,msg)   Logger::get().log(LogLevel::ERROR, mod, msg)
+
+struct ProcResult {
+    std::string out, err;
+    int code = -1;
+    bool timed_out = false;
+};
+
+struct ScanResult {
+    std::string target, timestamp;
+    std::vector<std::pair<int,std::string>> open_ports;
+    std::vector<std::string> subdomains, osint_hits;
+    std::string geo_country, geo_city, geo_isp, geo_as, os_guess;
+    bool proxy=false, hosting=false;
+};
+
+extern ScanResult g_result;
+
+ProcResult proc_run(const std::vector<std::string>& args, int timeout_sec = 10, const std::string& stdin_data = "", size_t max_out = 4*1024*1024);
+std::string safe_exec(const std::vector<std::string>& args, int t=8);
+std::string safe_curl(const std::string& url, int t=8);
+bool valid_target(const std::string& s);
+bool valid_username(const std::string& s);
+bool valid_port(int p);
+std::string sanitize(const std::string& s);
+std::string resolve(const std::string& host);
+bool tcp_probe(const std::string& ip, int port, int ms=500);
+std::pair<bool,int> tcp_probe_ms(const std::string& ip, int port, int ms=1000);
+std::string ptr_lookup(const std::string& ip);
+uint16_t icmp_cksum(const void* data, int len);
+std::string svc(int port);
+std::string risk_label(int port);
+std::string banner(const std::string& ip, int port, int ms=1500);
+std::string smart_banner(const std::string& ip, int port, int ms = 2000);
+std::string now_str();
+void export_json(const std::string& fname);
+std::string json_val(const std::string& json, const std::string& key);
+int term_width();
+void draw_progress(int done, int total, const std::string& label="");
+void print_sep();
+void print_header(const std::string& title);
+void print_section(const std::string& title);
+void print_row(const std::string& label, const std::string& val);
+std::string guess_os_from_ports(const std::vector<int>& open);
