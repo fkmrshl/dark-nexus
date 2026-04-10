@@ -3,6 +3,27 @@
 
 #include "core.hpp"
 
+enum class LogLevel { DEBUG, INFO, WARN, ERROR };
+
+class Logger {
+public:
+    static Logger& get() { static Logger l; return l; }
+    void init(const std::string& path, LogLevel min = LogLevel::INFO);
+    void log(LogLevel lv, const std::string& mod, const std::string& msg);
+
+private:
+    Logger() = default;
+    std::ofstream file_;
+    std::mutex mtx_;
+    LogLevel min_ = LogLevel::INFO;
+    static const char* lvstr(LogLevel l);
+    static std::string esc(const std::string& s);
+};
+
+#define LOG_INFO(mod,msg)  Logger::get().log(LogLevel::INFO,  mod, msg)
+#define LOG_WARN(mod,msg)  Logger::get().log(LogLevel::WARN,  mod, msg)
+#define LOG_ERR(mod,msg)   Logger::get().log(LogLevel::ERROR, mod, msg)
+
 class ThreadPool {
 public:
     explicit ThreadPool(size_t n = std::thread::hardware_concurrency())
