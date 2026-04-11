@@ -55,11 +55,9 @@ struct ScanResult {
 extern ScanResult   g_result;
 extern std::mutex   g_print_mtx;
 
-// proc.cpp
 std::string safe_exec(const std::vector<std::string>& args, int t = 8);
 std::string safe_curl(const std::string& url, int t = 8);
 
-// utils.cpp
 bool        valid_target(const std::string& s);
 bool        valid_username(const std::string& s);
 bool        valid_port(int p);
@@ -73,7 +71,6 @@ std::string risk_label(int port);
 std::string banner(const std::string& ip, int port, int ms = 1500);
 std::string smart_banner(const std::string& ip, int port, int ms = 2000);
 
-// ui.cpp
 std::string now_str();
 void        export_json(const std::string& fname);
 std::string json_val(const std::string& json, const std::string& key);
@@ -87,26 +84,20 @@ std::vector<std::string> split_lines(const std::string& s);
 std::string dig_short(const std::string& domain, const std::string& type, int t = 6);
 std::string dig_full(const std::string& domain, const std::string& type, int t = 6);
 
-// port_scan.cpp
 void        port_scan(const std::string& ip, int start, int end_port);
 void        net_scan(const std::string& subnet);
 std::string guess_os_from_ports(const std::vector<int>& open);
 
-// os_detect.cpp
 void os_detect(const std::string& ip);
 
-// ip_intel.cpp
 void ip_intel(const std::string& ip);
 
-// dns.cpp
 void dns_lookup(const std::string& domain);
 void whois_lookup(const std::string& target);
 void site_lookup(const std::string& raw);
 
-// osint.cpp
 void osint_scan(const std::string& username);
 
-// traceroute.cpp
 void traceroute(const std::string& target);
 void full_recon(const std::string& ip);
 
