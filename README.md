@@ -56,7 +56,7 @@ git clone https://github.com/fkmrshl/dark-nexus.git
 
 cd dark-nexus
 
-g++ -std=c++17 -O3 -march=native -flto=auto -pthread dark_nexus.cpp -o dark_nexus -lssl -lcrypto
+make
 
 sudo ./dark_nexus
 ```
