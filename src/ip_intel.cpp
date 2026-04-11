@@ -95,7 +95,8 @@ void ip_intel(const std::string& ip) {
     std::cout<<BOLD<<WHITE<<"  PORT        SERVICE         RISK      BANNER\n  "<<std::string(65,'-')<<"\n"<<RESET;
     bool any=false;
     for(int p:top){
-        if(!tcp_probe(ip,p,600)) continue; any=true;
+        if (!tcp_probe(ip, p, 600)) continue; 
+any = true;
         std::string b=banner(ip,p), s=svc(p);
         std::cout<<GREEN<<"  "<<std::left<<std::setw(12)<<p<<WHITE<<std::setw(16)<<s<<std::setw(10)<<risk_label(p)<<GRAY<<(b.size()>40?b.substr(0,40):b)<<RESET<<"\n";
         g_result.open_ports.push_back({p,s});
