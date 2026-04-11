@@ -101,5 +101,4 @@ void osint_scan(const std::string& username);
 void traceroute(const std::string& target);
 void full_recon(const std::string& ip);
 
-// subdomain.cpp
 void subdomain_scan(const std::string& domain);
