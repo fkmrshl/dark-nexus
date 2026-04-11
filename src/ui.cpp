@@ -1,0 +1,108 @@
+#include "../include/dark_nexus.hpp"
+
+std::string now_str() {
+    time_t t=time(nullptr); char buf[32];
+    strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M:%S",localtime(&t));
+    return buf;
+}
+
+void export_json(const std::string& fname) {
+    std::ofstream f(fname);
+    if (!f){std::cout<<RED<<"  failed to write "<<fname<<"\n"<<RESET;return;}
+    f<<"{\n  \"target\":\""<<g_result.target<<"\",\n";
+    f<<"  \"timestamp\":\""<<g_result.timestamp<<"\",\n";
+    f<<"  \"geo\":{\"country\":\""<<g_result.geo_country<<"\",\"city\":\""<<g_result.geo_city
+     <<"\",\"isp\":\""<<g_result.geo_isp<<"\",\"as\":\""<<g_result.geo_as
+     <<"\",\"proxy\":"<<(g_result.proxy?"true":"false")
+     <<",\"hosting\":"<<(g_result.hosting?"true":"false")<<"},\n";
+    f<<"  \"os\":\""<<g_result.os_guess<<"\",\n";
+    f<<"  \"open_ports\":[\n";
+    for (size_t i=0;i<g_result.open_ports.size();i++){
+        f<<"    {\"port\":"<<g_result.open_ports[i].first<<",\"service\":\""<<g_result.open_ports[i].second<<"\"}";
+        if(i+1<g_result.open_ports.size()) f<<",";
+        f<<"\n";
+    }
+    f<<"  ],\n  \"subdomains\":[";
+    for(size_t i=0;i<g_result.subdomains.size();i++){
+        f<<"\""<<g_result.subdomains[i]<<"\"";
+        if(i+1<g_result.subdomains.size())f<<",";
+    }
+    f<<"],\n  \"osint\":[";
+    for(size_t i=0;i<g_result.osint_hits.size();i++){
+        f<<"\""<<g_result.osint_hits[i]<<"\"";
+        if(i+1<g_result.osint_hits.size())f<<",";
+    }
+    f<<"]\n}\n";
+    std::cout<<GREEN<<"  saved: "<<fname<<"\n"<<RESET;
+    LOG_INFO("export", "json saved: "+fname);
+}
+
+std::string json_val(const std::string& json, const std::string& key) {
+    auto pos=json.find("\""+key+"\"");
+    if(pos==std::string::npos) return "";
+    pos=json.find(':',pos); if(pos==std::string::npos) return "";
+    while(++pos<json.size()&&(json[pos]==' '||json[pos]=='\t'));
+    if(pos>=json.size()) return "";
+    if(json[pos]=='"'){
+        pos++;
+        auto end=json.find('"',pos);
+        return end==std::string::npos?"":json.substr(pos,end-pos);
+    }
+    auto end=json.find_first_of(",}\n",pos);
+    std::string v=json.substr(pos,(end==std::string::npos?json.size():end)-pos);
+    while(!v.empty()&&(v.back()==' '||v.back()=='\r'||v.back()=='\n')) v.pop_back();
+    return v;
+}
+
+int term_width() {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO,TIOCGWINSZ,&w)==0&&w.ws_col>0) return w.ws_col;
+    return 80;
+}
+
+void draw_progress(int done, int total, const std::string& label) {
+    if (total<=0) return;
+    int w=std::min(term_width()-20,50);
+    int filled=(int)((double)done/total*w);
+    std::string bar(filled,'=');
+    if(filled<w) bar+='>';
+    bar+=std::string(std::max(0,w-filled-1),' ');
+    int pct=(int)((double)done/total*100);
+    std::cout<<"\r"<<CYAN<<"  ["<<GREEN<<bar<<CYAN<<"] "<<WHITE<<std::setw(3)<<pct<<"% "<<GRAY<<label<<RESET<<std::flush;
+}
+
+void print_sep() {
+    std::cout<<CYAN<<"  "<<std::string(58,'=')<<RESET<<"\n";
+}
+
+void print_header(const std::string& title) {
+    std::cout<<"\n"<<CYAN<<BOLD<<"  +"<<std::string(58,'-')<<"+\n"
+             <<"  |  "<<WHITE<<std::left<<std::setw(56)<<title<<CYAN<<"|\n"
+             <<"  +"<<std::string(58,'-')<<"+\n"<<RESET;
+}
+
+void print_section(const std::string& title) {
+    int pad=std::max(0,46-(int)title.size());
+    std::cout<<"\n"<<CYAN<<BOLD<<"  -- "<<WHITE<<title<<CYAN<<" "<<std::string(pad,'-')<<RESET<<"\n";
+}
+
+void print_row(const std::string& label, const std::string& val) {
+    if(val.empty()||val=="null") return;
+    std::cout<<CYAN<<"  ["<<WHITE<<std::left<<std::setw(16)<<label<<CYAN<<"] "<<RESET<<sanitize(val)<<"\n";
+}
+
+std::vector<std::string> split_lines(const std::string& s) {
+    std::vector<std::string> v;
+    std::istringstream ss(s);
+    std::string l;
+    while(std::getline(ss,l)) if(!l.empty()) v.push_back(l);
+    return v;
+}
+
+std::string dig_short(const std::string& domain, const std::string& type, int t) {
+    return safe_exec({"dig","+short","+time=4","+tries=2",domain,type}, t);
+}
+
+std::string dig_full(const std::string& domain, const std::string& type, int t) {
+    return safe_exec({"dig","+noall","+answer","+time=4","+tries=2",domain,type}, t);
+}
