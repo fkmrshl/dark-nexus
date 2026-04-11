@@ -39,21 +39,6 @@
 
 ---
 
-## Security Internals
-
-| Property | Implementation |
-|----------|---------------|
-| No shell execution | `fork()` + `execvp()` - zero `system()` or `popen()` calls anywhere |
-| Input validation | Regex whitelist on all user input - only `[a-zA-Z0-9.\-_:/@]` allowed |
-| ANSI sanitization | All captured banners stripped of escape sequences before display (prevents terminal injection) |
-| Memory safety | `std::vector` / `std::string` throughout - no fixed C-style buffers |
-| Non-blocking I/O | Strict socket timeouts on every connect/recv, tarpit-resistant |
-| Thread pool | `std::packaged_task` + `std::future` queue with graceful shutdown, no detached threads |
-| Process timeout | `fork`+`execvp` children killed with `SIGKILL` if they exceed their deadline |
-| Output cap | External process stdout capped at 4MB to prevent memory exhaustion |
-
----
-
 ## Requirements and Installation
 
 - Linux (Kali recommended)
