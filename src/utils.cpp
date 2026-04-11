@@ -69,7 +69,7 @@ std::string ptr_lookup(const std::string& ip) {
     return "";
 }
 
-static uint16_t icmp_cksum(const void* data, int len) {
+[[maybe_unused]] static uint16_t icmp_cksum(const void* data, int len) {
     const uint16_t* buf=(const uint16_t*)data;
     uint32_t sum=0;
     while(len>1){sum+=*buf++;len-=2;}
@@ -77,7 +77,6 @@ static uint16_t icmp_cksum(const void* data, int len) {
     sum=(sum>>16)+(sum&0xffff); sum+=(sum>>16);
     return (uint16_t)~sum;
 }
-(void)icmp_cksum;
 
 std::string svc(int port) {
     static std::map<int,std::string> db={
