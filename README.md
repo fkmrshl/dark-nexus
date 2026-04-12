@@ -34,7 +34,7 @@
 | 8 | **OSINT Username** | Checks username across 40 platforms in 7 categories + DuckDuckGo web mention scrape |
 | 9 | **Traceroute** | Custom ICMP/UDP/TCP_SYN engine: up to 40 hops, 5 probes/hop, 8 parallel TTL levels, RTT/jitter/loss stats, ASN via Team Cymru, MTU detection |
 | 10 | **Full IP Recon** | Chains geo, DNS lookup, OS detection and port scan into one full run |
-| 11 | **Subdomain Scan** | Parallel bruteforce of 50+ subdomains, HTTP/HTTPS port probe, server header grab, statistics, wildcard detection, takeover candidate detection |
+| 11 | **Subdomain Scan** | Hybrid async DNS (c-ares), IPv4/IPv6, HTTP/HTTPS probe, WAF/CMS fingerprinting, Takeover detection & DoH fallback |
 | 12 | **Export JSON** | Saves the last scan result to a structured JSON file |
 
 ---
