@@ -50,7 +50,7 @@
 ```bash
 sudo apt update
 
-sudo apt install build-essential g++ libssl-dev curl whois dnsutils traceroute iputils-ping -y
+sudo apt install build-essential g++ libssl-dev curl whois dnsutils traceroute iputils-ping -y libc-ares-dev
 
 git clone https://github.com/fkmrshl/dark-nexus.git
 
