@@ -229,17 +229,24 @@ struct AresCtx {
     std::atomic<int>* pending;
 };
 
-static void ares_cb(void* arg, int status, int, struct hostent* host) {
+
+static void ares_cb(void* arg, int status, int /* timeouts */, struct ares_addrinfo* res) {
     auto* ctx = static_cast<AresCtx*>(arg);
-    if (status == ARES_SUCCESS && host)
-        for (int i = 0; host->h_addr_list[i]; i++) {
-            char buf[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, host->h_addr_list[i], buf, sizeof(buf));
-            ctx->ips->push_back(std::string(buf));
+    if (status == ARES_SUCCESS && res) {
+        for (struct ares_addrinfo_node* node = res->nodes; node != nullptr; node = node->ai_next) {
+            if (node->ai_family == AF_INET) {
+                struct sockaddr_in* sockaddr = reinterpret_cast<struct sockaddr_in*>(node->ai_addr);
+                char buf[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &sockaddr->sin_addr, buf, sizeof(buf));
+                ctx->ips->push_back(std::string(buf));
+            }
         }
+        ares_freeaddrinfo(res);
+    }
     ctx->pending->fetch_sub(1);
     delete ctx;
 }
+
 
 static std::unordered_map<std::string, std::vector<std::string>>
 async_resolve_batch(const std::vector<std::string>& hosts,
@@ -251,36 +258,41 @@ async_resolve_batch(const std::vector<std::string>& hosts,
 
     ares_library_init(ARES_LIB_INIT_ALL);
     struct ares_options opts{};
-    opts.timeout = 2000; opts.tries = 2;
+    opts.timeout = 2000; 
+    opts.tries = 2;
+    
     ares_channel channel;
-    if (ares_init_options(&channel, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) {
-        ares_library_cleanup(); return results;
+
+    if (ares_init_options(&channel, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES | ARES_OPT_EVENT_THREAD) != ARES_SUCCESS) {
+        ares_library_cleanup(); 
+        return results;
     }
+    
     std::string csv;
     for (size_t i = 0; i < resolvers.size(); i++) { if(i) csv+=","; csv+=resolvers[i]; }
     ares_set_servers_csv(channel, csv.c_str());
 
     std::atomic<int> pending{0};
     size_t sent = 0, total = hosts.size();
+    
     while (sent < total || pending.load() > 0) {
+
         while (sent < total && pending.load() < concurrency) {
             const std::string& h = hosts[sent++];
             pending.fetch_add(1);
-            ares_gethostbyname(channel, h.c_str(), AF_INET, ares_cb,
-                               new AresCtx{h, &results[h], &pending});
+            
+            struct ares_addrinfo_hints hints = {};
+            hints.ai_family = AF_INET;
+
+            ares_getaddrinfo(channel, h.c_str(), nullptr, &hints, ares_cb,
+                             new AresCtx{h, &results[h], &pending});
         }
-        fd_set rfds, wfds;
-        FD_ZERO(&rfds); FD_ZERO(&wfds);
-        int nfds = ares_fds(channel, &rfds, &wfds);
-        if (nfds == 0) {
-            if (pending.load() > 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
+        
+        if (pending.load() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        struct timeval tv{};
-        auto* tvp = ares_timeout(channel, nullptr, &tv);
-        select(nfds, &rfds, &wfds, nullptr, tvp);
-        ares_process(channel, &rfds, &wfds);
     }
+    
     ares_destroy(channel);
     ares_library_cleanup();
     return results;
