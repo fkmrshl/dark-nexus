@@ -38,6 +38,12 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <arpa/inet.h>
+#include <ares.h>
+#include <sys/select.h>
+#include <fstream>
+#include <random>
+#include <unordered_set>
+#include <unordered_map>
 
 #include "colors.hpp"
 #include "logger.hpp"
