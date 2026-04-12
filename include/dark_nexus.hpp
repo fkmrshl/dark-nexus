@@ -107,4 +107,8 @@ void osint_scan(const std::string& username);
 void traceroute(const std::string& target);
 void full_recon(const std::string& ip);
 
-void subdomain_scan(const std::string& domain);
+void subdomain_scan(const std::string& domain, 
+                    const std::string& wordlist_path = "", 
+                    int max_threads = 150,
+                    bool run_permutations = true, 
+                    bool deep_passive = true);
