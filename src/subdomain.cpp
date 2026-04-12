@@ -1,10 +1,4 @@
 #include "../include/dark_nexus.hpp"
-#include <ares.h>
-#include <sys/select.h>
-#include <fstream>
-#include <random>
-#include <unordered_set>
-#include <unordered_map>
 
 
 struct WAFInfo {
