@@ -1,6 +1,6 @@
 CXX      = g++
 CXXFLAGS = -std=c++17 -O3 -march=native -flto=auto -pthread -Wall -Wextra
-LDFLAGS  = -lssl -lcrypto
+LDFLAGS  = -lssl -lcrypto -lcares
 
 TARGET  = dark_nexus
 SRC_DIR = src
