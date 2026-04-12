@@ -1,7 +1,7 @@
 #include "../include/dark_nexus.hpp"
 
 void os_detect(const std::string& ip) {
-    print_header("ADVANCED OS DETECTION // " + ip);
+    print_header("OS DETECTION // " + ip);
 
     struct Check {
         int port; const char* name; const char* cat;
