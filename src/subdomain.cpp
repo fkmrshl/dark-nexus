@@ -1,6 +1,5 @@
 #include "../include/dark_nexus.hpp"
 
-
 struct WAFInfo {
     std::string name;
     std::string confidence;  
