@@ -99,7 +99,9 @@ The author is not responsible for any misuse or damage caused by this tool.
 
 ## Author
 
-Structure & architecture by - [t.me/fuckmarshal](https://t.me/fuckmarshal)  
-Designed by AI
+Structure & code architecture by - 
+[t.me/fuckmarshal](https://t.me/fuckmarshal) 
+
+Designed with AI
 
 Bugs & feedback welcome
