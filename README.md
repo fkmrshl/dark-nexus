@@ -89,7 +89,7 @@ sudo ./dark_nexus
   |  [5] | DNS LOOKUP         | google.com                       |
   |  [6] | WHOIS LOOKUP       | google.com / 8.8.8.8             |
   |  [7] | SITE --> IP        | https://google.com               |
-  |  [8] | OSINT USERNAME     | marshal                          |
+  |  [8] | OSINT USERNAME     | user / user@mail.com / +7900...  |
   |  [9] | TRACEROUTE         | 8.8.8.8                          |
   | [10] | FULL IP RECON      | 8.8.8.8                          |
   | [11] | SUBDOMAIN SCAN     | google.com                       |
