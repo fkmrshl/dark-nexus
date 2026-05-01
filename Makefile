@@ -6,8 +6,15 @@ TARGET  = dark_nexus
 SRC_DIR = src
 INC_DIR = include
 
-WORDLIST_DIR = wordlists
-WORDLIST_URL = https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/wordlists/subdomains.txt
+WORDLIST_URl = 
+wordlist:
+	@if [ ! -f ./best-dns-wordlist.txt ]; then \
+		echo "Downloading DNS wordlist..."; \
+		curl -sSL $(WORDLIST_URL) -o ./best-dns-wordlist.txt; \
+		echo "Wordlist downloaded successfully."; \
+	else \
+		echo "Wordlist already exists."; \
+	fi
 
 SRCS = $(SRC_DIR)/globals.cpp \
        $(SRC_DIR)/proc.cpp \
