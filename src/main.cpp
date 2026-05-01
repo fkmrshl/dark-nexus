@@ -30,7 +30,7 @@ static void print_menu() {
     row(" [5]","DNS LOOKUP",     "google.com");
     row(" [6]","WHOIS LOOKUP",   "google.com / 8.8.8.8");
     row(" [7]","SITE --> IP",    "https://google.com");
-    row(" [8]","OSINT USERNAME", "marshal");
+    row(" [8]","OSINT",          "user / user@mail.com / +7900...");
     row(" [9]","TRACEROUTE",     "8.8.8.8");
     row("[10]","FULL IP RECON",  "8.8.8.8");
     row("[11]","SUBDOMAIN SCAN", "google.com");
@@ -62,16 +62,57 @@ int main() {
         }
 
         if(choice==8){
-            std::string u; std::cout<<GREEN<<"\n  username: "<<RESET; std::cin>>u;
-            if(!valid_username(u)){std::cout<<RED<<"  invalid username\n"<<RESET;}
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::string u;
+            std::cout<<GREEN<<"\n  osint target "<<RESET<<GRAY<<"(username / email / +phone): "<<RESET;
+            std::getline(std::cin, u);
+            while(!u.empty()&&(u.front()==' '||u.front()=='\t')) u.erase(u.begin());
+            while(!u.empty()&&(u.back()==' '||u.back()=='\t'))   u.pop_back();
+            if(u.empty()){std::cout<<RED<<"  empty input\n"<<RESET;}
             else osint_scan(u);
         } else if(choice==7){
             std::string s; std::cout<<GREEN<<"\n  site: "<<RESET; std::cin>>s;
             site_lookup(s);
         } else if(choice==11){
-            std::string d; std::cout<<GREEN<<"\n  domain: "<<RESET; std::cin>>d;
-            if(!valid_target(d)){std::cout<<RED<<"  invalid domain\n"<<RESET;}
-            else subdomain_scan(d);
+            std::string d;
+            std::cout<<GREEN<<"\n  domain: "<<RESET; std::cin>>d;
+            if(!valid_target(d)){
+                std::cout<<RED<<"  invalid domain\n"<<RESET;
+            } else {
+                std::string wl = auto_find_wordlist();
+
+                std::cout<<"\n"<<CYAN<<"  +----------------------------------------------------------+----------+\n"<<RESET;
+                std::cout<<CYAN<<"  | "<<WHITE<<BOLD<<std::left<<std::setw(56)<<"SUBDOMAIN SCAN"<<CYAN<<" | "<<std::setw(8)<<"INFO"<<CYAN<<" |\n"<<RESET;
+                std::cout<<CYAN<<"  +----------------------------------------------------------+----------+\n"<<RESET;
+
+                if (wl.empty()) {
+                    std::cout<<CYAN<<"  | "<<YELLOW<<std::left<<std::setw(56)<<"wordlist: not found, using builtin ~300 words"<<CYAN<<" |          |\n"<<RESET;
+                } else {
+                    std::string wl_short = wl.size() > 54 ? "..."+wl.substr(wl.size()-51) : wl;
+                    std::cout<<CYAN<<"  | "<<GREEN<<std::left<<std::setw(56)<<("[*] wordlist: "+wl_short)<<CYAN<<" |          |\n"<<RESET;
+                }
+                std::cout<<CYAN<<"  +----------------------------------------------------------+----------+\n"<<RESET;
+
+                std::cout<<"\n"<<CYAN<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
+                std::cout<<CYAN<<"  | "<<WHITE<<BOLD<<std::left<<std::setw(3)<<"MOD"<<RESET<<CYAN<<" | "<<WHITE<<BOLD<<std::left<<std::setw(50)<<"DESCRIPTION"<<CYAN<<" | "<<std::setw(8)<<"ETA"<<CYAN<<" |\n"<<RESET;
+                std::cout<<CYAN<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
+                std::cout<<CYAN<<"  | "<<GREEN<<BOLD<<" F"<<RESET<<CYAN<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  — builtin 300 words + passive + enrich"<<CYAN<<" | "<<GRAY<<"~3 min  "<<CYAN<<" |\n"<<RESET;
+                std::cout<<CYAN<<"  | "<<YELLOW<<BOLD<<" D"<<RESET<<CYAN<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  — full wordlist + all sources + takeover scan"<<CYAN<<" | "<<GRAY<<"~1-2hr  "<<CYAN<<" |\n"<<RESET;
+                std::cout<<CYAN<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
+
+                std::cout<<GREEN<<"  select mode [F/D]: "<<RESET;
+                std::string mode_in; std::cin>>mode_in;
+                char mode = mode_in.empty() ? 'F' : (char)toupper(mode_in[0]);
+                if (mode != 'F' && mode != 'D') { mode = 'F'; std::cout<<YELLOW<<"  [!] defaulting to FAST\n"<<RESET; }
+
+                if (mode == 'F') {
+                    std::cout<<GREEN<<"  [*] FAST: passive + builtin 300 words + HTTP enrich + takeover\n"<<RESET;
+                    subdomain_scan(d, "", 200, false, true, true);
+                } else {
+                    std::cout<<YELLOW<<"  [*] DEEP: full wordlist + all sources + enrich + takeover validation\n"<<RESET;
+                    subdomain_scan(d, wl, 200, true, true, true);
+                }
+            }
         } else {
             std::string target; std::cout<<GREEN<<"\n  target: "<<RESET; std::cin>>target;
             if(!valid_target(target)){std::cout<<RED<<"  invalid input\n"<<RESET;continue;}
