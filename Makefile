@@ -1,20 +1,16 @@
 CXX      = g++
-CXXFLAGS = -std=c++17 -O3 -march=native -flto=auto -pthread -Wall -Wextra
-LDFLAGS  = -lssl -lcrypto -lcares -lcurl -luring
+
+CXXFLAGS = -std=c++17 -O3 -march=native -flto=auto -pthread \
+           -pipe -fno-plt -Wall -Wextra
+
+LDFLAGS  = -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now \
+           -lssl -lcrypto -lcares -lcurl -luring
 
 TARGET  = dark_nexus
 SRC_DIR = src
 INC_DIR = include
 
-WORDLIST_URl = https://raw.githubusercontent.com/fkmrshl/dark-nexus/refs/heads/main/best-dns-wordlist.txt 
-wordlist:
-	@if [ ! -f ./best-dns-wordlist.txt ]; then \
-		echo "Downloading DNS wordlist..."; \
-		curl -sSL $(WORDLIST_URL) -o ./best-dns-wordlist.txt; \
-		echo "Wordlist downloaded successfully."; \
-	else \
-		echo "Wordlist already exists."; \
-	fi
+WORDLIST_URL = https://raw.githubusercontent.com/fkmrshl/dark-nexus/refs/heads/main/best-dns-wordlist.txt 
 
 SRCS = $(SRC_DIR)/globals.cpp \
        $(SRC_DIR)/proc.cpp \
@@ -41,16 +37,15 @@ $(SRC_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) $(CXXFLAGS) -I$(INC_DIR) -c -o $@ $<
 
 wordlist:
-	@mkdir -p $(WORDLIST_DIR)
-	@if [ ! -f $(WORDLIST_DIR)/subdomains.txt ]; then \
-		echo "Downloading subdomain wordlist..."; \
-		curl -sSL $(WORDLIST_URL) -o $(WORDLIST_DIR)/subdomains.txt; \
-		echo "Wordlist downloaded to $(WORDLIST_DIR)/subdomains.txt"; \
+	@if [ ! -f ./best-dns-wordlist.txt ]; then \
+		echo "Downloading DNS wordlist..."; \
+		curl -sSL $(WORDLIST_URL) -o ./best-dns-wordlist.txt; \
+		echo "Wordlist downloaded successfully."; \
 	else \
-		echo "Wordlist already exists in $(WORDLIST_DIR)/"; \
+		echo "Wordlist already exists."; \
 	fi
 
+clean:
 	rm -f $(SRC_DIR)/*.o $(TARGET)
-	rm -rf $(WORDLIST_DIR)
 
-.PHONY: all clean wordlist
+.PHONY: clean all wordlist
