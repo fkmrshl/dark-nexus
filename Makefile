@@ -6,7 +6,7 @@ TARGET  = dark_nexus
 SRC_DIR = src
 INC_DIR = include
 
-WORDLIST_URl = 
+WORDLIST_URl = https://raw.githubusercontent.com/fkmrshl/dark-nexus/refs/heads/main/best-dns-wordlist.txt 
 wordlist:
 	@if [ ! -f ./best-dns-wordlist.txt ]; then \
 		echo "Downloading DNS wordlist..."; \
