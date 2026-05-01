@@ -31,7 +31,7 @@
 | 5 | **DNS Lookup** | Parallel queries for A/AAAA/MX/NS/TXT/CNAME/SOA/CAA/SRV + SPF chain expansion, DMARC, DNSSEC detection, AXFR zone transfer attempt |
 | 6 | **WHOIS Lookup** | Full WHOIS data for a domain or IP with structured field extraction |
 | 7 | **Site → IP** | Strips protocol/path from any URL, resolves to IP, runs full intel on it |
-| 8 | **OSINT Username** | Checks username across 40 platforms in 7 categories + DuckDuckGo web mention scrape |
+| 8 | **OSINT Username** | OSINT Intelligence & Identity Graph: Multi-vector Identity Graph (User/Email/Phone) with detect input type, bayes score verification, cross_reference orchestration (Sherlock, Maigret, Holehe, PhoneInfoga), Breach Intelligence.|
 | 9 | **Traceroute** | Custom ICMP/UDP/TCP_SYN engine: up to 40 hops, 5 probes/hop, 8 parallel TTL levels, RTT/jitter/loss stats, ASN via Team Cymru, MTU detection |
 | 10 | **Full IP Recon** | Chains geo, DNS lookup, OS detection and port scan into one full run |
 | 11 | **Subdomain Scan** | Custom `DnsEngine` on c-ares - multi-channel parallel resolver with `poll()` + automatic `io_uring` on kernel ≥ 5.1, DoH cascade fallback, TTL cache. Two modes: **FAST** (~3 min) and **DEEP** (~1-2hr). Passive recon from 11 sources. WAF fingerprinting - 16 providers (Cloudflare, Akamai, Imperva, F5, AWS WAF…). Tech stack detection language, framework, CMS, CDN per subdomain. Takeover validation - live fingerprint check against 35+ services |
@@ -45,23 +45,23 @@
 - `g++` with C++17 support
 - `curl` `whois` `dig` `traceroute` `openssl` `ping`
 
-```bash                                             
-sudo apt update && sudo apt install -y \               
-    build-essential \
-    g++ \
-    libssl-dev \
-    libcurl4-openssl-dev \
-    libc-ares-dev \
-    liburing-dev \
-    curl \
-    whois \
-    dnsutils \
-    traceroute \
-    iputils-ping
+                                             
+## For Debian / Kali Linux:
+```bash
+sudo apt update && sudo apt install -y \
+    build-essential g++ libssl-dev libcurl4-openssl-dev \
+    libc-ares-dev liburing-dev curl whois dnsutils traceroute iputils-ping
 ```
 
----
- 
+
+## For Arch Linux / BlackArch: 
+```bash
+sudo pacman -Syu --needed base-devel openssl curl c-ares \
+    liburing whois bind traceroute iputils
+```
+
+
+## Build & Setup
 ```bash
 git clone https://github.com/fkmrshl/dark-nexus.git
 
