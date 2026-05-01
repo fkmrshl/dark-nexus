@@ -33,7 +33,6 @@
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
-#include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
@@ -47,8 +46,8 @@
 
 #include "colors.hpp"
 #include "logger.hpp"
-#include "thread_pool.hpp"
 #include "traceroute.hpp"
+#include "thread_pool.hpp"
 
 struct ScanResult {
     std::string target, timestamp;
@@ -106,9 +105,12 @@ void osint_scan(const std::string& username);
 
 void traceroute(const std::string& target);
 void full_recon(const std::string& ip);
+std::string auto_find_wordlist();
 
-void subdomain_scan(const std::string& domain, 
-                    const std::string& wordlist_path = "", 
+void subdomain_scan(const std::string& domain,
+                    const std::string& wordlist_path = "",
                     int max_threads = 200,
-                    bool run_permutations = true, 
-                    bool deep_passive = true);
+                    bool run_permutations = true,
+                    bool deep_passive = true,
+                    bool do_enrich = true);
+std::string auto_find_wordlist();
