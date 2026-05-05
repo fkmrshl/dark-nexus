@@ -4,7 +4,7 @@
 class TracerouteEngine {
 public:
     explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool)
-        : cfg_(cfg), pool_(pool) {}
+    : cfg_(cfg), pool_(pool) {}
 
     static uint16_t icmp_checksum(const void* data, int len) {
         auto p = reinterpret_cast<const uint16_t*>(data);
@@ -35,7 +35,7 @@ public:
         inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
         char host[NI_MAXHOST];
         if (getnameinfo((struct sockaddr*)&sa, sizeof(sa),
-                        host, sizeof(host), nullptr, 0, NI_NAMEREQD) == 0)
+            host, sizeof(host), nullptr, 0, NI_NAMEREQD) == 0)
             return host;
         return "";
     }
@@ -257,7 +257,70 @@ public:
                 if (pr.addr == target_ip) pr.reached_target = true;
             }
         } else {
-            fd_set wfds; FD_ZERO(&wfds); FD_SET(sock_send, &wfds);
+            fd_set wfds; FD_ZERO(&wfds); FD_SET(sock_send, &wfds);#include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
+
+class TracerouteEngine {
+public:
+    explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool)
+        : cfg_(cfg), pool_(pool) {}
+
+    static uint16_t icmp_checksum(const void* data, int len) {
+        auto p = reinterpret_cast<const uint16_t*>(data);
+        uint32_t sum = 0;
+        for (; len > 1; len -= 2) sum += *p++;
+        if (len == 1) sum += *reinterpret_cast<const uint8_t*>(p);
+        sum = (sum >> 16) + (sum & 0xffff);
+        sum += (sum >> 16);
+        return static_cast<uint16_t>(~sum);
+    }
+
+    bool resolve_target(std::string& out_ip) {
+        struct addrinfo hints{}, *res = nullptr;
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_RAW;
+        if (getaddrinfo(cfg_.target.c_str(), nullptr, &hints, &res) != 0 || !res)
+            return false;
+        char buf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &((struct sockaddr_in*)res->ai_addr)->sin_addr, buf, sizeof(buf));
+        out_ip = buf;
+        freeaddrinfo(res);
+        return true;
+    }
+
+    static std::string reverse_dns(const std::string& ip) {
+        struct sockaddr_in sa{};
+        sa.sin_family = AF_INET;
+        inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
+        char host[NI_MAXHOST];
+        if (getnameinfo((struct sockaddr*)&sa, sizeof(sa),
+                        host, sizeof(host), nullptr, 0, NI_NAMEREQD) == 0)
+            return host;
+        return "";
+    }
+
+    static std::string as_lookup(const std::string& ip) {
+        struct in_addr addr;
+        if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return "";
+
+        uint8_t* o = reinterpret_cast<uint8_t*>(&addr.s_addr);
+        std::string q = std::to_string((int)o[3]) + "." + std::to_string((int)o[2]) + "."
+        + std::to_string((int)o[1]) + "." + std::to_string((int)o[0])
+        + ".origin.asn.cymru.com";
+
+        std::string result = safe_exec({"dig", "+short", "+time=1", "+tries=1", q, "TXT"}, 3);
+        result = InputGuard::sanitize_output(result);
+        result.erase(std::remove(result.begin(), result.end(), '"'), result.end());
+        while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
+            result.pop_back();
+
+        auto pipe_pos = result.find('|');
+        if (pipe_pos != std::string::npos) {
+            std::string asn = result.substr(0, pipe_pos);
+            while (!asn.empty() && asn.back() == ' ') asn.pop_back();
+
+            auto desc_pos = result.rfind('|');
+
             struct timeval stv{0, 10000};
             if (select(sock_send + 1, nullptr, &wfds, nullptr, &stv) > 0) {
                 auto t_end = std::chrono::high_resolution_clock::now();
@@ -280,7 +343,7 @@ public:
             int count = end - base + 1;
 
             std::vector<std::vector<ProbeResult>> results(count,
-                std::vector<ProbeResult>(cfg_.queries_per_hop));
+                                                          std::vector<ProbeResult>(cfg_.queries_per_hop));
 
             std::vector<std::future<void>> futs;
             futs.reserve(count * cfg_.queries_per_hop);
@@ -291,15 +354,15 @@ public:
                     int pid = p;
                     int hi  = h;
                     futs.push_back(pool_.submit([this, ttl, pid, hi, p,
-                                                  &results, &target_ip] {
-                        ProbeResult pr;
-                        switch (cfg_.protocol) {
-                            case TraceConfig::ICMP:    pr = probe_icmp(ttl, pid, target_ip);    break;
-                            case TraceConfig::UDP:     pr = probe_udp(ttl, pid, target_ip);     break;
-                            case TraceConfig::TCP_SYN: pr = probe_tcp_syn(ttl, pid, target_ip); break;
-                        }
-                        results[hi][p] = pr;
-                    }));
+                                                &results, &target_ip] {
+                                                    ProbeResult pr;
+                                                    switch (cfg_.protocol) {
+                                                        case TraceConfig::ICMP:    pr = probe_icmp(ttl, pid, target_ip);    break;
+                                                        case TraceConfig::UDP:     pr = probe_udp(ttl, pid, target_ip);     break;
+                                                        case TraceConfig::TCP_SYN: pr = probe_tcp_syn(ttl, pid, target_ip); break;
+                                                    }
+                                                    results[hi][p] = pr;
+                                                }));
                 }
             }
             for (auto& f : futs) f.get();
@@ -336,12 +399,11 @@ private:
 };
 
 static std::string rtt_bar(double rtt_ms) {
-    if (rtt_ms < 0) return std::string(GRAY) + "         " + RESET;
+    if (rtt_ms < 0) return std::string(BLOOD_RED) + "         " + RESET;
     int buckets[] = {5, 15, 30, 60, 100, 200, 500, 1000, 2000};
     int idx = 0;
     for (int b : buckets) { if (rtt_ms < b) break; idx++; }
-    const char* colors[] = {GREEN, GREEN, CYAN, CYAN, YELLOW, YELLOW, RED, RED, RED, RED};
-    std::string bar = colors[idx];
+    std::string bar = std::string(WHITE);
     bar += std::string(std::min(idx + 1, 9), '|');
     bar += std::string(std::max(0, 9 - idx - 1), ' ');
     bar += RESET;
@@ -363,7 +425,7 @@ void traceroute(const std::string& target) {
     TraceConfig cfg;
     cfg.target = target;
 
-    std::cout << YELLOW << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
+    std::cout << BLOOD_RED << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
     std::string pc;
     std::getline(std::cin >> std::ws, pc);
     bool all_modes = (pc == "0");
@@ -371,7 +433,7 @@ void traceroute(const std::string& target) {
     else if (pc == "3") cfg.protocol = TraceConfig::TCP_SYN;
     else                cfg.protocol = TraceConfig::ICMP;
 
-    std::cout << YELLOW << "  probes/hop (default=5): " << RESET;
+    std::cout << BLOOD_RED << "  probes/hop (default=5): " << RESET;
     std::string qc;
     std::getline(std::cin >> std::ws, qc);
     if (!qc.empty()) {
@@ -385,7 +447,7 @@ void traceroute(const std::string& target) {
             if (inet_addr(target.c_str()) != INADDR_NONE)
                 target_ip = target;
             else {
-                std::cout << RED << "  could not resolve " << target << "\n" << RESET;
+                std::cout << BLOOD_RED << "  could not resolve " << WHITE << target << "\n" << RESET;
                 return;
             }
         }
@@ -395,17 +457,17 @@ void traceroute(const std::string& target) {
         TraceConfig pcfg = cfg;
         pcfg.protocol = proto;
 
-        std::cout << "\n" << CYAN << "  target:   " << WHITE << target_ip << "\n"
-                  << CYAN << "  protocol: " << BOLD << WHITE << proto_label(proto) << "\n" << RESET
-                  << CYAN << "  probes:   " << WHITE << pcfg.queries_per_hop << "/hop\n"
-                  << CYAN << "  max hops: " << WHITE << pcfg.max_hops << "\n"
-                  << CYAN << "  parallel: " << WHITE << pcfg.parallel_hops << " hops at once\n"
-                  << RESET << "\n";
+        std::cout << "\n" << BLOOD_RED << "  target:   " << WHITE << target_ip << "\n"
+        << BLOOD_RED << "  protocol: " << WHITE << BOLD << proto_label(proto) << "\n" << RESET
+        << BLOOD_RED << "  probes:   " << WHITE << pcfg.queries_per_hop << BLOOD_RED << "/hop\n"
+        << BLOOD_RED << "  max hops: " << WHITE << pcfg.max_hops << "\n"
+        << BLOOD_RED << "  parallel: " << WHITE << pcfg.parallel_hops << BLOOD_RED << " hops at once\n"
+        << RESET << "\n";
 
-        std::cout << BOLD << WHITE
-                  << "  HOP  ADDRESS           HOSTNAME                  "
-                     "AVG      MIN      MAX      JITTER   LOSS  AS INFO\n"
-                  << "  " << std::string(110, '-') << "\n" << RESET;
+        std::cout << BLOOD_RED << BOLD
+        << "  HOP  ADDRESS           HOSTNAME                  "
+        "AVG      MIN      MAX      JITTER   LOSS  AS INFO\n"
+        << "  " << std::string(110, '-') << "\n" << RESET;
 
         ThreadPool pool(pcfg.parallel_hops * pcfg.queries_per_hop);
         TracerouteEngine engine(pcfg, pool);
@@ -426,14 +488,14 @@ void traceroute(const std::string& target) {
     auto hops = all_results[0].second;
 
     for (auto& hs : hops) {
-        std::cout << CYAN << "  " << std::setw(3) << hs.ttl << "  ";
+        std::cout << BLOOD_RED << "  " << WHITE << std::setw(3) << hs.ttl << "  ";
 
         if (hs.received == 0) {
-            std::cout << YELLOW << std::left << std::setw(18) << "*"
-                      << std::setw(27) << "request timeout"
-                      << GRAY  << std::string(36, ' ')
-                      << RED   << "100%"
-                      << RESET << "\n";
+            std::cout << WHITE << std::left << std::setw(18) << "*"
+            << BLOOD_RED << std::setw(27) << "request timeout"
+            << BLOOD_RED << std::string(36, ' ')
+            << WHITE   << "100%"
+            << RESET << "\n";
             continue;
         }
 
@@ -441,9 +503,9 @@ void traceroute(const std::string& target) {
         std::string display_host = hs.hostname.empty() ? "" : hs.hostname;
         if (display_host.size() > 26) display_host = display_host.substr(0, 23) + "...";
 
-        std::cout << (hs.is_target ? GREEN : WHITE)
-                  << std::left << std::setw(18) << display_ip
-                  << CYAN      << std::setw(27) << sanitize(display_host);
+        std::cout << WHITE
+        << std::left << std::setw(18) << display_ip
+        << WHITE     << std::setw(27) << sanitize(display_host);
 
         auto fmt_ms = [](double ms) -> std::string {
             if (ms < 0) return "*       ";
@@ -452,29 +514,29 @@ void traceroute(const std::string& target) {
             return ss.str();
         };
 
-        std::cout << YELLOW << std::setw(9) << fmt_ms(hs.avg_rtt)
-                  << GREEN  << std::setw(9) << fmt_ms(hs.min_rtt)
-                  << RED    << std::setw(9) << fmt_ms(hs.max_rtt);
+        std::cout << WHITE << std::setw(9) << fmt_ms(hs.avg_rtt)
+        << WHITE << std::setw(9) << fmt_ms(hs.min_rtt)
+        << WHITE << std::setw(9) << fmt_ms(hs.max_rtt);
 
         if (cfg.show_jitter)
-            std::cout << CYAN << std::setw(9) << fmt_ms(hs.jitter);
+            std::cout << WHITE << std::setw(9) << fmt_ms(hs.jitter);
 
         if (cfg.show_loss) {
             std::string loss_str = std::to_string((int)hs.loss_pct) + "%";
-            std::cout << (hs.loss_pct > 0 ? RED : GREEN) << std::setw(6) << loss_str;
+            std::cout << WHITE << std::setw(6) << loss_str;
         }
 
         if (hs.mtu > 0)
-            std::cout << MAGENTA << "  MTU:" << hs.mtu;
+            std::cout << BLOOD_RED << "  MTU:" << WHITE << hs.mtu;
 
         if (!hs.asn_info.empty())
-            std::cout << GRAY << "  " << hs.asn_info.substr(0, 28);
+            std::cout << WHITE << "  " << hs.asn_info.substr(0, 28);
 
         std::cout << "  " << rtt_bar(hs.avg_rtt);
         std::cout << RESET << "\n";
 
         if (hs.is_target)
-            std::cout << "\n" << GREEN << BOLD << "  [+] destination reached in " << hs.ttl << " hops\n" << RESET;
+            std::cout << "\n" << BLOOD_RED << BOLD << "  [+] " << WHITE << "destination reached in " << hs.ttl << BLOOD_RED << " hops\n" << RESET;
     }
 
     print_section("TRACE SUMMARY");
@@ -495,44 +557,42 @@ void traceroute(const std::string& target) {
         }
 
         auto& last = hops.back();
-        std::cout << CYAN  << "  [hops]          " << WHITE << total_hops << "\n" << RESET;
-        std::cout << CYAN  << "  [total RTT]     " << WHITE << std::fixed << std::setprecision(1)
-                  << total_latency << "ms\n" << RESET;
-        std::cout << CYAN  << "  [timeout hops]  " << (timeout_hops > 0 ? YELLOW : GREEN)
-                  << timeout_hops << "\n" << RESET;
-        std::cout << CYAN  << "  [hops w/ loss]  " << (total_loss > 0 ? RED : GREEN)
-                  << total_loss << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [hops]          " << WHITE << total_hops << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [total RTT]     " << WHITE << std::fixed << std::setprecision(1)
+        << total_latency << "ms\n" << RESET;
+        std::cout << BLOOD_RED << "  [timeout hops]  " << WHITE << timeout_hops << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [hops w/ loss]  " << WHITE << total_loss << "\n" << RESET;
         if (max_jitter > 0)
-            std::cout << CYAN << "  [worst jitter]  " << WHITE
-                      << std::fixed << std::setprecision(1) << max_jitter << "ms  "
-                      << GRAY << "@ " << worst_hop << "\n" << RESET;
-        std::cout << CYAN  << "  [reached]       "
-                  << (last.is_target ? GREEN "yes" : RED "no (TTL exhausted)")
-                  << "\n" << RESET;
+            std::cout << BLOOD_RED << "  [worst jitter]  " << WHITE
+            << std::fixed << std::setprecision(1) << max_jitter << "ms  "
+            << BLOOD_RED << "@ " << WHITE << worst_hop << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [reached]       " << WHITE
+        << (last.is_target ? "yes" : "no (TTL exhausted)")
+        << "\n" << RESET;
 
         std::cout << "\n";
         double avg_rtt = (total_hops > 0) ? total_latency / total_hops : 0;
         if      (avg_rtt < 20 && total_loss == 0 && timeout_hops == 0)
-            std::cout << GREEN  << BOLD << "  [quality] EXCELLENT -- low latency, no loss\n" << RESET;
+            std::cout << BLOOD_RED << BOLD << "  [quality] " << WHITE << "EXCELLENT -- low latency, no loss\n" << RESET;
         else if (avg_rtt < 80 && total_loss <= 1)
-            std::cout << GREEN  << "  [quality] GOOD -- acceptable path\n" << RESET;
+            std::cout << BLOOD_RED << "  [quality] " << WHITE << "GOOD -- acceptable path\n" << RESET;
         else if (avg_rtt < 200 || total_loss <= 2)
-            std::cout << YELLOW << "  [quality] FAIR -- some congestion or loss detected\n" << RESET;
+            std::cout << BLOOD_RED << "  [quality] " << WHITE << "FAIR -- some congestion or loss detected\n" << RESET;
         else
-            std::cout << RED    << "  [quality] POOR -- high latency or significant loss\n" << RESET;
+            std::cout << BLOOD_RED << "  [quality] " << WHITE << "POOR -- high latency or significant loss\n" << RESET;
     }
 
     if (all_modes && all_results.size() > 1) {
         print_section("PROTOCOL COMPARISON");
-        std::cout << "\n" << BOLD << WHITE
-                  << "  " << std::left << std::setw(12) << "PROTOCOL"
-                  << std::setw(8)  << "HOPS"
-                  << std::setw(12) << "TOTAL RTT"
-                  << std::setw(10) << "AVG/HOP"
-                  << std::setw(10) << "TIMEOUTS"
-                  << std::setw(8)  << "REACHED"
-                  << "QUALITY\n"
-                  << "  " << std::string(80, '-') << "\n" << RESET;
+        std::cout << "\n" << BLOOD_RED << BOLD
+        << "  " << std::left << std::setw(12) << "PROTOCOL"
+        << std::setw(8)  << "HOPS"
+        << std::setw(12) << "TOTAL RTT"
+        << std::setw(10) << "AVG/HOP"
+        << std::setw(10) << "TIMEOUTS"
+        << std::setw(8)  << "REACHED"
+        << "QUALITY\n"
+        << "  " << std::string(80, '-') << "\n" << RESET;
 
         for (auto& [proto, ph] : all_results) {
             double total_rtt = 0; int timeouts = 0; bool reached = false; int valid = 0;
@@ -542,19 +602,19 @@ void traceroute(const std::string& target) {
                 if (h.is_target) reached = true;
             }
             double avg_per_hop = valid > 0 ? total_rtt / valid : 0;
-            std::string quality; const char* qcolor;
-            if      (avg_per_hop < 20 && timeouts == 0) { quality = "EXCELLENT"; qcolor = GREEN; }
-            else if (avg_per_hop < 80 && timeouts <= 1)  { quality = "GOOD";      qcolor = GREEN; }
-            else if (avg_per_hop < 200 || timeouts <= 2) { quality = "FAIR";      qcolor = YELLOW;}
-            else                                          { quality = "POOR";      qcolor = RED;   }
+            std::string quality;
+            if      (avg_per_hop < 20 && timeouts == 0) { quality = "EXCELLENT"; }
+            else if (avg_per_hop < 80 && timeouts <= 1)  { quality = "GOOD"; }
+            else if (avg_per_hop < 200 || timeouts <= 2) { quality = "FAIR"; }
+            else                                          { quality = "POOR"; }
 
-            std::cout << "  " << CYAN  << std::left << std::setw(12) << proto_label(proto)
-                      << WHITE << std::setw(8)  << ph.size()
-                      << YELLOW<< std::setw(12) << (std::to_string((int)total_rtt) + "ms")
-                      << CYAN  << std::setw(10) << (std::to_string((int)avg_per_hop) + "ms")
-                      << (timeouts > 0 ? RED : GRAY) << std::setw(10) << timeouts
-                      << (reached ? GREEN : RED) << std::setw(8) << (reached ? "yes" : "no")
-                      << qcolor << quality << RESET << "\n";
+            std::cout << "  " << BLOOD_RED << std::left << std::setw(12) << proto_label(proto)
+            << WHITE << std::setw(8)  << ph.size()
+            << WHITE << std::setw(12) << (std::to_string((int)total_rtt) + "ms")
+            << WHITE << std::setw(10) << (std::to_string((int)avg_per_hop) + "ms")
+            << WHITE << std::setw(10) << timeouts
+            << WHITE << std::setw(8) << (reached ? "yes" : "no")
+            << WHITE << quality << RESET << "\n";
         }
     }
 
@@ -562,10 +622,10 @@ void traceroute(const std::string& target) {
 }
 
 void full_recon(const std::string& ip) {
-    std::cout << "\n" << MAGENTA << BOLD
-              << "  +" << std::string(56,'=') << "+\n"
-              << "  |  FULL RECON // " << std::left << std::setw(40) << ip << "|\n"
-              << "  +" << std::string(56,'=') << "+\n" << RESET;
+    std::cout << "\n" << BLOOD_RED << BOLD
+    << "  +" << std::string(56,'=') << "+\n"
+    << "  |  " << WHITE << "FULL RECON // " << std::left << std::setw(40) << ip << BLOOD_RED << "|\n"
+    << "  +" << std::string(56,'=') << "+\n" << RESET;
     ip_intel(ip);
     dns_lookup(ip);
     os_detect(ip);
