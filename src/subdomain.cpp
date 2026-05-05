@@ -4,7 +4,9 @@
 #include <fstream>
 #include <random>
 #include <unordered_map>
+#include "../include/security.hpp"
 
+static RateLimiter subdomain_rl(50000.0);
 static std::atomic<int>        g_http_slots{15};
 static std::mutex              g_http_mtx;
 static std::condition_variable g_http_cv;
@@ -141,10 +143,10 @@ struct SubResult {
 };
 
 std::string auto_find_wordlist() {
-    char buf[256]; std::string loc_res;
+    std::vector<char> buf(256, 0); std::string loc_res;
     FILE* pipe = popen("locate best-dns-wordlist.txt 2>/dev/null | head -n 1", "r");
     if (pipe) {
-        if (fgets(buf, sizeof(buf), pipe)) { loc_res = buf; }
+        if (fgets(buf.data(), (int)buf.size(), pipe)) { loc_res = buf.data(); }
         pclose(pipe);
         if (!loc_res.empty()) {
             if (loc_res.back() == '\n') { loc_res.pop_back(); }
@@ -169,6 +171,7 @@ std::string auto_find_wordlist() {
 }
 
 static std::vector<std::string> load_wordlist_file(const std::string& path) {
+    if (!InputGuard::is_safe_path(path)) return {};
     std::vector<std::string> words;
     std::ifstream f(path);
     if (!f.is_open()) { return words; }
@@ -576,9 +579,10 @@ static const std::vector<TakeoverSig>& takeover_db() {
     return db;
 }
 
-static std::string takeover_validate(const std::string& sub, const std::string& cname,
-                                      const std::string& service,
-                                      const std::vector<std::string>& fingerprints)
+static std::string takeover_validate(const std::string& sub,
+                                     const std::string& /*cname*/,
+                                     const std::string& /*service*/,
+                                     const std::vector<std::string>& fingerprints)
 {
     auto lc = [](std::string s){ std::transform(s.begin(),s.end(),s.begin(),::tolower); return s; };
 
@@ -602,7 +606,6 @@ static std::string takeover_validate(const std::string& sub, const std::string& 
     return "UNREACHABLE";
 }
 
-static const std::vector<std::pair<std::string,std::string>>& takeover_sigs() {
     static const std::vector<std::pair<std::string,std::string>> s = {
         {"github.io","GitHub Pages"},{"herokuapp.com","Heroku"},
         {"azurewebsites.net","Azure"},{"cloudfront.net","CloudFront"},
@@ -627,8 +630,6 @@ static const std::vector<std::pair<std::string,std::string>>& takeover_sigs() {
         {"uberflip.com","Uberflip"},{"teamwork.com","Teamwork"},
         {"airee.ru","Airee"},{"smartjobboard.com","SmartJobBoard"},
     };
-    return s;
-}
 
 static void export_results(const std::vector<SubResult>& results, const std::string& domain) {
     {
@@ -951,6 +952,7 @@ void subdomain_scan(const std::string& domain,
             std::vector<std::future<void>> dfuts;
             for (auto& host : doh_queue) {
                 dfuts.push_back(pool.submit([&,h=host]() {
+                    subdomain_rl.acquire();
                     std::string provider;
                     auto ips = doh_query(h, "A", &provider);
                     if (!ips.empty()) { doh_used++; process_resolved(h, ips, provider); }
