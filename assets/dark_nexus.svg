@@ -16,11 +16,8 @@
       @keyframes text-glitch-anim { 0%, 93%, 96%, 100% { transform: translate(0, 0); } 94% { transform: translate(-4px, 1px); } 95% { transform: translate(4px, -1px); } }
       @keyframes subtle-twitch { 0%, 96%, 98%, 100% { transform: translate(0,0); opacity: 1; } 97% { transform: translate(-2px, 0); opacity: 0.8; } }
       @keyframes screen-jump { 0%, 92%, 94%, 100% { transform: translateY(0); } 93% { transform: translateY(-1.5px); } }
-      
       .st-mono { font-family: 'Share Tech Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      /* Строгий моноширинный шрифт для блоков, который не сломается на мобилках */
-      .cr-mono { font-family: "Courier New", Courier, ui-monospace, monospace; font-weight: bold; }
-      
+      .cr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; }
       .titlebar { fill: rgba(20,0,4,0.9); }
       .title-border { stroke: #8b0020; stroke-width: 1; }
       .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
@@ -30,11 +27,9 @@
       .lbl-kali { fill: #dc143c; animation: txt-glow-kali 3s ease-in-out infinite; }
       .lbl-ba { fill: #ff2a50; animation: txt-glow-ba 3s ease-in-out infinite; animation-delay: 1.5s; }
       .sep { fill: #3d0010; font-size: 16px; font-weight: bold; }
-      
-      .banner-glow { fill: #ff0025; font-size: 11px; animation: glow-breathe 3s ease-in-out infinite; filter: blur(4px); }
-      .banner-main { fill: #e01030; font-size: 11px; animation: neon-breathe 3s ease-in-out infinite, text-glitch-anim 6s infinite; }
+      .banner-glow { fill: #ff0025; animation: glow-breathe 3s ease-in-out infinite; filter: blur(4px); }
+      .banner-main { fill: #e01030; animation: neon-breathe 3s ease-in-out infinite, text-glitch-anim 6s infinite; }
       .divider { stroke: #8b0020; stroke-width: 1; opacity: 0.5; }
-      
       .bullet-line { font-size: 11.5px; fill: #dc143c; letter-spacing: 0.5px; }
       .bl-1 { animation: subtle-twitch 4.2s infinite; }
       .bl-2 { animation: subtle-twitch 5.5s infinite; }
@@ -51,6 +46,38 @@
       .bb-bar-bg { fill: #3d0010; }
       .scanline { fill: rgba(220,20,60,.03); animation: scan 6s linear infinite; }
     </style>
+    <path id="P_B1" d="M0,0h6.71v11h-6.71Z"/>
+    <path id="P_B2" d="M0,0h13.42v11h-13.42Z"/>
+    <path id="P_B3" d="M0,0h20.13v11h-20.13Z"/>
+    <path id="P_B4" d="M0,0h26.84v11h-26.84Z"/>
+    <path id="P_B5" d="M0,0h33.55v11h-33.55Z"/>
+    <path id="P_B6" d="M0,0h40.26v11h-40.26Z"/>
+    <path id="P_B7" d="M0,0h46.97v11h-46.97Z"/>
+    <path id="P_H1" d="M0,3h6.71v1h-6.71ZM0,7h6.71v1h-6.71Z"/>
+    <path id="P_H2" d="M0,3h13.42v1h-13.42ZM0,7h13.42v1h-13.42Z"/>
+    <path id="P_H3" d="M0,3h20.13v1h-20.13ZM0,7h20.13v1h-20.13Z"/>
+    <path id="P_H4" d="M0,3h26.84v1h-26.84ZM0,7h26.84v1h-26.84Z"/>
+    <path id="P_H5" d="M0,3h33.55v1h-33.55ZM0,7h33.55v1h-33.55Z"/>
+    <path id="P_H6" d="M0,3h40.26v1h-40.26ZM0,7h40.26v1h-40.26Z"/>
+    <path id="P_V" d="M2,0h1v11h-1ZM4,0h1v11h-1Z"/>
+    <path id="P_TL" d="M2,11v-8h4.71v1h-3.71v7ZM4,11v-4h2.71v1h-1.71v3Z"/>
+    <path id="P_TR" d="M5,11v-8h-5v1h4v7ZM3,11v-4h-3v1h2v3Z"/>
+    <path id="P_BL" d="M2,0v8h4.71v-1h-3.71v-7ZM4,0v4h2.71v-1h-1.71v-3Z"/>
+    <path id="P_BR" d="M5,0v8h-5v-1h4v-7ZM3,0v4h-3v-1h2v-3Z"/>
+    <g id="banner-text">
+      <!-- Row 0 -->
+      <use href="#P_B6" x="0" y="0"/><use href="#P_TR" x="40.26" y="0"/><use href="#P_B5" x="60.39" y="0"/><use href="#P_TR" x="93.94" y="0"/><use href="#P_B6" x="107.36" y="0"/><use href="#P_TR" x="147.62" y="0"/><use href="#P_B2" x="161.04" y="0"/><use href="#P_TR" x="174.46" y="0"/><use href="#P_B2" x="194.59" y="0"/><use href="#P_TR" x="208.01" y="0"/><use href="#P_B3" x="241.56" y="0"/><use href="#P_TR" x="261.69" y="0"/><use href="#P_B2" x="288.53" y="0"/><use href="#P_TR" x="301.95" y="0"/><use href="#P_B7" x="308.66" y="0"/><use href="#P_TR" x="355.63" y="0"/><use href="#P_B2" x="362.34" y="0"/><use href="#P_TR" x="375.76" y="0"/><use href="#P_B2" x="395.89" y="0"/><use href="#P_TR" x="409.31" y="0"/><use href="#P_B2" x="416.02" y="0"/><use href="#P_TR" x="429.44" y="0"/><use href="#P_B2" x="456.28" y="0"/><use href="#P_TR" x="469.70" y="0"/><use href="#P_B7" x="476.41" y="0"/><use href="#P_TR" x="523.38" y="0"/>
+      <!-- Row 1 -->
+      <use href="#P_B2" x="0" y="15"/><use href="#P_TL" x="13.42" y="15"/><use href="#P_H2" x="20.13" y="15"/><use href="#P_B2" x="33.55" y="15"/><use href="#P_TR" x="46.97" y="15"/><use href="#P_B2" x="53.68" y="15"/><use href="#P_TL" x="67.10" y="15"/><use href="#P_H2" x="73.81" y="15"/><use href="#P_B2" x="87.23" y="15"/><use href="#P_TR" x="100.65" y="15"/><use href="#P_B2" x="107.36" y="15"/><use href="#P_TL" x="120.78" y="15"/><use href="#P_H2" x="127.49" y="15"/><use href="#P_B2" x="140.91" y="15"/><use href="#P_TR" x="154.33" y="15"/><use href="#P_B2" x="161.04" y="15"/><use href="#P_V" x="174.46" y="15"/><use href="#P_B2" x="187.88" y="15"/><use href="#P_TL" x="201.30" y="15"/><use href="#P_BR" x="208.01" y="15"/><use href="#P_B4" x="241.56" y="15"/><use href="#P_TR" x="268.40" y="15"/><use href="#P_B2" x="288.53" y="15"/><use href="#P_V" x="301.95" y="15"/><use href="#P_B2" x="308.66" y="15"/><use href="#P_TL" x="322.08" y="15"/><use href="#P_H4" x="328.79" y="15"/><use href="#P_BR" x="355.63" y="15"/><use href="#P_BL" x="362.34" y="15"/><use href="#P_B2" x="369.05" y="15"/><use href="#P_TR" x="382.47" y="15"/><use href="#P_B2" x="389.18" y="15"/><use href="#P_TL" x="402.60" y="15"/><use href="#P_BR" x="409.31" y="15"/><use href="#P_B2" x="416.02" y="15"/><use href="#P_V" x="429.44" y="15"/><use href="#P_B2" x="456.28" y="15"/><use href="#P_V" x="469.70" y="15"/><use href="#P_B2" x="476.41" y="15"/><use href="#P_TL" x="489.83" y="15"/><use href="#P_H4" x="496.54" y="15"/><use href="#P_BR" x="523.38" y="15"/>
+      <!-- Row 2 -->
+      <use href="#P_B2" x="0" y="30"/><use href="#P_V" x="13.42" y="30"/><use href="#P_B2" x="33.55" y="30"/><use href="#P_V" x="46.97" y="30"/><use href="#P_B7" x="53.68" y="30"/><use href="#P_V" x="100.65" y="30"/><use href="#P_B6" x="107.36" y="30"/><use href="#P_TL" x="147.62" y="30"/><use href="#P_BR" x="154.33" y="30"/><use href="#P_B5" x="161.04" y="30"/><use href="#P_TL" x="194.59" y="30"/><use href="#P_BR" x="201.30" y="30"/><use href="#P_B2" x="241.56" y="30"/><use href="#P_TL" x="254.98" y="30"/><use href="#P_B2" x="261.69" y="30"/><use href="#P_TR" x="275.11" y="30"/><use href="#P_B2" x="288.53" y="30"/><use href="#P_V" x="301.95" y="30"/><use href="#P_B5" x="308.66" y="30"/><use href="#P_TR" x="342.21" y="30"/><use href="#P_BL" x="369.05" y="30"/><use href="#P_B3" x="375.76" y="30"/><use href="#P_TL" x="395.89" y="30"/><use href="#P_BR" x="402.60" y="30"/><use href="#P_B2" x="416.02" y="30"/><use href="#P_V" x="429.44" y="30"/><use href="#P_B2" x="456.28" y="30"/><use href="#P_V" x="469.70" y="30"/><use href="#P_B7" x="476.41" y="30"/><use href="#P_TR" x="523.38" y="30"/>
+      <!-- Row 3 -->
+      <use href="#P_B2" x="0" y="45"/><use href="#P_V" x="13.42" y="45"/><use href="#P_B2" x="33.55" y="45"/><use href="#P_V" x="46.97" y="45"/><use href="#P_B2" x="53.68" y="45"/><use href="#P_TL" x="67.10" y="45"/><use href="#P_H2" x="73.81" y="45"/><use href="#P_B2" x="87.23" y="45"/><use href="#P_V" x="100.65" y="45"/><use href="#P_B2" x="107.36" y="45"/><use href="#P_TL" x="120.78" y="45"/><use href="#P_H2" x="127.49" y="45"/><use href="#P_B2" x="140.91" y="45"/><use href="#P_TR" x="154.33" y="45"/><use href="#P_B2" x="161.04" y="45"/><use href="#P_TL" x="174.46" y="45"/><use href="#P_H1" x="181.17" y="45"/><use href="#P_B2" x="187.88" y="45"/><use href="#P_TR" x="201.30" y="45"/><use href="#P_B2" x="241.56" y="45"/><use href="#P_V" x="254.98" y="45"/><use href="#P_BL" x="261.69" y="45"/><use href="#P_B2" x="268.40" y="45"/><use href="#P_TR" x="281.82" y="45"/><use href="#P_B2" x="288.53" y="45"/><use href="#P_V" x="301.95" y="45"/><use href="#P_B2" x="308.66" y="45"/><use href="#P_TL" x="322.08" y="45"/><use href="#P_H2" x="328.79" y="45"/><use href="#P_BR" x="342.21" y="45"/><use href="#P_B2" x="369.05" y="45"/><use href="#P_TL" x="382.47" y="45"/><use href="#P_B2" x="389.18" y="45"/><use href="#P_TR" x="402.60" y="45"/><use href="#P_B2" x="416.02" y="45"/><use href="#P_V" x="429.44" y="45"/><use href="#P_B2" x="456.28" y="45"/><use href="#P_V" x="469.70" y="45"/><use href="#P_BL" x="476.41" y="45"/><use href="#P_H4" x="483.12" y="45"/><use href="#P_B2" x="509.96" y="45"/><use href="#P_V" x="523.38" y="45"/>
+      <!-- Row 4 -->
+      <use href="#P_B6" x="0" y="60"/><use href="#P_TL" x="40.26" y="60"/><use href="#P_BR" x="46.97" y="60"/><use href="#P_B2" x="53.68" y="60"/><use href="#P_V" x="67.10" y="60"/><use href="#P_B2" x="87.23" y="60"/><use href="#P_V" x="100.65" y="60"/><use href="#P_B2" x="107.36" y="60"/><use href="#P_V" x="120.78" y="60"/><use href="#P_B2" x="140.91" y="60"/><use href="#P_V" x="154.33" y="60"/><use href="#P_B2" x="161.04" y="60"/><use href="#P_V" x="174.46" y="60"/><use href="#P_B2" x="194.59" y="60"/><use href="#P_TR" x="208.01" y="60"/><use href="#P_B2" x="241.56" y="60"/><use href="#P_V" x="254.98" y="60"/><use href="#P_BL" x="268.40" y="60"/><use href="#P_B4" x="275.11" y="60"/><use href="#P_V" x="301.95" y="60"/><use href="#P_B7" x="308.66" y="60"/><use href="#P_TR" x="355.63" y="60"/><use href="#P_B2" x="362.34" y="60"/><use href="#P_TL" x="375.76" y="60"/><use href="#P_BR" x="382.47" y="60"/><use href="#P_B2" x="395.89" y="60"/><use href="#P_TR" x="409.31" y="60"/><use href="#P_BL" x="416.02" y="60"/><use href="#P_B6" x="422.73" y="60"/><use href="#P_TL" x="462.99" y="60"/><use href="#P_BR" x="469.70" y="60"/><use href="#P_B7" x="476.41" y="60"/><use href="#P_V" x="523.38" y="60"/>
+      <!-- Row 5 -->
+      <use href="#P_BL" x="0" y="75"/><use href="#P_H5" x="6.71" y="75"/><use href="#P_BR" x="40.26" y="75"/><use href="#P_BL" x="53.68" y="75"/><use href="#P_H1" x="60.39" y="75"/><use href="#P_BR" x="67.10" y="75"/><use href="#P_BL" x="87.23" y="75"/><use href="#P_H1" x="93.94" y="75"/><use href="#P_BR" x="100.65" y="75"/><use href="#P_BL" x="107.36" y="75"/><use href="#P_H1" x="114.07" y="75"/><use href="#P_BR" x="120.78" y="75"/><use href="#P_BL" x="140.91" y="75"/><use href="#P_H1" x="147.62" y="75"/><use href="#P_BR" x="154.33" y="75"/><use href="#P_BL" x="161.04" y="75"/><use href="#P_H1" x="167.75" y="75"/><use href="#P_BR" x="174.46" y="75"/><use href="#P_BL" x="194.59" y="75"/><use href="#P_H1" x="201.30" y="75"/><use href="#P_BR" x="208.01" y="75"/><use href="#P_BL" x="241.56" y="75"/><use href="#P_H1" x="248.27" y="75"/><use href="#P_BR" x="254.98" y="75"/><use href="#P_BL" x="275.11" y="75"/><use href="#P_H3" x="281.82" y="75"/><use href="#P_BR" x="301.95" y="75"/><use href="#P_BL" x="308.66" y="75"/><use href="#P_H6" x="315.37" y="75"/><use href="#P_BR" x="355.63" y="75"/><use href="#P_BL" x="362.34" y="75"/><use href="#P_H1" x="369.05" y="75"/><use href="#P_BR" x="375.76" y="75"/><use href="#P_BL" x="395.89" y="75"/><use href="#P_H1" x="402.60" y="75"/><use href="#P_BR" x="409.31" y="75"/><use href="#P_BL" x="422.73" y="75"/><use href="#P_H5" x="429.44" y="75"/><use href="#P_BR" x="462.99" y="75"/><use href="#P_BL" x="476.41" y="75"/><use href="#P_H6" x="483.12" y="75"/><use href="#P_BR" x="523.38" y="75"/>
+    </g>
   </defs>
   <rect class="bg" width="1024" height="374" />
   <g transform="translate(2, 2)">
@@ -83,24 +110,12 @@
       </svg>
       <text class="st-mono badge-label lbl-ba" x="43" y="15.5">Black Arch</text>
     </g>
-    
-    <!-- Текст теперь привязан жестко к левому краю (x="266"), чтобы пробелы не ломали выравнивание -->
-    <text class="cr-mono banner-glow" text-anchor="start" x="266" y="65">
-      <tspan x="266" dy="15" xml:space="preserve">██████    ███   ██████  ██  ██    ███   ██ ███████ ██   ██ ██   ██ ███████</tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██   ██  ██ ██  ██   ██ ██ ██     ████  ██ ██       ██ ██  ██   ██ ██     </tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██   ██ ███████ ██████  ████      ██ ██ ██ █████      ██   ██   ██ ███████</tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██   ██ ██   ██ ██  ██  ██ ██     ██  ████ ██       ██ ██  ██   ██      ██</tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██████  ██   ██ ██   ██ ██  ██    ██   ███ ███████ ██   ██  █████  ███████</tspan>
-    </text>
-    
-    <text class="cr-mono banner-main" text-anchor="start" x="266" y="65">
-      <tspan x="266" dy="15" xml:space="preserve">██████    ███   ██████  ██  ██    ███   ██ ███████ ██   ██ ██   ██ ███████</tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██   ██  ██ ██  ██   ██ ██ ██     ████  ██ ██       ██ ██  ██   ██ ██     </tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██   ██ ███████ ██████  ████      ██ ██ ██ █████      ██   ██   ██ ███████</tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██   ██ ██   ██ ██  ██  ██ ██     ██  ████ ██       ██ ██  ██   ██      ██</tspan>
-      <tspan x="266" dy="15" xml:space="preserve">██████  ██   ██ ██   ██ ██  ██    ██   ███ ███████ ██   ██  █████  ███████</tspan>
-    </text>
-    
+
+ <g transform="translate(245, 69)">
+  <use href="#banner-text" class="banner-glow" />
+  <use href="#banner-text" class="banner-main" />
+</g>
+
     <line class="divider" x1="80" y1="180" x2="940" y2="180" />
     <text class="st-mono bullet-line bl-1" text-anchor="middle" x="510" y="210">
       <tspan class="bullet-tag">[+]</tspan> <tspan class="hl">Offensive</tspan> Security Intelligence
