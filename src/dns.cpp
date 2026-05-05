@@ -1,5 +1,7 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
+static RateLimiter dns_rl(5.0);
 void dns_lookup(const std::string& domain) {
     print_header("DNS LOOKUP // " + domain);
 
@@ -71,6 +73,7 @@ void dns_lookup(const std::string& domain) {
         while(!ns.empty()&&(ns.back()=='.'||ns.back()=='\n')) ns.pop_back();
         if(ns.empty()) continue;
         std::cout<<CYAN<<"  trying "<<sanitize(ns)<<RESET<<"\n";
+        dns_rl.acquire();
         auto zt=safe_exec({"dig","axfr","@"+ns,domain},10);
         if(zt.empty()||zt.find("Transfer failed")!=std::string::npos||zt.find("REFUSED")!=std::string::npos)
             std::cout<<GREEN<<"    refused (secure)\n"<<RESET;
@@ -88,6 +91,7 @@ void whois_lookup(const std::string& target) {
         "CIDR","NetRange","OrgName","Country","RegDate","NetName",
         "inetnum","netname","descr","origin","Email","Phone","Address"
     };
+    dns_rl.acquire();
     auto raw=safe_exec({"whois",target},10);
     if(raw.empty()){std::cout<<RED<<"  install: sudo apt install whois\n"<<RESET;return;}
     std::istringstream ss(raw); std::string line;
