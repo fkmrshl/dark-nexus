@@ -1,4 +1,5 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
 std::string now_str() {
     time_t t=time(nullptr); char buf[32];
@@ -7,34 +8,54 @@ std::string now_str() {
 }
 
 void export_json(const std::string& fname) {
+    if (fname.find('/') != std::string::npos || fname.find("..") != std::string::npos) {
+        std::cout << RED << "  invalid filename\n" << RESET;
+        return;
+    }
+
     std::ofstream f(fname);
-    if (!f){std::cout<<RED<<"  failed to write "<<fname<<"\n"<<RESET;return;}
-    f<<"{\n  \"target\":\""<<g_result.target<<"\",\n";
-    f<<"  \"timestamp\":\""<<g_result.timestamp<<"\",\n";
-    f<<"  \"geo\":{\"country\":\""<<g_result.geo_country<<"\",\"city\":\""<<g_result.geo_city
-     <<"\",\"isp\":\""<<g_result.geo_isp<<"\",\"as\":\""<<g_result.geo_as
-     <<"\",\"proxy\":"<<(g_result.proxy?"true":"false")
-     <<",\"hosting\":"<<(g_result.hosting?"true":"false")<<"},\n";
-    f<<"  \"os\":\""<<g_result.os_guess<<"\",\n";
-    f<<"  \"open_ports\":[\n";
-    for (size_t i=0;i<g_result.open_ports.size();i++){
-        f<<"    {\"port\":"<<g_result.open_ports[i].first<<",\"service\":\""<<g_result.open_ports[i].second<<"\"}";
-        if(i+1<g_result.open_ports.size()) f<<",";
-        f<<"\n";
+    if (!f.is_open()) {
+        std::cout << RED << "  [!] failed to open file for writing: " << fname << "\n" << RESET;
+        LOG_ERR("export", "failed to open file: " + fname);
+        return;
     }
-    f<<"  ],\n  \"subdomains\":[";
-    for(size_t i=0;i<g_result.subdomains.size();i++){
-        f<<"\""<<g_result.subdomains[i]<<"\"";
-        if(i+1<g_result.subdomains.size())f<<",";
+
+    f << "{\n  \"target\":\"" << SafeJson::escape(g_result.target) << "\",\n";
+    f << "  \"timestamp\":\"" << SafeJson::escape(g_result.timestamp) << "\",\n";
+
+    f << "  \"geo\":{\"country\":\"" << SafeJson::escape(g_result.geo_country)
+    << "\",\"city\":\"" << SafeJson::escape(g_result.geo_city)
+    << "\",\"isp\":\"" << SafeJson::escape(g_result.geo_isp)
+    << "\",\"as\":\"" << SafeJson::escape(g_result.geo_as)
+    << "\",\"proxy\":" << (g_result.proxy ? "true" : "false")
+    << ",\"hosting\":" << (g_result.hosting ? "true" : "false") << "},\n";
+
+    f << "  \"os\":\"" << SafeJson::escape(g_result.os_guess) << "\",\n";
+
+    f << "  \"open_ports\":[\n";
+    for (size_t i = 0; i < g_result.open_ports.size(); i++) {
+        f << "    {\"port\":" << g_result.open_ports[i].first
+        << ",\"service\":\"" << SafeJson::escape(g_result.open_ports[i].second) << "\"}";
+        if (i + 1 < g_result.open_ports.size()) f << ",";
+        f << "\n";
     }
-    f<<"],\n  \"osint\":[";
-    for(size_t i=0;i<g_result.osint_hits.size();i++){
-        f<<"\""<<g_result.osint_hits[i]<<"\"";
-        if(i+1<g_result.osint_hits.size())f<<",";
+
+    f << "  ],\n  \"subdomains\":[";
+    for (size_t i = 0; i < g_result.subdomains.size(); i++) {
+        f << "\"" << SafeJson::escape(g_result.subdomains[i]) << "\"";
+        if (i + 1 < g_result.subdomains.size()) f << ",";
     }
-    f<<"]\n}\n";
-    std::cout<<GREEN<<"  saved: "<<fname<<"\n"<<RESET;
-    LOG_INFO("export", "json saved: "+fname);
+
+    f << "],\n  \"osint\":[";
+    for (size_t i = 0; i < g_result.osint_hits.size(); i++) {
+        f << "\"" << SafeJson::escape(g_result.osint_hits[i]) << "\"";
+        if (i + 1 < g_result.osint_hits.size()) f << ",";
+    }
+
+    f << "]\n}\n";
+
+    std::cout << GREEN << "  saved: " << fname << "\n" << RESET;
+    LOG_INFO("export", "json saved: " + fname);
 }
 
 std::string json_val(const std::string& json, const std::string& key) {
