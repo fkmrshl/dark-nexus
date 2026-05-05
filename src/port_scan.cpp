@@ -1,5 +1,7 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
+static RateLimiter port_rl(10000.0);
 static const std::vector<int> TOP1000 = {
     1,3,4,6,7,9,13,17,19,20,21,22,23,24,25,26,30,32,33,37,42,43,49,53,
     70,79,80,81,82,83,84,85,88,89,90,99,100,106,109,110,111,113,119,125,
@@ -145,7 +147,7 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
 }
 
 static std::pair<int,bool> probe_with_retry(const std::string& ip, int port,
-                                             int timeout_ms, int retries)
+                                            int timeout_ms, int retries)
 {
     for (int attempt=0; attempt<=retries; attempt++) {
         int fd=socket(AF_INET,SOCK_STREAM,0);
@@ -268,7 +270,8 @@ void port_scan(const std::string& ip, int start, int end_port) {
         for (int i=0;i<total;i++) {
             futs.push_back(pool.submit([&,i]{
                 int p=sorted_ports[i];
-                auto [lat,filtered]=probe_with_retry(ip,p,cfg.connect_ms,cfg.retry_count);
+                port_rl.acquire();
+                auto [lat, filtered] = probe_with_retry(ip, p, cfg.connect_ms, cfg.retry_count);
                 done_c++;
 
                 if (lat>0) {
@@ -383,7 +386,7 @@ void port_scan(const std::string& ip, int start, int end_port) {
 
         std::string dbnr=pr.banner_raw;
         if (dbnr.size()>45) dbnr=dbnr.substr(0,45)+"...";
-        std::cout<<GRAY<<dbnr<<RESET<<"\n";
+        std::cout << GRAY << sanitize(dbnr) << RESET << "\n";
 
         for (auto& v:pr.vulns) {
             all_vulns.push_back(v);
@@ -543,7 +546,7 @@ void net_scan(const std::string& subnet) {
         if(h->ports.empty()) std::cout<<GRAY<<"  │  no open ports\n"<<RESET;
         for (auto& [p,b]:h->ports) {
             std::cout<<CYAN<<"  │  "<<std::setw(6)<<p<<GREEN<<" "<<std::setw(18)<<svc(p);
-            if(!b.empty()) std::cout<<GRAY<<"  "<<b;
+            if(!b.empty()) std::cout << GRAY << "  " << sanitize(b);
             std::cout<<RESET<<"\n";
             total_open++;
         }
