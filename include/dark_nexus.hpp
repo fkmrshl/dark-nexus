@@ -59,6 +59,7 @@ struct ScanResult {
 
 extern ScanResult   g_result;
 extern std::mutex   g_print_mtx;
+extern std::mutex g_result_mtx;
 
 std::string safe_exec(const std::vector<std::string>& args, int t = 8);
 std::string safe_curl(const std::string& url, int t = 8);
