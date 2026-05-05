@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 380" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap');
+      
+      .bg { fill: #080001; }
+      .term-box {
+        animation: pulse-border 4s ease-in-out infinite, flicker 9s infinite;
+      }
+      .term-rect {
+        fill: rgba(8,0,1,0.97);
+        stroke: #dc143c;
+        stroke-width: 1.5;
+      }
+      .titlebar { fill: rgba(20,0,4,0.85); }
+      .titlebar-line { stroke: #8b0020; stroke-width: 1; }
+      
+      .text { font-family: 'Share Tech Mono', 'Courier New', monospace; font-size: 13px; }
+      .tb-path { fill: #8b0020; font-size: 11px; letter-spacing: 0.5px; }
+      .tb-root { fill: #dc143c; }
+      
+      .banner {
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+        fill: #dc143c;
+        animation: glitch 8s ease-in-out infinite;
+      }
+      
+      .stat-label { fill: #4a000e; font-size: 11px; }
+      .stat-val { fill: #dc143c; font-size: 11px; }
+      
+      .divider { stroke: #8b0020; stroke-width: 1; opacity: 0.5; }
+      
+      .tagline { fill: #8b0020; font-size: 13px; letter-spacing: 5px; text-transform: uppercase; }
+      .bracket { fill: #3d000c; }
+      .cursor { fill: #dc143c; animation: blink 1s step-end infinite; }
+      
+      .bottombar { fill: rgba(12,0,2,0.7); }
+      .bb-text { fill: #3d0010; font-size: 10px; letter-spacing: 1px; }
+      .bb-right { fill: #5c0018; }
+      
+      .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
+      .scanline { fill: rgba(220,20,60,0.07); animation: scan-sweep 6s linear infinite; }
+
+      @keyframes flicker { 0%,91%{opacity:1}92%{opacity:.84}93%{opacity:1}96%{opacity:.91}100%{opacity:1} }
+      @keyframes blink { 0%,49%{opacity:1}50%,100%{opacity:0} }
+      @keyframes glitch {
+        0%,93%{ transform:none }
+        94%{ transform:skewX(-2deg) }
+        95%{ transform:skewX(2deg) }
+        96%,100%{ transform:none }
+      }
+      @keyframes pulse-border {
+        0%,100%{ filter: drop-shadow(0 0 4px rgba(220,20,60,.4)); }
+        50%{ filter: drop-shadow(0 0 12px rgba(220,20,60,.65)); }
+      }
+      @keyframes scan-sweep { 0%{ transform: translateY(0); } 100%{ transform: translateY(340px); } }
+    </style>
+    
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect class="bg" width="960" height="380" />
+
+  <g class="term-box">
+    <rect class="term-rect" x="20" y="20" width="920" height="340" />
+    
+    <rect class="titlebar" x="20" y="20" width="920" height="28" />
+    <line class="titlebar-line" x1="20" y1="48" x2="940" y2="48" />
+
+    <circle class="dot" cx="40" cy="34" r="4" />
+    <circle class="dot" cx="54" cy="34" r="4" />
+    <circle class="dot" cx="68" cy="34" r="4" />
+
+    <text x="88" y="38" class="text tb-path"><tspan class="tb-root">root@dark_nexus</tspan>:~# ./dark_nexus --init --target $1</text>
+
+    <g class="banner" filter="url(#glow)">
+      <text x="90" y="85" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</text>
+      <text x="90" y="100" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</text>
+      <text x="90" y="115" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</text>
+      <text x="90" y="130" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</text>
+      <text x="90" y="145" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</text>
+      <text x="90" y="160" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</text>
+    </g>
+
+    <line class="divider" x1="120" y1="190" x2="840" y2="190" />
+
+    <text class="text stat-label" x="180" y="220">[MODULE]</text>
+    <text class="text stat-val" x="250" y="220">subdomain_enum v2.4</text>
+
+    <text class="text stat-label" x="530" y="220">[THREADS]</text>
+    <text class="text stat-val" x="610" y="220">1500 / DNS · 15 / HTTP</text>
+
+    <text class="text stat-label" x="180" y="245">[DNS]</text>
+    <text class="text stat-val" x="250" y="245">c-ares async · DoH fallback</text>
+
+    <text class="text stat-label" x="530" y="245">[SOURCES]</text>
+    <text class="text stat-val" x="610" y="245">crt.sh · VT · HackerTarget</text>
+
+    <text class="text stat-label" x="180" y="270">[PROTO]</text>
+    <text class="text stat-val" x="250" y="270">WAF/Tech fingerprint · JSON</text>
+
+    <text class="text stat-label" x="530" y="270">[STATUS]</text>
+    <text class="text stat-val" x="610" y="270">ARMED &amp; READY</text>
+
+    <line class="divider" x1="120" y1="290" x2="840" y2="290" />
+
+    <text class="text tagline" x="480" y="325" text-anchor="middle">
+      <tspan class="bracket">[</tspan> penetration testing framework <tspan class="bracket">]</tspan>   <tspan class="cursor">█</tspan>
+    </text>
+
+    <rect class="bottombar" x="20" y="335" width="920" height="25" />
+    <line class="titlebar-line" x1="20" y1="335" x2="940" y2="335" />
+    <text class="text bb-text" x="35" y="352">v2.0.0-dev  ·  C++  ·  libcares · libcurl</text>
+    <text class="text bb-right" x="925" y="352" text-anchor="end">bug bounty certified ▓▓▓▓▓▓▓░░░ 74%</text>
+
+    <rect class="scanline" x="21" y="21" width="918" height="20" />
+  </g>
+</svg>
