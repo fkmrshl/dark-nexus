@@ -1,4 +1,5 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
 struct ProcResult {
     std::string out, err;
@@ -41,7 +42,22 @@ static ProcResult proc_run(const std::vector<std::string>& args,
     close(pout[1]); close(perr[1]);
     if (has_stdin) {
         close(pin[0]);
-        write(pin[1], stdin_data.c_str(), stdin_data.size());
+
+        const char* data_ptr = stdin_data.data();
+        size_t bytes_left = stdin_data.size();
+
+        while (bytes_left > 0) {
+            ssize_t written = write(pin[1], data_ptr, bytes_left);
+
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            data_ptr += written;
+            bytes_left -= written;
+        }
         close(pin[1]);
     }
 
@@ -61,14 +77,16 @@ static ProcResult proc_run(const std::vector<std::string>& args,
         if (ofd>=0){FD_SET(ofd,&rfds); maxfd=std::max(maxfd,ofd);}
         if (efd>=0){FD_SET(efd,&rfds); maxfd=std::max(maxfd,efd);}
         if (select(maxfd+1,&rfds,nullptr,nullptr,&tv) <= 0) continue;
-        char buf[8192];
+        std::vector<char> buf(8192);
         if (ofd>=0 && FD_ISSET(ofd,&rfds)) {
-            ssize_t n = read(ofd,buf,sizeof(buf));
-            if (n<=0){close(ofd);ofd=-1;} else if(res.out.size()<max_out) res.out.append(buf,n);
+            ssize_t n = read(ofd, buf.data(), buf.size());
+            if (n > 0) res.out.append(buf.data(), static_cast<size_t>(n));
+            else if (n == 0) { close(ofd); ofd = -1; }
         }
         if (efd>=0 && FD_ISSET(efd,&rfds)) {
-            ssize_t n = read(efd,buf,sizeof(buf));
-            if (n<=0){close(efd);efd=-1;} else if(res.err.size()<max_out) res.err.append(buf,n);
+            ssize_t n = read(efd, buf.data(), buf.size());
+            if (n <= 0) { close(efd); efd = -1; }
+            else if (res.err.size() < max_out) res.err.append(buf.data(), static_cast<size_t>(n));
         }
     }
     if (ofd>=0) close(ofd);
@@ -83,7 +101,7 @@ std::string safe_exec(const std::vector<std::string>& args, int t) {
 }
 
 std::string safe_curl(const std::string& url, int t) {
-    if (url.find('\'') != std::string::npos) return "";
+    if (!InputGuard::is_safe_url(url)) return "";   // заменяет ручную проверку на '
     return safe_exec({"curl","-s","--max-time",std::to_string(t),
-                      "-L","-A","Mozilla/5.0","--",url}, t+2);
+        "-L","-A","Mozilla/5.0","--",url}, t+2);
 }
