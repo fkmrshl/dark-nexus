@@ -83,9 +83,9 @@ static size_t curl_body_cb(char* buf, size_t sz, size_t n, void* ud) {
 }
 
 static CurlResponse libcurl_get(const std::string& url,
-                                 const std::string& host_hdr,
-                                 const std::string& ua,
-                                 int timeout_s = 6)
+                                const std::string& host_hdr,
+                                const std::string& ua,
+                                int timeout_s = 6)
 {
     CurlResponse resp;
     CURL* c = curl_easy_init();
@@ -156,15 +156,15 @@ std::string auto_find_wordlist() {
     const char* h_env = getenv("HOME");
     std::string h = h_env ? h_env : "/root";
     for (auto& p : std::vector<std::string>{
-            "./best-dns-wordlist.txt",
-            h+"/best-dns-wordlist.txt",
-            h+"/wordlists/best-dns-wordlist.txt",
-            "/usr/share/wordlists/best-dns-wordlist.txt",
-            "/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
-            "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
-            "/opt/SecLists/Discovery/DNS/subdomains-top1million-110000.txt",
-            "/opt/wordlists/best-dns-wordlist.txt",
-        }) {
+        "./best-dns-wordlist.txt",
+         h+"/best-dns-wordlist.txt",
+         h+"/wordlists/best-dns-wordlist.txt",
+         "/usr/share/wordlists/best-dns-wordlist.txt",
+         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
+         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
+         "/opt/SecLists/Discovery/DNS/subdomains-top1million-110000.txt",
+         "/opt/wordlists/best-dns-wordlist.txt",
+    }) {
         if (access(p.c_str(), F_OK) == 0) { return p; }
     }
     return "";
@@ -291,17 +291,17 @@ static void passive_dnsdumpster(const std::string& domain, std::set<std::string>
     std::smatch m;
     if (!std::regex_search(cr, m, re_c)) { return; }
     auto b = safe_exec({"curl","-s","--max-time","20",
-                        "-b","/tmp/dnsdump_cookies.txt","-c","/tmp/dnsdump_cookies.txt",
-                        "-H","Referer: https://dnsdumpster.com/",
-                        "-d","csrfmiddlewaretoken="+m[1].str()+"&targetip="+domain+"&user=free",
-                        "https://dnsdumpster.com/"}, 22);
+        "-b","/tmp/dnsdump_cookies.txt","-c","/tmp/dnsdump_cookies.txt",
+        "-H","Referer: https://dnsdumpster.com/",
+        "-d","csrfmiddlewaretoken="+m[1].str()+"&targetip="+domain+"&user=free",
+                       "https://dnsdumpster.com/"}, 22);
     if (!b.empty()) { extract_subs(b, domain, out); }
 }
 
 static void passive_virustotal(const std::string& d, std::set<std::string>& out) {
     const char* k = getenv("VT_API_KEY"); if (!k||!*k) { return; }
     auto b = safe_exec({"curl","-s","--max-time","15","-H",std::string("x-apikey: ")+k,
-                        "https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40"}, 18);
+        "https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40"}, 18);
     if (b.empty()) { return; }
     extract_subs(b, d, out);
     std::regex re_c("\"cursor\"\\s*:\\s*\"([^\"]+)\""); std::smatch mc;
@@ -315,8 +315,8 @@ static void passive_virustotal(const std::string& d, std::set<std::string>& out)
 static void passive_securitytrails(const std::string& d, std::set<std::string>& out) {
     const char* k = getenv("ST_API_KEY"); if (!k||!*k) { return; }
     auto b = safe_exec({"curl","-s","--max-time","15","-H",std::string("apikey: ")+k,
-                        "-H","Accept: application/json",
-                        "https://api.securitytrails.com/v1/domain/"+d+"/subdomains?children_only=false&include_inactive=true"}, 18);
+        "-H","Accept: application/json",
+        "https://api.securitytrails.com/v1/domain/"+d+"/subdomains?children_only=false&include_inactive=true"}, 18);
     if (!b.empty()) { extract_subs(b, d, out); }
 }
 
@@ -330,9 +330,9 @@ static void passive_censys(const std::string& d, std::set<std::string>& out) {
     const char* ai = getenv("CENSYS_API_ID"); const char* as = getenv("CENSYS_API_SECRET");
     if (!ai||!*ai||!as||!*as) { return; }
     auto b = safe_exec({"curl","-s","--max-time","15","-u",std::string(ai)+":"+std::string(as),
-                        "-H","Content-Type: application/json",
-                        "-d","{\"q\":\""+d+"\",\"fields\":[\"parsed.names\"],\"flatten\":true}",
-                        "https://search.censys.io/api/v1/search/certificates"}, 18);
+        "-H","Content-Type: application/json",
+        "-d","{\"q\":\""+d+"\",\"fields\":[\"parsed.names\"],\"flatten\":true}",
+        "https://search.censys.io/api/v1/search/certificates"}, 18);
     if (!b.empty()) { extract_subs(b, d, out); }
 }
 
@@ -356,8 +356,8 @@ static void dns_extra_records(const std::string& domain, std::set<std::string>& 
 }
 
 static void scrape_js_subdomains(const std::vector<SubResult>& found,
-                                  const std::string& domain,
-                                  std::set<std::string>& out)
+                                 const std::string& domain,
+                                 std::set<std::string>& out)
 {
     std::set<std::string> js_urls;
     for (auto& r : found) {
@@ -383,8 +383,8 @@ static void scrape_js_subdomains(const std::vector<SubResult>& found,
 }
 
 static std::vector<std::string> doh_query(const std::string& hostname,
-                                            const std::string& type = "A",
-                                            std::string* prov = nullptr)
+                                          const std::string& type = "A",
+                                          std::string* prov = nullptr)
 {
     const std::vector<std::pair<std::string,std::string>> providers = {
         {"cloudflare","https://cloudflare-dns.com/dns-query?name="+hostname+"&type="+type},
@@ -507,7 +507,7 @@ static TechInfo detect_tech(const std::string& headers, const std::string& body,
 }
 
 static std::vector<std::string> generate_permutations(const std::set<std::string>& found,
-                                                        const std::string& domain)
+                                                      const std::string& domain)
 {
     static const std::vector<std::string> affixes = {
         "1","2","3","4","old","new","dev","test","stg","prod","api","app",
@@ -596,7 +596,7 @@ static std::string takeover_validate(const std::string& sub,
             if (body_lc.find(fpl) != std::string::npos ||
                 hdrs_lc.find(fpl) != std::string::npos) {
                 return "CONFIRMED";
-            }
+                }
         }
         if (resp.http_code == 404 || resp.http_code == 0) {
             return "POSSIBLE";
@@ -606,30 +606,30 @@ static std::string takeover_validate(const std::string& sub,
     return "UNREACHABLE";
 }
 
-    static const std::vector<std::pair<std::string,std::string>> s = {
-        {"github.io","GitHub Pages"},{"herokuapp.com","Heroku"},
-        {"azurewebsites.net","Azure"},{"cloudfront.net","CloudFront"},
-        {"s3.amazonaws.com","AWS S3"},{"s3-website","AWS S3 Website"},
-        {"shopify.com","Shopify"},{"myshopify.com","Shopify"},
-        {"ghost.io","Ghost"},{"wordpress.com","WordPress"},
-        {"pantheon.io","Pantheon"},{"zendesk.com","Zendesk"},
-        {"readme.io","ReadMe"},{"readme.com","ReadMe"},
-        {"surge.sh","Surge"},{"bitbucket.io","Bitbucket"},
-        {"netlify.app","Netlify"},{"vercel.app","Vercel"},
-        {"fly.dev","Fly.io"},{"render.com","Render"},
-        {"pages.dev","Cloudflare Pages"},{"fastly.net","Fastly"},
-        {"squarespace.com","Squarespace"},{"wixsite.com","Wix"},
-        {"webflow.io","Webflow"},{"hubspot.com","HubSpot"},
-        {"helpscoutdocs.com","HelpScout"},{"uservoice.com","UserVoice"},
-        {"statuspage.io","Statuspage"},{"freshdesk.com","Freshdesk"},
-        {"intercom.io","Intercom"},{"kajabi.com","Kajabi"},
-        {"pingdom.com","Pingdom"},{"unbounce.com","Unbounce"},
-        {"myjetbrains.com","JetBrains"},{"acquia-sites.com","Acquia"},
-        {"kinsta-cloud.com","Kinsta"},{"cargo.site","Cargo"},
-        {"launchrock.com","Launchrock"},{"feedpress.me","FeedPress"},
-        {"uberflip.com","Uberflip"},{"teamwork.com","Teamwork"},
-        {"airee.ru","Airee"},{"smartjobboard.com","SmartJobBoard"},
-    };
+static const std::vector<std::pair<std::string,std::string>> s = {
+    {"github.io","GitHub Pages"},{"herokuapp.com","Heroku"},
+    {"azurewebsites.net","Azure"},{"cloudfront.net","CloudFront"},
+    {"s3.amazonaws.com","AWS S3"},{"s3-website","AWS S3 Website"},
+    {"shopify.com","Shopify"},{"myshopify.com","Shopify"},
+    {"ghost.io","Ghost"},{"wordpress.com","WordPress"},
+    {"pantheon.io","Pantheon"},{"zendesk.com","Zendesk"},
+    {"readme.io","ReadMe"},{"readme.com","ReadMe"},
+    {"surge.sh","Surge"},{"bitbucket.io","Bitbucket"},
+    {"netlify.app","Netlify"},{"vercel.app","Vercel"},
+    {"fly.dev","Fly.io"},{"render.com","Render"},
+    {"pages.dev","Cloudflare Pages"},{"fastly.net","Fastly"},
+    {"squarespace.com","Squarespace"},{"wixsite.com","Wix"},
+    {"webflow.io","Webflow"},{"hubspot.com","HubSpot"},
+    {"helpscoutdocs.com","HelpScout"},{"uservoice.com","UserVoice"},
+    {"statuspage.io","Statuspage"},{"freshdesk.com","Freshdesk"},
+    {"intercom.io","Intercom"},{"kajabi.com","Kajabi"},
+    {"pingdom.com","Pingdom"},{"unbounce.com","Unbounce"},
+    {"myjetbrains.com","JetBrains"},{"acquia-sites.com","Acquia"},
+    {"kinsta-cloud.com","Kinsta"},{"cargo.site","Cargo"},
+    {"launchrock.com","Launchrock"},{"feedpress.me","FeedPress"},
+    {"uberflip.com","Uberflip"},{"teamwork.com","Teamwork"},
+    {"airee.ru","Airee"},{"smartjobboard.com","SmartJobBoard"},
+};
 
 static void export_results(const std::vector<SubResult>& results, const std::string& domain) {
     {
@@ -641,26 +641,26 @@ static void export_results(const std::vector<SubResult>& results, const std::str
                 std::string s="["; for(size_t j=0;j<v.size();j++){if(j){s+=",";}s+="\""+v[j]+"\"";} return s+"]";
             };
             f << "  {\n"
-              << "    \"subdomain\": \""      << r.sub              << "\",\n"
-              << "    \"source\": \""         << r.source           << "\",\n"
-              << "    \"ipv4\": "             << arr_s(r.ips)       << ",\n"
-              << "    \"ipv6\": "             << arr_s(r.ipv6)      << ",\n"
-              << "    \"cname\": \""          << r.cname            << "\",\n"
-              << "    \"http_code\": \""      << r.http_code        << "\",\n"
-              << "    \"server\": \""         << r.server           << "\",\n"
-              << "    \"title\": \""          << r.title            << "\",\n"
-              << "    \"waf\": \""            << r.waf.name         << "\",\n"
-              << "    \"waf_confidence\": \"" << r.waf.confidence   << "\",\n"
-              << "    \"language\": \""       << r.tech.language    << "\",\n"
-              << "    \"cms\": \""            << r.tech.cms         << "\",\n"
-              << "    \"stack\": "            << arr_s(r.tech.stack)<< ",\n"
-              << "    \"doh_fallback\": \""   << r.doh_fallback     << "\"\n"
-              << "  }";
+            << "    \"subdomain\": \""      << r.sub              << "\",\n"
+            << "    \"source\": \""         << r.source           << "\",\n"
+            << "    \"ipv4\": "             << arr_s(r.ips)       << ",\n"
+            << "    \"ipv6\": "             << arr_s(r.ipv6)      << ",\n"
+            << "    \"cname\": \""          << r.cname            << "\",\n"
+            << "    \"http_code\": \""      << r.http_code        << "\",\n"
+            << "    \"server\": \""         << r.server           << "\",\n"
+            << "    \"title\": \""          << r.title            << "\",\n"
+            << "    \"waf\": \""            << r.waf.name         << "\",\n"
+            << "    \"waf_confidence\": \"" << r.waf.confidence   << "\",\n"
+            << "    \"language\": \""       << r.tech.language    << "\",\n"
+            << "    \"cms\": \""            << r.tech.cms         << "\",\n"
+            << "    \"stack\": "            << arr_s(r.tech.stack)<< ",\n"
+            << "    \"doh_fallback\": \""   << r.doh_fallback     << "\"\n"
+            << "  }";
             if (i+1 < results.size()) { f << ","; }
             f << "\n";
         }
         f << "]\n";
-        std::cout << GREEN << "  [+] JSON: " << fname << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [+] JSON: " << WHITE << fname << "\n" << RESET;
     }
     {
         std::string fname = domain+"_subdomains.csv";
@@ -670,11 +670,11 @@ static void export_results(const std::vector<SubResult>& results, const std::str
             auto js=[](const std::vector<std::string>& v){std::string s;for(auto& x:v){if(!s.empty()){s+=" ";}s+=x;}return s;};
             auto q=[](const std::string& s){return s.find(',')!=std::string::npos?"\""+s+"\"":s;};
             f << r.sub<<","<<q(js(r.ips))<<","<<q(js(r.ipv6))<<","<<r.cname<<","
-              << r.http_code<<","<<q(r.server)<<","<<q(r.title)<<","
-              << r.waf.name<<","<<r.tech.language<<","<<r.tech.cms<<","
-              << q(js(r.tech.stack))<<","<<r.source<<","<<r.doh_fallback<<"\n";
+            << r.http_code<<","<<q(r.server)<<","<<q(r.title)<<","
+            << r.waf.name<<","<<r.tech.language<<","<<r.tech.cms<<","
+            << q(js(r.tech.stack))<<","<<r.source<<","<<r.doh_fallback<<"\n";
         }
-        std::cout << GREEN << "  [+] CSV:  " << fname << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [+] CSV:  " << WHITE << fname << "\n" << RESET;
     }
 }
 
@@ -710,19 +710,19 @@ void subdomain_scan(const std::string& domain,
     if (!wordlist_path.empty()) {
         wordlist = load_wordlist_file(wordlist_path);
         if (!wordlist.empty()) {
-            std::cout << GREEN << "  [+] " << wordlist.size() << " words loaded: " << wordlist_path << "\n" << RESET;
+            std::cout << BLOOD_RED << "  [+] " << WHITE << wordlist.size() << BLOOD_RED << " words loaded: " << WHITE << wordlist_path << "\n" << RESET;
         }
     }
     if (wordlist.empty()) {
         wordlist = builtin_wordlist();
-        std::cout << YELLOW << "  [*] builtin wordlist (" << wordlist.size() << " words)\n" << RESET;
+        std::cout << BLOOD_RED << "  [*] builtin wordlist (" << WHITE << wordlist.size() << BLOOD_RED << " words)\n" << RESET;
     }
-    std::cout << CYAN << "  [*] engine: DnsEngine | " << std::thread::hardware_concurrency()
-              << " channels | 40+ resolvers | io_uring auto\n" << RESET;
-    std::cout << CYAN << "  [*] enrich: "
-              << (do_enrich ? "ON  | libcurl | slots: 15 | UA: random | jitter: 10-80ms"
-                            : "OFF | DNS only")
-              << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [*] engine: DnsEngine | " << WHITE << std::thread::hardware_concurrency()
+    << BLOOD_RED << " channels | 40+ resolvers | io_uring auto\n" << RESET;
+    std::cout << BLOOD_RED << "  [*] enrich: " << WHITE
+    << (do_enrich ? "ON  | libcurl | slots: 15 | UA: random | jitter: 10-80ms"
+    : "OFF | DNS only")
+    << "\n" << RESET;
 
     print_section("WILDCARD CHECK");
     std::set<std::string> wildcard_ips;
@@ -740,21 +740,21 @@ void subdomain_scan(const std::string& domain,
         }
     }
     if (has_wildcard) {
-        std::cout << YELLOW << "  [!] wildcard ->";
-        for (auto& ip : wildcard_ips) { std::cout << " " << ip; }
-        std::cout << "\n  [!] filtering ON\n" << RESET;
+        std::cout << BLOOD_RED << "  [!] wildcard ->";
+        for (auto& ip : wildcard_ips) { std::cout << WHITE << " " << ip; }
+        std::cout << BLOOD_RED << "\n  [!] filtering ON\n" << RESET;
     } else {
-        std::cout << GREEN << "  [+] no wildcard\n" << RESET;
+        std::cout << BLOOD_RED << "  [+] no wildcard\n" << RESET;
     }
 
     print_section("PASSIVE ENUM");
     std::set<std::string> passive_subs;
     size_t before;
     auto run_source = [&](const std::string& name, auto fn) {
-        std::cout << YELLOW << "  [*] " << name << "...\n" << RESET;
+        std::cout << BLOOD_RED << "  [*] " << WHITE << name << BLOOD_RED << "...\n" << RESET;
         before = passive_subs.size(); fn();
-        std::cout << CYAN << "  [+] " << std::left << std::setw(18) << name
-                  << "+" << (passive_subs.size()-before) << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(18) << name
+        << BLOOD_RED << "+" << WHITE << (passive_subs.size()-before) << "\n" << RESET;
     };
 
     run_source("crt.sh",         [&](){ passive_crtsh(domain, passive_subs); });
@@ -771,7 +771,7 @@ void subdomain_scan(const std::string& domain,
         if (getenv("CENSYS_API_ID"))  { run_source("Censys",         [&](){ passive_censys(domain, passive_subs); }); }
         run_source("MX/TXT/NS/SRV",  [&](){ dns_extra_records(domain, passive_subs); });
     }
-    std::cout << GREEN << "  [=] total passive: " << passive_subs.size() << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [=] total passive: " << WHITE << passive_subs.size() << "\n" << RESET;
 
     std::set<std::string> dedup;
     std::vector<std::string> all_subs;
@@ -786,9 +786,9 @@ void subdomain_scan(const std::string& domain,
     int total_hosts = (int)all_subs.size();
 
     print_section("ASYNC DNS + DoH BRUTEFORCE");
-    std::cout << YELLOW << "  checking " << total_hosts << " subdomains"
-              << " (" << wordlist.size() << " wordlist + " << passive_subs.size() << " passive)"
-              << " via DnsEngine + DoH fallback...\n\n" << RESET;
+    std::cout << BLOOD_RED << "  checking " << WHITE << total_hosts << BLOOD_RED << " subdomains"
+    << " (" << WHITE << wordlist.size() << BLOOD_RED << " wordlist + " << WHITE << passive_subs.size() << BLOOD_RED << " passive)"
+    << " via DnsEngine + DoH fallback...\n\n" << RESET;
 
     const int DNS_BATCH = 5000;
     const int DOH_MAX   = 5000;
@@ -802,8 +802,8 @@ void subdomain_scan(const std::string& domain,
     ThreadPool pool(std::min(max_threads, total_hosts > 0 ? total_hosts : 1));
 
     auto process_resolved = [&](const std::string& sub,
-                                 std::vector<std::string> ips,
-                                 const std::string& doh_provider)
+                                std::vector<std::string> ips,
+                                const std::string& doh_provider)
     {
         dns_checked++;
         if (ips.empty()) { return; }
@@ -864,27 +864,27 @@ void subdomain_scan(const std::string& domain,
 
                 std::string grab_url;
                 if (code_https > 0) { grab_url = "https://"+sub; }
-                else if (code_http > 0) { grab_url = "http://"+sub; }
+                    else if (code_http > 0) { grab_url = "http://"+sub; }
 
-                if (!grab_url.empty()) {
-                    auto resp = libcurl_get(grab_url, sub, random_ua(), 6);
-                    if (resp.http_code > 0) { http_code = std::to_string(resp.http_code); }
-                    std::smatch ms;
-                    std::regex re_srv("(?:^|\n)[Ss]erver:\\s*([^\r\n]+)");
-                    if (std::regex_search(resp.headers, ms, re_srv)) {
-                        server_hdr = ms[1].str();
-                        if (server_hdr.size() > 40) { server_hdr = server_hdr.substr(0, 40); }
-                    }
-                    page_title = parse_title(resp.body);
-                    if (!resp.headers.empty()) {
-                        std::string cookies;
-                        std::regex re_ck("(?:^|\n)[Ss]et-[Cc]ookie:\\s*([^\r\n]+)");
-                        std::sregex_iterator ci(resp.headers.begin(), resp.headers.end(), re_ck), ce;
-                        for (; ci != ce; ++ci) { cookies += (*ci)[1].str()+";"; }
-                        waf  = detect_waf(resp.headers, resp.body, cookies);
-                        tech = detect_tech(resp.headers, resp.body, cookies);
-                    }
-                }
+                        if (!grab_url.empty()) {
+                            auto resp = libcurl_get(grab_url, sub, random_ua(), 6);
+                            if (resp.http_code > 0) { http_code = std::to_string(resp.http_code); }
+                            std::smatch ms;
+                            std::regex re_srv("(?:^|\n)[Ss]erver:\\s*([^\r\n]+)");
+                            if (std::regex_search(resp.headers, ms, re_srv)) {
+                                server_hdr = ms[1].str();
+                                if (server_hdr.size() > 40) { server_hdr = server_hdr.substr(0, 40); }
+                            }
+                            page_title = parse_title(resp.body);
+                            if (!resp.headers.empty()) {
+                                std::string cookies;
+                                std::regex re_ck("(?:^|\n)[Ss]et-[Cc]ookie:\\s*([^\r\n]+)");
+                                std::sregex_iterator ci(resp.headers.begin(), resp.headers.end(), re_ck), ce;
+                                for (; ci != ce; ++ci) { cookies += (*ci)[1].str()+";"; }
+                                waf  = detect_waf(resp.headers, resp.body, cookies);
+                                tech = detect_tech(resp.headers, resp.body, cookies);
+                            }
+                        }
             }
         }
 
@@ -906,17 +906,17 @@ void subdomain_scan(const std::string& domain,
         }
         {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << "\r" << GREEN << "  [+] " << std::left << std::setw(42) << sub;
-            for (auto& ip : ips) { std::cout << CYAN << ip << " "; }
-            if (!ipv6.empty())   { std::cout << YELLOW  << "[v6:" << ipv6[0] << "] "; }
-            if (!cname.empty())  { std::cout << YELLOW  << "CNAME:" << cname << " "; }
-            if (!http_code.empty() && http_code != "0") { std::cout << MAGENTA << "HTTP:" << http_code << " "; }
-            if (!server_hdr.empty())    { std::cout << GRAY   << "[" << server_hdr << "] "; }
-            if (!waf.name.empty())      { std::cout << RED    << "WAF:" << waf.name << " "; }
-            if (!tech.language.empty()) { std::cout << CYAN   << tech.language << " "; }
-            if (!tech.cms.empty())      { std::cout << YELLOW << tech.cms << " "; }
-            if (!doh_provider.empty())  { std::cout << DIM    << " [DoH:" << doh_provider << "]"; }
-            std::cout << DIM << " (" << source << ")" << RESET << "\n";
+            std::cout << "\r" << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(42) << sub;
+            for (auto& ip : ips) { std::cout << WHITE << ip << " "; }
+            if (!ipv6.empty())   { std::cout << BLOOD_RED << "[v6:" << WHITE << ipv6[0] << BLOOD_RED << "] "; }
+            if (!cname.empty())  { std::cout << BLOOD_RED << "CNAME:" << WHITE << cname << " "; }
+            if (!http_code.empty() && http_code != "0") { std::cout << BLOOD_RED << "HTTP:" << BLOOD_RED << http_code << " "; }
+            if (!server_hdr.empty())    { std::cout << BLOOD_RED << "[" << BLOOD_RED << server_hdr << BLOOD_RED << "] "; }
+            if (!waf.name.empty())      { std::cout << BLOOD_RED << "WAF:" << BLOOD_RED << waf.name << " "; }
+            if (!tech.language.empty()) { std::cout << BLOOD_RED << tech.language << " "; }
+            if (!tech.cms.empty())      { std::cout << BLOOD_RED << tech.cms << " "; }
+            if (!doh_provider.empty())  { std::cout << BLOOD_RED << " [DoH:" << WHITE << doh_provider << BLOOD_RED << "]"; }
+            std::cout << BLOOD_RED << " (" << WHITE << source << BLOOD_RED << ")" << RESET << "\n";
         }
     };
 
@@ -924,9 +924,9 @@ void subdomain_scan(const std::string& domain,
         int be = std::min(bs+DNS_BATCH, total_hosts);
         std::vector<std::string> batch(all_subs.begin()+bs, all_subs.begin()+be);
 
-        std::cout << CYAN << "\r  [dns] batch " << (bs/DNS_BATCH+1) << "/"
-                  << ((total_hosts+DNS_BATCH-1)/DNS_BATCH)
-                  << " (" << batch.size() << " hosts) via DnsEngine...    " << RESET << std::flush;
+        std::cout << BLOOD_RED << "\r  [dns] batch " << WHITE << (bs/DNS_BATCH+1) << BLOOD_RED << "/"
+        << WHITE << ((total_hosts+DNS_BATCH-1)/DNS_BATCH)
+        << BLOOD_RED << " (" << WHITE << batch.size() << BLOOD_RED << " hosts) via DnsEngine...    " << RESET << std::flush;
 
         auto dns_res = dns.resolve_batch(batch, 1500);
         std::vector<std::future<void>> futs;
@@ -945,8 +945,8 @@ void subdomain_scan(const std::string& domain,
 
         if (!doh_queue.empty()) {
             if ((int)doh_queue.size() > DOH_MAX) {
-                std::cout << YELLOW << "  [!] DoH queue: " << doh_queue.size()
-                          << ", capping at " << DOH_MAX << "\n" << RESET;
+                std::cout << BLOOD_RED << "  [!] DoH queue: " << WHITE << doh_queue.size()
+                << BLOOD_RED << ", capping at " << WHITE << DOH_MAX << "\n" << RESET;
                 doh_queue.resize(DOH_MAX);
             }
             std::vector<std::future<void>> dfuts;
@@ -971,8 +971,8 @@ void subdomain_scan(const std::string& domain,
         for (auto& p : perms) {
             if (!dedup.count(p)) { new_perms.push_back(p); dedup.insert(p); }
         }
-        std::cout << YELLOW << "  [*] " << new_perms.size() << " permutations from "
-                  << found_set.size() << " found\n" << RESET;
+        std::cout << BLOOD_RED << "  [*] " << WHITE << new_perms.size() << BLOOD_RED << " permutations from "
+        << WHITE << found_set.size() << BLOOD_RED << " found\n" << RESET;
         if (!new_perms.empty()) {
             auto pres = dns.resolve_batch(new_perms, 1500);
             std::vector<std::future<void>> pfuts;
@@ -986,7 +986,7 @@ void subdomain_scan(const std::string& domain,
                 }
             }
             for (auto& f : pfuts) { f.get(); }
-            std::cout << GREEN << "  [+] permutations done\n" << RESET;
+            std::cout << BLOOD_RED << "  [+] permutations done\n" << RESET;
         }
     }
 
@@ -998,8 +998,8 @@ void subdomain_scan(const std::string& domain,
         for (auto& s : js_subs) {
             if (!dedup.count(s)) { new_js.push_back(s); dedup.insert(s); }
         }
-        std::cout << YELLOW << "  [*] " << js_subs.size() << " candidates in JS, resolving "
-                  << new_js.size() << " new...\n" << RESET;
+        std::cout << BLOOD_RED << "  [*] " << WHITE << js_subs.size() << BLOOD_RED << " candidates in JS, resolving "
+        << WHITE << new_js.size() << BLOOD_RED << " new...\n" << RESET;
         if (!new_js.empty()) {
             auto jres = dns.resolve_batch(new_js, 1500);
             std::vector<std::future<void>> jfuts;
@@ -1013,7 +1013,7 @@ void subdomain_scan(const std::string& domain,
                 }
             }
             for (auto& f : jfuts) { f.get(); }
-            std::cout << GREEN << "  [+] JS scraping done\n" << RESET;
+            std::cout << BLOOD_RED << "  [+] JS scraping done\n" << RESET;
         }
     }
 
@@ -1023,38 +1023,38 @@ void subdomain_scan(const std::string& domain,
               [](const SubResult& a, const SubResult& b){ return a.sub < b.sub; });
 
     print_section("SUMMARY");
-    std::cout << "\n" << BOLD << WHITE
-              << "  " << std::left << std::setw(42) << "SUBDOMAIN"
-              << std::setw(16) << "IPv4" << std::setw(6) << "v6"
-              << std::setw(8)  << "HTTP" << std::setw(16) << "WAF"
-              << std::setw(12) << "TECH" << "TITLE\n"
-              << "  " << std::string(108,'-') << "\n" << RESET;
+    std::cout << "\n" << BLOOD_RED << BOLD
+    << "  " << std::left << std::setw(42) << "SUBDOMAIN"
+    << std::setw(16) << "IPv4" << std::setw(6) << "v6"
+    << std::setw(8)  << "HTTP" << std::setw(16) << "WAF"
+    << std::setw(12) << "TECH" << "TITLE\n"
+    << "  " << std::string(108,'-') << "\n" << RESET;
 
     int cnt_cname=0, cnt_waf=0, cnt_ipv6=0;
     std::map<std::string,int> server_stats, waf_stats, lang_stats, cms_stats, source_stats;
 
     for (auto& r : results) {
-        std::cout << GREEN << "  " << std::left << std::setw(42) << r.sub;
-        if (!r.ips.empty())  { std::cout << CYAN   << std::setw(16) << r.ips[0]; }
-        else                 { std::cout << GRAY   << std::setw(16) << "-"; }
-        if (!r.ipv6.empty()) { std::cout << YELLOW << std::setw(6)  << "v6"; cnt_ipv6++; }
-        else                 { std::cout << GRAY   << std::setw(6)  << "-"; }
-        if (!r.http_code.empty() && r.http_code != "0") { std::cout << MAGENTA << std::setw(8) << r.http_code; }
-        else                                             { std::cout << GRAY   << std::setw(8) << "-"; }
+        std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(42) << r.sub;
+        if (!r.ips.empty())  { std::cout << WHITE << std::setw(16) << r.ips[0]; }
+        else                 { std::cout << BLOOD_RED << std::setw(16) << "-"; }
+        if (!r.ipv6.empty()) { std::cout << WHITE << std::setw(6)  << "v6"; cnt_ipv6++; }
+        else                 { std::cout << BLOOD_RED << std::setw(6)  << "-"; }
+        if (!r.http_code.empty() && r.http_code != "0") { std::cout << BLOOD_RED << std::setw(8) << r.http_code; }
+        else                                             { std::cout << BLOOD_RED << std::setw(8) << "-"; }
         if (!r.waf.name.empty()) {
             std::string wn = r.waf.name;
             if (wn.size() > 14) { wn = wn.substr(0, 14); }
-            std::cout << RED << std::setw(16) << wn; cnt_waf++;
-        } else { std::cout << GRAY << std::setw(16) << "-"; }
+            std::cout << BLOOD_RED << std::setw(16) << wn; cnt_waf++;
+        } else { std::cout << BLOOD_RED << std::setw(16) << "-"; }
         std::string ts = r.tech.language;
         if (!r.tech.cms.empty()) { ts += "/"+r.tech.cms; }
         if (ts.size() > 12) { ts = ts.substr(0, 12); }
-        std::cout << (ts.empty() ? GRAY : CYAN) << std::setw(12) << (ts.empty() ? "-" : ts);
+        std::cout << BLOOD_RED << std::setw(12) << (ts.empty() ? "-" : ts);
         std::cout << WHITE << sanitize(r.title) << RESET << "\n";
-        if (!r.cname.empty()) { std::cout << YELLOW << "    -> CNAME: " << r.cname << RESET << "\n"; cnt_cname++; }
-        if (!r.ipv6.empty())  { std::cout << CYAN << "    -> IPv6:  "; for (auto& a:r.ipv6){std::cout<<a<<" ";} std::cout<<RESET<<"\n"; }
-        if (!r.tech.stack.empty()) { std::cout << GRAY << "    -> stack: "; for (auto& s:r.tech.stack){std::cout<<s<<" ";} std::cout<<RESET<<"\n"; }
-        if (r.ips.size() > 1) { std::cout << GRAY << "    -> also:  "; for (size_t j=1;j<r.ips.size();j++){std::cout<<r.ips[j]<<" ";} std::cout<<RESET<<"\n"; }
+        if (!r.cname.empty()) { std::cout << BLOOD_RED << "    -> CNAME: " << WHITE << r.cname << RESET << "\n"; cnt_cname++; }
+        if (!r.ipv6.empty())  { std::cout << BLOOD_RED << "    -> IPv6:  " << WHITE; for (auto& a:r.ipv6){std::cout<<a<<" ";} std::cout<<RESET<<"\n"; }
+        if (!r.tech.stack.empty()) { std::cout << BLOOD_RED << "    -> stack: " << BLOOD_RED; for (auto& s:r.tech.stack){std::cout<<s<<" ";} std::cout<<RESET<<"\n"; }
+        if (r.ips.size() > 1) { std::cout << BLOOD_RED << "    -> also:  " << WHITE; for (size_t j=1;j<r.ips.size();j++){std::cout<<r.ips[j]<<" ";} std::cout<<RESET<<"\n"; }
         if (!r.server.empty())        { server_stats[r.server]++; }
         if (!r.waf.name.empty())      { waf_stats[r.waf.name]++; }
         if (!r.tech.language.empty()) { lang_stats[r.tech.language]++; }
@@ -1063,23 +1063,23 @@ void subdomain_scan(const std::string& domain,
     }
 
     print_section("STATISTICS");
-    std::cout << CYAN << "  [total found]     " << WHITE  << results.size()       << "\n" << RESET;
-    std::cout << CYAN << "  [dns checked]     " << WHITE  << dns_checked.load()   << "\n" << RESET;
-    std::cout << CYAN << "  [DoH fallbacks]   " << YELLOW << doh_used.load()      << "\n" << RESET;
-    std::cout << CYAN << "  [IP dedup hits]   " << YELLOW << ip_dedup_hits.load() << "\n" << RESET;
-    std::cout << CYAN << "  [with CNAME]      " << WHITE  << cnt_cname            << "\n" << RESET;
-    std::cout << CYAN << "  [with IPv6]       " << CYAN   << cnt_ipv6             << "\n" << RESET;
-    std::cout << CYAN << "  [behind WAF]      " << RED    << cnt_waf              << "\n" << RESET;
-    std::cout << CYAN << "  [enrich mode]     " << (do_enrich ? GREEN "ON" : YELLOW "OFF") << "\n" << RESET;
-    std::cout << CYAN << "  [wildcard]        " << (has_wildcard.load() ? RED "YES" : GREEN "no") << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [total found]     " << WHITE << results.size()       << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [dns checked]     " << WHITE << dns_checked.load()   << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [DoH fallbacks]   " << WHITE << doh_used.load()      << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [IP dedup hits]   " << WHITE << ip_dedup_hits.load() << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [with CNAME]      " << WHITE << cnt_cname            << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [with IPv6]       " << WHITE << cnt_ipv6             << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [behind WAF]      " << WHITE << cnt_waf              << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [enrich mode]     " << WHITE << (do_enrich ? "ON" : "OFF") << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [wildcard]        " << WHITE << (has_wildcard.load() ? "YES" : "no") << "\n" << RESET;
 
     auto print_dist = [](const std::map<std::string,int>& m, const std::string& label) {
         if (m.empty()) { return; }
-        std::cout << CYAN << "\n  [" << label << "]\n" << RESET;
+        std::cout << BLOOD_RED << "\n  [" << WHITE << label << BLOOD_RED << "]\n" << RESET;
         std::vector<std::pair<std::string,int>> v(m.begin(), m.end());
         std::sort(v.begin(), v.end(), [](auto& a, auto& b){ return a.second > b.second; });
         for (auto& [k,cnt] : v) {
-            std::cout << GRAY << "    " << std::left << std::setw(30) << k << CYAN << cnt << "\n" << RESET;
+            std::cout << BLOOD_RED << "    " << BLOOD_RED << std::left << std::setw(30) << k << WHITE << cnt << "\n" << RESET;
         }
     };
     print_dist(source_stats, "sources");
@@ -1122,25 +1122,25 @@ void subdomain_scan(const std::string& domain,
                 std::lock_guard<std::mutex> lk(to_mtx);
                 if (status == "CONFIRMED") {
                     confirmed_count++;
-                    std::cout << RED << BOLD
-                              << "  [!!!] CONFIRMED TAKEOVER: " << sub_copy << "\n"
-                              << "        CNAME:   " << cname_copy << "\n"
-                              << "        SERVICE: " << svc_copy << "\n"
-                              << "        STATUS:  fingerprint matched — register the service to claim\n"
-                              << RESET;
+                    std::cout << BLOOD_RED << BOLD
+                    << "  [!!!] CONFIRMED TAKEOVER: " << WHITE << sub_copy << "\n"
+                    << BLOOD_RED << "        CNAME:   " << WHITE << cname_copy << "\n"
+                    << BLOOD_RED << "        SERVICE: " << WHITE << svc_copy << "\n"
+                    << BLOOD_RED << "        STATUS:  " << WHITE << "fingerprint matched — register the service to claim\n"
+                    << RESET;
                 } else if (status == "DANGLING_DNS" || status == "POSSIBLE") {
                     possible_count++;
-                    std::cout << YELLOW
-                              << "  [?]   POSSIBLE TAKEOVER: " << sub_copy << "\n"
-                              << "        CNAME:   " << cname_copy << "\n"
-                              << "        SERVICE: " << svc_copy << "\n"
-                              << "        STATUS:  " << status << " — verify manually\n"
-                              << RESET;
+                    std::cout << BLOOD_RED
+                    << "  [?]   POSSIBLE TAKEOVER: " << WHITE << sub_copy << "\n"
+                    << BLOOD_RED << "        CNAME:   " << WHITE << cname_copy << "\n"
+                    << BLOOD_RED << "        SERVICE: " << WHITE << svc_copy << "\n"
+                    << BLOOD_RED << "        STATUS:  " << WHITE << status << BLOOD_RED << " — verify manually\n"
+                    << RESET;
                 } else {
-                    std::cout << GRAY
-                              << "  [-]   " << sub_copy << " -> " << cname_copy
-                              << " (" << svc_copy << ") LIVE — not vulnerable\n"
-                              << RESET;
+                    std::cout << BLOOD_RED
+                    << "  [-]   " << WHITE << sub_copy << BLOOD_RED << " -> " << WHITE << cname_copy
+                    << BLOOD_RED << " (" << WHITE << svc_copy << BLOOD_RED << ") LIVE — not vulnerable\n"
+                    << RESET;
                 }
             }));
             break;
@@ -1149,17 +1149,17 @@ void subdomain_scan(const std::string& domain,
     for (auto& f : to_futs) { f.get(); }
 
     if (!any_takeover) {
-        std::cout << GREEN << "  no takeover candidates found\n" << RESET;
+        std::cout << BLOOD_RED << "  no takeover candidates found\n" << RESET;
     } else {
         std::cout << "\n"
-                  << RED   << "  [!!!] CONFIRMED: " << confirmed_count << "\n" << RESET
-                  << YELLOW << "  [?]   POSSIBLE:  " << possible_count  << "\n" << RESET;
+        << BLOOD_RED << "  [!!!] CONFIRMED: " << WHITE << confirmed_count << "\n" << RESET
+        << BLOOD_RED << "  [?]   POSSIBLE:  " << WHITE << possible_count  << "\n" << RESET;
     }
 
     print_section("EXPORT");
     export_results(results, domain);
 
     LOG_INFO("subdomain_scan", "done domain="+domain
-             +" found="+std::to_string(results.size())
-             +" doh="+std::to_string(doh_used.load()));
+    +" found="+std::to_string(results.size())
+    +" doh="+std::to_string(doh_used.load()));
 }
