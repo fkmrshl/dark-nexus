@@ -1,7 +1,8 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
 static void print_banner() {
-    write(STDOUT_FILENO,"\033[2J\033[H",7);
+    if (write(STDOUT_FILENO, "\033[2J\033[H", 7)) {}
     std::cout<<"\n"<<WHITE<<BOLD;
     std::cout<<"  ██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗\n";
     std::cout<<"  ██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝\n";
@@ -43,6 +44,10 @@ static void print_menu() {
 
 int main() {
     Logger::get().init("dark_nexus.log", LogLevel::INFO);
+    if (!drop_privileges()) {
+        std::cerr << "  [!] failed to drop privileges\n";
+        return 1;
+    }
     LOG_INFO("main","dark nexus started");
 
     print_banner();
