@@ -1,5 +1,6 @@
 #include "../include/dns_engine.hpp"
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 #include <ares.h>
 #include <poll.h>
 #include <netdb.h>
@@ -346,6 +347,7 @@ DnsEngine::run_ares_batch(const std::vector<std::string>& hosts,
 }
 
 static std::vector<std::string> doh_resolve_single(const std::string& host) {
+    if (!InputGuard::is_valid_host(host)) return {};
     const std::vector<std::pair<std::string,std::string>> providers = {
         {"https://cloudflare-dns.com/dns-query?name="+host+"&type=A", "cloudflare"},
         {"https://dns.google/resolve?name="+host+"&type=A",           "google"},
