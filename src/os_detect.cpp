@@ -54,22 +54,22 @@ void os_detect(const std::string& ip) {
     std::map<std::string,int> cat_open;
     int open_c=0;
 
-    std::cout<<"\n"<<BOLD<<WHITE<<"  PORT FINGERPRINT:\n"<<RESET;
+    std::cout<<"\n"<<BLOOD_RED<<BOLD<<"  PORT FINGERPRINT:\n"<<RESET;
     for (auto& r:results) {
-        std::cout<<CYAN<<"  ["<<std::left<<std::setw(5)<<r.port<<" "<<std::setw(12)<<r.name<<" "<<std::setw(8)<<r.cat<<"] ";
+        std::cout<<BLOOD_RED<<"  ["<<WHITE<<std::left<<std::setw(5)<<r.port<<" "<<std::setw(12)<<r.name<<" "<<std::setw(8)<<r.cat<<BLOOD_RED<<"] ";
         if (r.open) {
-            std::cout<<GREEN<<"OPEN  "<<RESET;
-            if(!r.bnr.empty()) std::cout<<GRAY<<sanitize(r.bnr.substr(0,60));
+            std::cout<<WHITE<<"OPEN  "<<RESET;
+            if(!r.bnr.empty()) std::cout<<WHITE<<sanitize(r.bnr.substr(0,60));
             std::cout<<RESET;
             for(int j=0;j<4;j++) score[j]+=r.w[j];
             cat_open[r.cat]++;
             open_c++;
         } else {
-            std::cout<<RED<<"closed"<<RESET;
+            std::cout<<BLOOD_RED<<"closed"<<RESET;
         }
         std::cout<<"\n";
     }
-    std::cout<<CYAN<<"  open: "<<RESET<<open_c<<"/"<<checks.size()<<"\n";
+    std::cout<<BLOOD_RED<<"  open: "<<WHITE<<open_c<<BLOOD_RED<<"/"<<WHITE<<checks.size()<<"\n"<<RESET;
 
     print_section("TTL ANALYSIS");
     auto pout=safe_exec({"ping","-c5","-W1",ip},8);
@@ -94,10 +94,10 @@ void os_detect(const std::string& ip) {
         hops=init_ttl-ttl;
     }
 
-    std::cout<<CYAN<<"  [ttl]          "<<RESET<<(ttl?std::to_string(ttl):"n/a")<<"\n";
-    std::cout<<CYAN<<"  [initial_ttl]  "<<RESET<<(init_ttl?std::to_string(init_ttl):"n/a")<<"\n";
-    std::cout<<CYAN<<"  [hops]         "<<RESET<<(hops?std::to_string(hops):"n/a")<<"\n";
-    std::cout<<CYAN<<"  [stable]       "<<RESET<<(stable?"yes":YELLOW " NO -- load balancer/multipath" RESET)<<"\n";
+    std::cout<<BLOOD_RED<<"  [ttl]          "<<WHITE<<(ttl?std::to_string(ttl):"n/a")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [initial_ttl]  "<<WHITE<<(init_ttl?std::to_string(init_ttl):"n/a")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [hops]         "<<WHITE<<(hops?std::to_string(hops):"n/a")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [stable]       "<<WHITE<<(stable?"yes":"NO -- load balancer/multipath")<<"\n"<<RESET;
 
     print_section("BANNER ANALYSIS");
     struct BHint{const char* kw,*os,*detail;};
@@ -120,7 +120,7 @@ void os_detect(const std::string& ip) {
             std::transform(kl.begin(),kl.end(),kl.begin(),::tolower);
             if(bl.find(kl)!=std::string::npos){
                 os_hints_found.insert(h.os);
-                std::cout<<CYAN<<"  [port "<<r.port<<"] "<<GREEN<<h.detail<<RESET<<"\n";
+                std::cout<<BLOOD_RED<<"  [port "<<WHITE<<r.port<<BLOOD_RED<<"] "<<WHITE<<h.detail<<RESET<<"\n";
             }
         }
     }
@@ -137,10 +137,10 @@ void os_detect(const std::string& ip) {
     std::string verdict=os_names[best];
     if(!os_hints_found.empty()) verdict=*os_hints_found.begin();
 
-    std::cout<<CYAN<<"  [os]       "<<YELLOW<<BOLD<<verdict<<RESET<<"\n";
-    std::cout<<CYAN<<"  [scores]   "<<RESET;
+    std::cout<<BLOOD_RED<<"  [os]       "<<WHITE<<BOLD<<verdict<<RESET<<"\n";
+    std::cout<<BLOOD_RED<<"  [scores]   "<<WHITE;
     for(int i=0;i<4;i++) std::cout<<os_names[i]<<":"<<score[i]<<" ";
-    std::cout<<"\n";
+    std::cout<<"\n"<<RESET;
 
     g_result.os_guess=verdict;
     LOG_INFO("os_detect","target="+ip+" verdict="+verdict);
