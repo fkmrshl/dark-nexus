@@ -2,138 +2,67 @@
   <defs>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap');
-
       .bg { fill: #060001; }
-      
-      .terminal {
-        fill: rgba(8,0,1,0.97);
-        stroke: #dc143c;
-        stroke-width: 1.5;
-        animation: border-pulse 4s ease-in-out infinite, flicker 9s infinite;
-      }
-
-      /* Animations */
-      @keyframes border-pulse {
-        0%,100% { filter: drop-shadow(0 0 4px rgba(220,20,60,.35)); }
-        50%      { filter: drop-shadow(0 0 14px rgba(220,20,60,.6)); }
-      }
-      @keyframes flicker {
-        0%,91%{opacity:1} 92%{opacity:.86} 93%{opacity:1} 96%{opacity:.93} 100%{opacity:1}
-      }
+      .terminal { fill: rgba(8,0,1,0.97); stroke: #dc143c; stroke-width: 1.5; animation: border-pulse 4s ease-in-out infinite, flicker 9s infinite, screen-jump 8s infinite; }
+      @keyframes border-pulse { 0%,100% { filter: drop-shadow(0 0 4px rgba(220,20,60,.35)); } 50% { filter: drop-shadow(0 0 14px rgba(220,20,60,.6)); } }
+      @keyframes flicker { 0%,91%{opacity:1} 92%{opacity:.86} 93%{opacity:1} 96%{opacity:.93} 100%{opacity:1} }
       @keyframes scan { 0%{transform: translateY(0)} 100%{transform: translateY(370px)} }
-      
-      @keyframes badge-glow {
-        0%,100% { filter: drop-shadow(0 0 2px rgba(220,20,60,.2)); }
-        50%      { filter: drop-shadow(0 0 7px rgba(220,20,60,.5)); }
-      }
-      @keyframes txt-glow-kali {
-        0%,100% { text-shadow: 0 0 5px rgba(220,20,60,.45); }
-        50%      { text-shadow: 0 0 10px rgba(220,20,60,.8); }
-      }
-      @keyframes txt-glow-ba {
-        0%,100% { text-shadow: 0 0 5px rgba(255,42,80,.45); }
-        50%      { text-shadow: 0 0 10px rgba(255,42,80,.8); }
-      }
-
+      @keyframes badge-glow { 0%,100% { filter: drop-shadow(0 0 2px rgba(220,20,60,.2)); } 50% { filter: drop-shadow(0 0 7px rgba(220,20,60,.5)); } }
+      @keyframes txt-glow-kali { 0%,100% { text-shadow: 0 0 5px rgba(220,20,60,.45); } 50% { text-shadow: 0 0 10px rgba(220,20,60,.8); } }
+      @keyframes txt-glow-ba { 0%,100% { text-shadow: 0 0 5px rgba(255,42,80,.45); } 50% { text-shadow: 0 0 10px rgba(255,42,80,.8); } }
       @keyframes glow-breathe { 0%,100%{opacity:.28} 50%{opacity:.44} }
-      @keyframes neon-breathe {
-        0%,100% { filter: drop-shadow(0 0 3px #ff2040) drop-shadow(0 0 8px rgba(220,20,60,.4)); }
-        50%      { filter: drop-shadow(0 0 5px #ff3050) drop-shadow(0 0 12px rgba(220,20,60,.6)); }
-      }
+      @keyframes neon-breathe { 0%,100% { filter: drop-shadow(0 0 3px #ff2040) drop-shadow(0 0 8px rgba(220,20,60,.4)); } 50% { filter: drop-shadow(0 0 5px #ff3050) drop-shadow(0 0 12px rgba(220,20,60,.6)); } }
       @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
-
-      /* Base Text Styles */
+      @keyframes text-glitch-anim { 0%, 93%, 96%, 100% { transform: translate(0, 0); } 94% { transform: translate(-4px, 1px); } 95% { transform: translate(4px, -1px); } }
+      @keyframes subtle-twitch { 0%, 96%, 98%, 100% { transform: translate(0,0); opacity: 1; } 97% { transform: translate(-2px, 0); opacity: 0.8; } }
+      @keyframes screen-jump { 0%, 92%, 94%, 100% { transform: translateY(0); } 93% { transform: translateY(-1.5px); } }
       .st-mono { font-family: 'Share Tech Mono', 'Courier New', monospace; }
       .cr-mono { font-family: 'Courier New', monospace; }
-
-      /* Titlebar */
       .titlebar { fill: rgba(20,0,4,0.9); }
       .title-border { stroke: #8b0020; stroke-width: 1; }
       .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
-
-      /* Badges */
-      .badge-bg {
-        fill: #0d0002;
-        stroke: #3d0010;
-        stroke-width: 1;
-        animation: badge-glow 3s ease-in-out infinite;
-      }
+      .badge-bg { fill: #0d0002; stroke: #3d0010; stroke-width: 1; animation: badge-glow 3s ease-in-out infinite; }
       .badge-bg.blackarch { animation-delay: 1.5s; }
-      .badge-label {
-        font-size: 10px;
-        letter-spacing: 1.8px;
-        text-transform: uppercase;
-      }
+      .badge-label { font-size: 10px; letter-spacing: 1.8px; text-transform: uppercase; }
       .lbl-kali { fill: #dc143c; animation: txt-glow-kali 3s ease-in-out infinite; }
-      .lbl-ba   { fill: #ff2a50; animation: txt-glow-ba 3s ease-in-out infinite; animation-delay: 1.5s; }
+      .lbl-ba { fill: #ff2a50; animation: txt-glow-ba 3s ease-in-out infinite; animation-delay: 1.5s; }
       .sep { fill: #3d0010; font-size: 16px; font-weight: bold; }
-
-      /* Banner */
-      .banner-glow {
-        fill: #ff0025; font-size: 11px;
-        animation: glow-breathe 3s ease-in-out infinite;
-        filter: blur(4px);
-      }
-      .banner-main {
-        fill: #e01030; font-size: 11px;
-        animation: neon-breathe 3s ease-in-out infinite;
-      }
-
-      /* Divider */
+      .banner-glow { fill: #ff0025; font-size: 11px; animation: glow-breathe 3s ease-in-out infinite; filter: blur(4px); }
+      .banner-main { fill: #e01030; font-size: 11px; animation: neon-breathe 3s ease-in-out infinite, text-glitch-anim 6s infinite; }
       .divider { stroke: #8b0020; stroke-width: 1; opacity: 0.5; }
-
-      /* Bullets */
       .bullet-line { font-size: 11.5px; fill: #dc143c; letter-spacing: 0.5px; }
-      .bullet-tag  { fill: #3a000c; }
-      .hl          { fill: #ff2a50; }
-
-      /* Tagline */
+      .bl-1 { animation: subtle-twitch 4.2s infinite; }
+      .bl-2 { animation: subtle-twitch 5.5s infinite; }
+      .bl-3 { animation: subtle-twitch 3.8s infinite; }
+      .bl-4 { animation: subtle-twitch 6.1s infinite; }
+      .bullet-tag { fill: #ff2a50; font-weight: bold; text-shadow: 0 0 5px rgba(255,42,80,0.6); }
+      .hl { fill: #ff2a50; }
       .tagline-wrap { font-size: 12px; letter-spacing: 5px; fill: #8b0020; text-transform: uppercase; }
       .tagline-bracket { fill: #3d000c; }
       .cursor { fill: #dc143c; animation: blink 1s step-end infinite; }
-
-      /* Bottombar */
       .bottombar { fill: rgba(14,0,3,0.75); }
       .bb-text { font-size: 10px; fill: #b00028; letter-spacing: 0.8px; }
       .bb-hl { fill: #dc143c; }
-
-      /* Scanline */
+      .bb-bar-bg { fill: #3d0010; }
       .scanline { fill: rgba(220,20,60,.03); animation: scan 6s linear infinite; }
     </style>
   </defs>
-
-  <!-- Background -->
   <rect class="bg" width="1024" height="374" />
-
   <g transform="translate(2, 2)">
-    <!-- Main Terminal Container -->
     <rect class="terminal" width="1020" height="370" />
-
-    <!-- Scanline Overlay -->
     <rect class="scanline" width="1020" height="28" />
-
-    <!-- Titlebar -->
     <rect class="titlebar" width="1020" height="30" />
     <line class="title-border" x1="0" y1="30" x2="1020" y2="30" />
-
-    <!-- Dots -->
     <circle class="dot" cx="20" cy="15" r="4" />
     <circle class="dot" cx="34" cy="15" r="4" />
     <circle class="dot" cx="48" cy="15" r="4" />
-
-    <!-- Badges Group -->
     <g transform="translate(510, 3)">
-      <!-- Kali Linux Badge -->
       <rect class="badge-bg" x="-140" y="0" width="125" height="24" rx="3" />
       <svg x="-135" y="1" width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path fill="#cccccc" d="M12.778 5.943s-1.97-.13-5.327.92c-3.42 1.07-5.36 2.587-5.36 2.587s5.098-2.847 10.852-3.008zm7.351 3.095.257-.017s-1.468-1.78-4.278-2.648c1.58.642 2.954 1.493 4.021 2.665zm.42.74c.039-.068.166.217.263.337.004.024.01.039-.045.027-.005-.025-.013-.032-.013-.032s-.135-.08-.177-.137c-.041-.057-.049-.157-.028-.195zm3.448 8.479s.312-3.578-5.31-4.403a18.277 18.277 0 0 0-2.524-.187c-4.506.06-4.67-5.197-1.275-5.462 1.407-.116 3.087.643 4.73 1.408-.007.204.002.385.136.552.134.168.648.35.813.445.164.094.691.43 1.014.85.07-.131.654-.512.654-.512s-.14.003-.465-.119c-.326-.122-.713-.49-.722-.511-.01-.022-.015-.055.06-.07.059-.049-.072-.207-.13-.265-.058-.058-.445-.716-.454-.73-.009-.016-.012-.031-.04-.05-.085-.027-.46.04-.46.04s-.575-.283-.774-.893c.003.107-.099.224 0 .469-.3-.127-.558-.344-.762-.88-.12.305 0 .499 0 .499s-.707-.198-.82-.85c-.124.293 0 .469 0 .469s-1.153-.602-3.069-.61c-1.283-.118-1.55-2.374-1.43-2.754 0 0-1.85-.975-5.493-1.406-3.642-.43-6.628-.065-6.628-.065s6.45-.31 11.617 1.783c.176.785.704 2.094.989 2.723-.815.563-1.733 1.092-1.876 2.97-.143 1.878 1.472 3.53 3.474 3.58 1.9.102 3.214.116 4.806.942 1.52.84 2.766 3.4 2.89 5.703.132-1.709-.509-5.383-3.5-6.498 4.181.732 4.549 3.832 4.549 3.832zM12.68 5.663l-.15-.485s-2.484-.441-5.822-.204C3.37 5.211 0 6.38 0 6.38s6.896-1.735 12.68-.717z"/>
       </svg>
       <text class="st-mono badge-label lbl-kali" x="-110" y="15.5">Kali Linux</text>
-
-      <!-- Center Cross -->
       <text class="st-mono sep" text-anchor="middle" x="0" y="18">×</text>
-
-      <!-- Black Arch Badge -->
       <rect class="badge-bg blackarch" x="15" y="0" width="125" height="24" rx="3" />
       <svg x="20" y="1" width="18" height="22" viewBox="35 0 193 263" xmlns="http://www.w3.org/2000/svg">
         <path fill="#585858" d="M110 51C110.176 52.8781 110.438 54.1995 111 56C114.412 54.554 117.304 54.0408 121 54C121.098 57.3231 121.891 59.8961 123 63C125.501 59.9281 126.568 56.0781 130 54C130.133 58.472 131.286 63.2393 135 66L135 54C138.623 54.0848 141.6 54.7605 145 56L146 51C141.59 50.3516 137.497 49.0958 133 49C132.999 38.1014 129.38 26.9121 131.148 16.0193C131.84 11.7554 139.656 10.5105 139.079 7.09105C138.706 4.88409 135.788 4.0101 133.995 3.44366C129.782 2.11255 119.612 1.14389 117.176 6.22375C115.338 10.057 123.774 11.4327 124.667 15.0579C125.376 17.9323 124.287 21.1157 124.09 24C123.749 28.9693 124.01 34.0208 124 39C123.994 41.6804 124.456 45.3007 122.397 47.4005C119.838 50.0092 113.478 50.4886 110 51z"/>
@@ -149,8 +78,6 @@
       </svg>
       <text class="st-mono badge-label lbl-ba" x="43" y="15.5">Black Arch</text>
     </g>
-
-    <!-- Glowing ASCII Banner -->
     <text class="cr-mono banner-glow" text-anchor="middle" x="510" y="65">
       <tspan x="510" dy="15" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
       <tspan x="510" dy="15" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
@@ -159,8 +86,6 @@
       <tspan x="510" dy="15" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
       <tspan x="510" dy="15" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
     </text>
-
-    <!-- Main ASCII Banner -->
     <text class="cr-mono banner-main" text-anchor="middle" x="510" y="65">
       <tspan x="510" dy="15" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
       <tspan x="510" dy="15" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
@@ -169,42 +94,30 @@
       <tspan x="510" dy="15" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
       <tspan x="510" dy="15" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
     </text>
-
-    <!-- Top Divider -->
     <line class="divider" x1="80" y1="180" x2="940" y2="180" />
-
-    <!-- Bullets -->
-    <text class="st-mono bullet-line" x="220" y="210">
+    <text class="st-mono bullet-line bl-1" text-anchor="middle" x="510" y="210">
       <tspan class="bullet-tag">[+]</tspan> <tspan class="hl">Offensive</tspan> Security Intelligence
     </text>
-    <text class="st-mono bullet-line" x="220" y="235">
+    <text class="st-mono bullet-line bl-2" text-anchor="middle" x="510" y="235">
       <tspan class="bullet-tag">[+]</tspan> Automated Network Reconnaissance &amp; <tspan class="hl">Vulnerability Discovery</tspan>
     </text>
-    <text class="st-mono bullet-line" x="220" y="260">
+    <text class="st-mono bullet-line bl-3" text-anchor="middle" x="510" y="260">
       <tspan class="bullet-tag">[+]</tspan> Deep Infrastructure Analysis &amp; High-Speed Subdomain Enumeration
     </text>
-    <text class="st-mono bullet-line" x="220" y="285">
+    <text class="st-mono bullet-line bl-4" text-anchor="middle" x="510" y="285">
       <tspan class="bullet-tag">[+]</tspan> Built for Stealth, Speed, and Tactical OSINT gathering
     </text>
-
-    <!-- Bottom Divider -->
     <line class="divider" x1="80" y1="310" x2="940" y2="310" />
-
-    <!-- Tagline -->
     <text class="st-mono tagline-wrap" text-anchor="middle" x="510" y="335">
       <tspan class="tagline-bracket">[</tspan> penetration testing framework <tspan class="tagline-bracket">]</tspan>   <tspan class="cursor">█</tspan>
     </text>
-
-    <!-- Bottombar -->
     <rect class="bottombar" x="0" y="345" width="1020" height="25" />
     <line class="title-border" x1="0" y1="345" x2="1020" y2="345" />
-
     <text class="st-mono bb-text" x="14" y="362">
       <tspan class="bb-hl">C++</tspan> · <tspan class="bb-hl">libcares</tspan> · <tspan class="bb-hl">libcurl</tspan> · v2.0.0-dev
     </text>
-    
     <text class="st-mono bb-text" text-anchor="end" x="1006" y="362">
-      bug bounty certified ▓▓▓▓▓▓▓░░░ <tspan class="bb-hl">74%</tspan>
+      CERTIFICATE: <tspan class="bb-hl">BUG_BOUNTY</tspan> <tspan class="bb-bar-bg">▐</tspan><tspan class="bb-hl">████████</tspan><tspan class="bb-bar-bg">░░░▌</tspan> <tspan class="bb-hl">74%</tspan>
     </text>
   </g>
 </svg>
