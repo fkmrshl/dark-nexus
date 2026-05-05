@@ -1,35 +1,17 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/dns_engine.hpp"
+#include "../include/security.hpp"
 
 bool valid_target(const std::string& s) {
-    if (s.empty() || s.size() > 253) { return false; }
-    static const std::regex ok(R"(^[a-zA-Z0-9.\-_:/@]+$)");
-    return std::regex_match(s, ok);
+    return InputGuard::is_valid_host(s);
 }
 
 bool valid_username(const std::string& s) {
-    if (s.empty() || s.size() > 64) { return false; }
-    static const std::regex ok(R"(^[a-zA-Z0-9.\-_]+$)");
-    return std::regex_match(s, ok);
+    return InputGuard::is_valid_username(s);
 }
 
-bool valid_port(int p) { return p >= 1 && p <= 65535; }
-
-std::string sanitize(const std::string& s) {
-    std::string o;
-    o.reserve(s.size());
-    for (size_t i = 0; i < s.size(); i++) {
-        unsigned char c = s[i];
-        if (c == 0x1b) {
-            while (i < s.size() && s[i] != 'm' && s[i] != 'J' && s[i] != 'H' &&
-                   s[i] != 'K' && s[i] != 'A' && s[i] != 'B' && s[i] != 'C' && s[i] != 'D') {
-                i++;
-            }
-            continue;
-        }
-        if ((c >= 32 && c <= 126) || c == 10 || c == 9) { o += c; }
-    }
-    return o;
+bool valid_port(int p) {
+    return InputGuard::is_valid_port(p);
 }
 
 std::string resolve(const std::string& host) {
@@ -118,7 +100,7 @@ std::string banner(const std::string& ip, int port, int ms) {
     fcntl(fd, F_SETFL, O_NONBLOCK);
     connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
     fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
-    timeval ctv{ 0, ms * 1000 };
+    timeval ctv{ ms / 1000, (ms % 1000) * 1000 };
     if (select(fd + 1, nullptr, &wfds, nullptr, &ctv) <= 0) { close(fd); return ""; }
     if (port == 80 || port == 8080 || port == 8888) {
         std::string req = "HEAD / HTTP/1.0\r\nHost: " + ip + "\r\n\r\n";
@@ -145,31 +127,36 @@ std::string banner(const std::string& ip, int port, int ms) {
 std::string smart_banner(const std::string& ip, int port, int ms) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return ""; }
+
     timeval tv{ ms / 1000, (ms % 1000) * 1000 };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
     sa.sin_port   = htons(port);
     inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
+
     fcntl(fd, F_SETFL, O_NONBLOCK);
     connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+
     fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
     timeval ctv{ ms / 1000, (ms % 1000) * 1000 };
     if (select(fd + 1, nullptr, &wfds, nullptr, &ctv) <= 0) { close(fd); return ""; }
+
     int sockerr = 0; socklen_t errlen = sizeof(sockerr);
     getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockerr, &errlen);
     if (sockerr != 0) { close(fd); return ""; }
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+
 
     std::string probe;
     switch (port) {
         case 80: case 8080: case 8888: case 8000: case 3000: case 9090:
             probe = "GET / HTTP/1.1\r\nHost: " + ip +
-                    "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+            "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n";
             break;
         case 443: case 8443: case 9443:
-            probe = "GET / HTTP/1.0\r\n\r\n";
+            probe = "GET / HTTP/1.0\r\nConnection: close\r\n\r\n";
             break;
         case 25: case 587:
             probe = "EHLO probe.local\r\n";
@@ -183,32 +170,54 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
         default:
             break;
     }
-    if (!probe.empty()) { send(fd, probe.c_str(), probe.size(), MSG_NOSIGNAL); }
+
+    if (!probe.empty()) {
+        send(fd, probe.c_str(), probe.size(), MSG_NOSIGNAL);
+    }
 
     std::string result;
-    char buf[2048];
-    int waited = 0;
-    while (result.size() < 4096 && waited < ms) {
+    std::vector<char> buf(2048, 0);
+
+    auto t_start = std::chrono::steady_clock::now();
+
+    while (result.size() < 4096) {
+        auto now = std::chrono::steady_clock::now();
+        int elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - t_start).count();
+        if (elapsed >= ms) break;
+
         fd_set rfds; FD_ZERO(&rfds); FD_SET(fd, &rfds);
-        timeval rtv{ 0, 300000 };
-        if (select(fd + 1, &rfds, nullptr, nullptr, &rtv) > 0) {
-            ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
-            if (n <= 0) { break; }
-            result.append(buf, n);
-        } else {
-            waited += 300;
-            if (!result.empty()) { break; }
+        timeval rtv{ 0, 100000 };
+
+        int s = select(fd + 1, &rfds, nullptr, nullptr, &rtv);
+        if (s > 0) {
+            ssize_t n = recv(fd, buf.data(), buf.size() - 1, 0);
+            if (n > 0) {
+                result.append(buf.data(), static_cast<size_t>(n));
+                if (result.find("\r\n\r\n") != std::string::npos || result.find("\n\n") != std::string::npos) {
+                    break;
+                }
+            } else if (n == 0) {
+                break;
+            } else {
+                if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                    break;
+                }
+            }
+        } else if (s < 0 && errno != EINTR) {
+            break;
         }
     }
     close(fd);
+
     result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
     if (port == 80 || port == 8080 || port == 8888 || port == 8000 ||
         port == 443 || port == 8443 || port == 3000 || port == 9090) {
         auto end = result.find("\n\n");
-        if (end != std::string::npos) { result = result.substr(0, end); }
-    }
-    auto nl = result.find('\n');
-    std::string first = (nl != std::string::npos) ? result.substr(0, nl) : result;
-    if (first.size() > 80) { first = first.substr(0, 80) + "..."; }
-    return sanitize(first);
+    if (end != std::string::npos) { result = result.substr(0, end); }
+        }
+        auto nl = result.find('\n');
+        std::string first = (nl != std::string::npos) ? result.substr(0, nl) : result;
+        if (first.size() > 80) { first = first.substr(0, 80) + "..."; }
+
+        return sanitize(first);
 }
