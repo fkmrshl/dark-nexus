@@ -1,4 +1,5 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
 void os_detect(const std::string& ip) {
     print_header("OS DETECTION // " + ip);
@@ -58,7 +59,7 @@ void os_detect(const std::string& ip) {
         std::cout<<CYAN<<"  ["<<std::left<<std::setw(5)<<r.port<<" "<<std::setw(12)<<r.name<<" "<<std::setw(8)<<r.cat<<"] ";
         if (r.open) {
             std::cout<<GREEN<<"OPEN  "<<RESET;
-            if(!r.bnr.empty()) std::cout<<GRAY<<r.bnr.substr(0,60);
+            if(!r.bnr.empty()) std::cout<<GRAY<<sanitize(r.bnr.substr(0,60));
             std::cout<<RESET;
             for(int j=0;j<4;j++) score[j]+=r.w[j];
             cat_open[r.cat]++;
