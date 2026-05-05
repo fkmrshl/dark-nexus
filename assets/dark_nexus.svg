@@ -16,8 +16,8 @@
       @keyframes text-glitch-anim { 0%, 93%, 96%, 100% { transform: translate(0, 0); } 94% { transform: translate(-4px, 1px); } 95% { transform: translate(4px, -1px); } }
       @keyframes subtle-twitch { 0%, 96%, 98%, 100% { transform: translate(0,0); opacity: 1; } 97% { transform: translate(-2px, 0); opacity: 0.8; } }
       @keyframes screen-jump { 0%, 92%, 94%, 100% { transform: translateY(0); } 93% { transform: translateY(-1.5px); } }
-      .st-mono { font-family: 'Share Tech Mono', 'Courier New', monospace; }
-      .cr-mono { font-family: 'Courier New', monospace; }
+      .st-mono { font-family: 'Share Tech Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .cr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; }
       .titlebar { fill: rgba(20,0,4,0.9); }
       .title-border { stroke: #8b0020; stroke-width: 1; }
       .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
@@ -79,20 +79,20 @@
       <text class="st-mono badge-label lbl-ba" x="43" y="15.5">Black Arch</text>
     </g>
     <text class="cr-mono banner-glow" text-anchor="middle" x="510" y="65">
-      <tspan x="510" dy="15" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
     </text>
     <text class="cr-mono banner-main" text-anchor="middle" x="510" y="65">
-      <tspan x="510" dy="15" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
-      <tspan x="510" dy="15" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
+      <tspan x="510" dy="15" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
     </text>
     <line class="divider" x1="80" y1="180" x2="940" y2="180" />
     <text class="st-mono bullet-line bl-1" text-anchor="middle" x="510" y="210">
