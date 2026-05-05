@@ -15,7 +15,15 @@
 
 </div>
 
+
 ---
+
+<img width="719" height="566" alt="image" src="https://github.com/user-attachments/assets/7b9703e8-7f1f-4ea7-b466-d20abc62b086" />
+
+
+
+---
+
 
 ## Modules
 
@@ -73,29 +81,6 @@ sudo ./dark_nexus
 
 ---
 
-## Usage
-
-```
-  +------+--------------------+----------------------------------+
-  | NUM  | MODULE             | EXAMPLE                          |
-  +------+--------------------+----------------------------------+
-  |  [1] | PORT SCAN          | 192.168.1.1   0=top1000          |
-  |  [2] | NETWORK SCAN       | 192.168.1.0/24                   |
-  |  [3] | OS DETECTION       | 192.168.1.1                      |
-  |  [4] | IP FULL INTEL      | 8.8.8.8                          |
-  |  [5] | DNS LOOKUP         | google.com                       |
-  |  [6] | WHOIS LOOKUP       | google.com / 8.8.8.8             |
-  |  [7] | SITE --> IP        | https://google.com               |
-  |  [8] | OSINT USERNAME     | user / user@mail.com / +7900...  |
-  |  [9] | TRACEROUTE         | 8.8.8.8                          |
-  | [10] | FULL IP RECON      | 8.8.8.8                          |
-  | [11] | SUBDOMAIN SCAN     | google.com                       |
-  | [12] | EXPORT JSON        | save last scan                   |
-  |  [0] | EXIT               |                                  |
-  +------+--------------------+----------------------------------+
-```
-
----
 
 ## Legal
 
