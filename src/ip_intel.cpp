@@ -1,4 +1,5 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
 void ip_intel(const std::string& ip) {
     print_header("IP INTELLIGENCE // " + ip);
@@ -6,10 +7,11 @@ void ip_intel(const std::string& ip) {
 
     print_section("GEOLOCATION");
     std::cout<<YELLOW<<"  fetching...\n"<<RESET;
-    std::string body=safe_curl(
-        "http://ip-api.com/json/"+ip+
-        "?fields=status,message,country,countryCode,regionName,"
-        "city,zip,lat,lon,timezone,isp,org,as,asname,reverse,mobile,proxy,hosting,query");
+    if (!InputGuard::is_valid_ipv4(ip) && !InputGuard::is_valid_ipv6(ip)) {
+        std::cout << RED << "  invalid ip\n" << RESET;
+        return;
+    }
+    std::string body = safe_curl("http://ip-api.com/json/" + ip + "?fields=...");
 
     if(!body.empty()){
         auto g=[&](const std::string& k){return json_val(body,k);};
@@ -98,16 +100,17 @@ void ip_intel(const std::string& ip) {
         if (!tcp_probe(ip, p, 600)) continue; 
 any = true;
         std::string b=banner(ip,p), s=svc(p);
-        std::cout<<GREEN<<"  "<<std::left<<std::setw(12)<<p<<WHITE<<std::setw(16)<<s<<std::setw(10)<<risk_label(p)<<GRAY<<(b.size()>40?b.substr(0,40):b)<<RESET<<"\n";
+        std::cout<<GREEN<<"  "<<std::left<<std::setw(12)<<p<<WHITE<<std::setw(16)<<s<<std::setw(10)<<risk_label(p)<<GRAY<<GRAY<<sanitize(b.size()>40?b.substr(0,40):b)<<RESET<<"\n";
         g_result.open_ports.push_back({p,s});
     }
     if(!any) std::cout<<GRAY<<"  top ports closed\n"<<RESET;
 
     if(tcp_probe(ip,443,500)){
         print_section("SSL CERTIFICATE");
-        auto cert=safe_exec({"sh","-c",
-            "echo Q | openssl s_client -connect "+ip+":443 -servername "+ip+
-            " 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null"},10);
+        auto cert = safe_exec({"sh","-c",
+            "echo Q | openssl s_client -connect " +
+            InputGuard::sanitize_output(ip) + ":443 -servername " +
+            InputGuard::sanitize_output(ip) + " 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null"}, 10);
         if(cert.empty()) std::cout<<GRAY<<"  could not fetch cert\n"<<RESET;
         else{
             std::istringstream ss(cert); std::string l;
