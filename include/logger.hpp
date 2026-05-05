@@ -1,10 +1,12 @@
 #pragma once
 
-#include <fstream>
-#include <mutex>
 #include <string>
+#include <mutex>
 #include <chrono>
 #include <ctime>
+#include <cstdio>
+#include <unistd.h>
+#include <fcntl.h>
 
 enum class LogLevel { DEBUG, INFO, WARN, ERROR };
 
@@ -14,43 +16,73 @@ public:
 
     void init(const std::string& path, LogLevel min = LogLevel::INFO) {
         std::lock_guard<std::mutex> lk(mtx_);
-        if (file_.is_open()) file_.close();
-        file_.open(path, std::ios::app);
+        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+
+        fd_ = ::open(path.c_str(),
+                     O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+                     0600);
         min_ = min;
     }
 
     void log(LogLevel lv, const std::string& mod, const std::string& msg) {
-        if (lv < min_) return;
+        if (lv < min_ || fd_ < 0) return;
         std::lock_guard<std::mutex> lk(mtx_);
+
         auto now = std::chrono::system_clock::now();
         auto t   = std::chrono::system_clock::to_time_t(now);
-        char ts[32]; strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", localtime(&t));
-        if (file_.is_open())
-            file_ << "{\"t\":\"" << ts << "\",\"lv\":\"" << lvstr(lv)
-                  << "\",\"mod\":\"" << mod << "\",\"msg\":\""
-                  << esc(msg) << "\"}\n";
+        char ts[32];
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", localtime(&t));
+
+        char buf[2048];
+        int n = snprintf(buf, sizeof(buf),
+                         "{\"t\":\"%s\",\"lv\":\"%s\",\"mod\":\"%s\",\"msg\":\"%s\"}\n",
+                         ts, lvstr(lv), mod.c_str(), esc(msg).c_str());
+
+        if (n > 0 && n < (int)sizeof(buf)) {
+            const char* data_ptr = buf;
+            size_t bytes_left = static_cast<size_t>(n);
+
+            while (bytes_left > 0) {
+                ssize_t written = ::write(fd_, data_ptr, bytes_left);
+
+                if (written < 0) {
+                    if (errno == EINTR) {
+                        continue;
+                    }
+                    break;
+                }
+
+                data_ptr += written;
+                bytes_left -= written;
+            }
+        }
     }
 
 private:
     Logger() = default;
-    std::ofstream file_;
+    int      fd_  = -1;
     std::mutex mtx_;
     LogLevel min_ = LogLevel::INFO;
 
     static const char* lvstr(LogLevel l) {
-        switch(l){ case LogLevel::DEBUG: return "DBG";
-                   case LogLevel::INFO:  return "INF";
-                   case LogLevel::WARN:  return "WRN";
-                   case LogLevel::ERROR: return "ERR"; }
+        switch(l) {
+            case LogLevel::DEBUG: return "DBG";
+            case LogLevel::INFO:  return "INF";
+            case LogLevel::WARN:  return "WRN";
+            case LogLevel::ERROR: return "ERR";
+        }
         return "?";
     }
+
     static std::string esc(const std::string& s) {
         std::string o;
+        o.reserve(s.size());
         for (char c : s) {
-            if (c == '"') o += "\\\"";
+            if      (c == '"')  o += "\\\"";
             else if (c == '\\') o += "\\\\";
-            else if (c == 10) o += "\\n";
-            else o += c;
+            else if (c == '\n') o += "\\n";
+            else if (c == '\r') o += "\\r";
+            else                o += c;
         }
         return o;
     }
