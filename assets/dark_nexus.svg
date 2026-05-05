@@ -1,126 +1,210 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 380" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 374" width="100%" height="100%">
   <defs>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap');
+
+      .bg { fill: #060001; }
       
-      .bg { fill: #080001; }
-      .term-box {
-        animation: pulse-border 4s ease-in-out infinite, flicker 9s infinite;
-      }
-      .term-rect {
+      .terminal {
         fill: rgba(8,0,1,0.97);
         stroke: #dc143c;
         stroke-width: 1.5;
+        animation: border-pulse 4s ease-in-out infinite, flicker 9s infinite;
       }
-      .titlebar { fill: rgba(20,0,4,0.85); }
-      .titlebar-line { stroke: #8b0020; stroke-width: 1; }
-      
-      .text { font-family: 'Share Tech Mono', 'Courier New', monospace; font-size: 13px; }
-      .tb-path { fill: #8b0020; font-size: 11px; letter-spacing: 0.5px; }
-      .tb-root { fill: #dc143c; }
-      
-      .banner {
-        font-family: 'Courier New', monospace;
-        font-size: 11px;
-        fill: #dc143c;
-        animation: glitch 8s ease-in-out infinite;
-      }
-      
-      .stat-label { fill: #4a000e; font-size: 11px; }
-      .stat-val { fill: #dc143c; font-size: 11px; }
-      
-      .divider { stroke: #8b0020; stroke-width: 1; opacity: 0.5; }
-      
-      .tagline { fill: #8b0020; font-size: 13px; letter-spacing: 5px; text-transform: uppercase; }
-      .bracket { fill: #3d000c; }
-      .cursor { fill: #dc143c; animation: blink 1s step-end infinite; }
-      
-      .bottombar { fill: rgba(12,0,2,0.7); }
-      .bb-text { fill: #3d0010; font-size: 10px; letter-spacing: 1px; }
-      .bb-right { fill: #5c0018; }
-      
-      .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
-      .scanline { fill: rgba(220,20,60,0.07); animation: scan-sweep 6s linear infinite; }
 
-      @keyframes flicker { 0%,91%{opacity:1}92%{opacity:.84}93%{opacity:1}96%{opacity:.91}100%{opacity:1} }
-      @keyframes blink { 0%,49%{opacity:1}50%,100%{opacity:0} }
-      @keyframes glitch {
-        0%,93%{ transform:none }
-        94%{ transform:skewX(-2deg) }
-        95%{ transform:skewX(2deg) }
-        96%,100%{ transform:none }
+      /* Animations */
+      @keyframes border-pulse {
+        0%,100% { filter: drop-shadow(0 0 4px rgba(220,20,60,.35)); }
+        50%      { filter: drop-shadow(0 0 14px rgba(220,20,60,.6)); }
       }
-      @keyframes pulse-border {
-        0%,100%{ filter: drop-shadow(0 0 4px rgba(220,20,60,.4)); }
-        50%{ filter: drop-shadow(0 0 12px rgba(220,20,60,.65)); }
+      @keyframes flicker {
+        0%,91%{opacity:1} 92%{opacity:.86} 93%{opacity:1} 96%{opacity:.93} 100%{opacity:1}
       }
-      @keyframes scan-sweep { 0%{ transform: translateY(0); } 100%{ transform: translateY(340px); } }
+      @keyframes scan { 0%{transform: translateY(0)} 100%{transform: translateY(370px)} }
+      
+      @keyframes badge-glow {
+        0%,100% { filter: drop-shadow(0 0 2px rgba(220,20,60,.2)); }
+        50%      { filter: drop-shadow(0 0 7px rgba(220,20,60,.5)); }
+      }
+      @keyframes txt-glow-kali {
+        0%,100% { text-shadow: 0 0 5px rgba(220,20,60,.45); }
+        50%      { text-shadow: 0 0 10px rgba(220,20,60,.8); }
+      }
+      @keyframes txt-glow-ba {
+        0%,100% { text-shadow: 0 0 5px rgba(255,42,80,.45); }
+        50%      { text-shadow: 0 0 10px rgba(255,42,80,.8); }
+      }
+
+      @keyframes glow-breathe { 0%,100%{opacity:.28} 50%{opacity:.44} }
+      @keyframes neon-breathe {
+        0%,100% { filter: drop-shadow(0 0 3px #ff2040) drop-shadow(0 0 8px rgba(220,20,60,.4)); }
+        50%      { filter: drop-shadow(0 0 5px #ff3050) drop-shadow(0 0 12px rgba(220,20,60,.6)); }
+      }
+      @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+
+      /* Base Text Styles */
+      .st-mono { font-family: 'Share Tech Mono', 'Courier New', monospace; }
+      .cr-mono { font-family: 'Courier New', monospace; }
+
+      /* Titlebar */
+      .titlebar { fill: rgba(20,0,4,0.9); }
+      .title-border { stroke: #8b0020; stroke-width: 1; }
+      .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
+
+      /* Badges */
+      .badge-bg {
+        fill: #0d0002;
+        stroke: #3d0010;
+        stroke-width: 1;
+        animation: badge-glow 3s ease-in-out infinite;
+      }
+      .badge-bg.blackarch { animation-delay: 1.5s; }
+      .badge-label {
+        font-size: 10px;
+        letter-spacing: 1.8px;
+        text-transform: uppercase;
+      }
+      .lbl-kali { fill: #dc143c; animation: txt-glow-kali 3s ease-in-out infinite; }
+      .lbl-ba   { fill: #ff2a50; animation: txt-glow-ba 3s ease-in-out infinite; animation-delay: 1.5s; }
+      .sep { fill: #3d0010; font-size: 16px; font-weight: bold; }
+
+      /* Banner */
+      .banner-glow {
+        fill: #ff0025; font-size: 11px;
+        animation: glow-breathe 3s ease-in-out infinite;
+        filter: blur(4px);
+      }
+      .banner-main {
+        fill: #e01030; font-size: 11px;
+        animation: neon-breathe 3s ease-in-out infinite;
+      }
+
+      /* Divider */
+      .divider { stroke: #8b0020; stroke-width: 1; opacity: 0.5; }
+
+      /* Bullets */
+      .bullet-line { font-size: 11.5px; fill: #dc143c; letter-spacing: 0.5px; }
+      .bullet-tag  { fill: #3a000c; }
+      .hl          { fill: #ff2a50; }
+
+      /* Tagline */
+      .tagline-wrap { font-size: 12px; letter-spacing: 5px; fill: #8b0020; text-transform: uppercase; }
+      .tagline-bracket { fill: #3d000c; }
+      .cursor { fill: #dc143c; animation: blink 1s step-end infinite; }
+
+      /* Bottombar */
+      .bottombar { fill: rgba(14,0,3,0.75); }
+      .bb-text { font-size: 10px; fill: #b00028; letter-spacing: 0.8px; }
+      .bb-hl { fill: #dc143c; }
+
+      /* Scanline */
+      .scanline { fill: rgba(220,20,60,.03); animation: scan 6s linear infinite; }
     </style>
-    
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
 
-  <rect class="bg" width="960" height="380" />
+  <!-- Background -->
+  <rect class="bg" width="1024" height="374" />
 
-  <g class="term-box">
-    <rect class="term-rect" x="20" y="20" width="920" height="340" />
-    
-    <rect class="titlebar" x="20" y="20" width="920" height="28" />
-    <line class="titlebar-line" x1="20" y1="48" x2="940" y2="48" />
+  <g transform="translate(2, 2)">
+    <!-- Main Terminal Container -->
+    <rect class="terminal" width="1020" height="370" />
 
-    <circle class="dot" cx="40" cy="34" r="4" />
-    <circle class="dot" cx="54" cy="34" r="4" />
-    <circle class="dot" cx="68" cy="34" r="4" />
+    <!-- Scanline Overlay -->
+    <rect class="scanline" width="1020" height="28" />
 
-    <text x="88" y="38" class="text tb-path"><tspan class="tb-root">root@dark_nexus</tspan>:~# ./dark_nexus --init --target $1</text>
+    <!-- Titlebar -->
+    <rect class="titlebar" width="1020" height="30" />
+    <line class="title-border" x1="0" y1="30" x2="1020" y2="30" />
 
-    <!-- ASCII Banner -->
-    <g class="banner" filter="url(#glow)" text-anchor="middle">
-      <text x="480" y="85" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</text>
-      <text x="480" y="100" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</text>
-      <text x="480" y="115" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</text>
-      <text x="480" y="130" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</text>
-      <text x="480" y="145" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</text>
-      <text x="480" y="160" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</text>
+    <!-- Dots -->
+    <circle class="dot" cx="20" cy="15" r="4" />
+    <circle class="dot" cx="34" cy="15" r="4" />
+    <circle class="dot" cx="48" cy="15" r="4" />
+
+    <!-- Badges Group -->
+    <g transform="translate(510, 3)">
+      <!-- Kali Linux Badge -->
+      <rect class="badge-bg" x="-140" y="0" width="125" height="24" rx="3" />
+      <svg x="-135" y="1" width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#cccccc" d="M12.778 5.943s-1.97-.13-5.327.92c-3.42 1.07-5.36 2.587-5.36 2.587s5.098-2.847 10.852-3.008zm7.351 3.095.257-.017s-1.468-1.78-4.278-2.648c1.58.642 2.954 1.493 4.021 2.665zm.42.74c.039-.068.166.217.263.337.004.024.01.039-.045.027-.005-.025-.013-.032-.013-.032s-.135-.08-.177-.137c-.041-.057-.049-.157-.028-.195zm3.448 8.479s.312-3.578-5.31-4.403a18.277 18.277 0 0 0-2.524-.187c-4.506.06-4.67-5.197-1.275-5.462 1.407-.116 3.087.643 4.73 1.408-.007.204.002.385.136.552.134.168.648.35.813.445.164.094.691.43 1.014.85.07-.131.654-.512.654-.512s-.14.003-.465-.119c-.326-.122-.713-.49-.722-.511-.01-.022-.015-.055.06-.07.059-.049-.072-.207-.13-.265-.058-.058-.445-.716-.454-.73-.009-.016-.012-.031-.04-.05-.085-.027-.46.04-.46.04s-.575-.283-.774-.893c.003.107-.099.224 0 .469-.3-.127-.558-.344-.762-.88-.12.305 0 .499 0 .499s-.707-.198-.82-.85c-.124.293 0 .469 0 .469s-1.153-.602-3.069-.61c-1.283-.118-1.55-2.374-1.43-2.754 0 0-1.85-.975-5.493-1.406-3.642-.43-6.628-.065-6.628-.065s6.45-.31 11.617 1.783c.176.785.704 2.094.989 2.723-.815.563-1.733 1.092-1.876 2.97-.143 1.878 1.472 3.53 3.474 3.58 1.9.102 3.214.116 4.806.942 1.52.84 2.766 3.4 2.89 5.703.132-1.709-.509-5.383-3.5-6.498 4.181.732 4.549 3.832 4.549 3.832zM12.68 5.663l-.15-.485s-2.484-.441-5.822-.204C3.37 5.211 0 6.38 0 6.38s6.896-1.735 12.68-.717z"/>
+      </svg>
+      <text class="st-mono badge-label lbl-kali" x="-110" y="15.5">Kali Linux</text>
+
+      <!-- Center Cross -->
+      <text class="st-mono sep" text-anchor="middle" x="0" y="18">×</text>
+
+      <!-- Black Arch Badge -->
+      <rect class="badge-bg blackarch" x="15" y="0" width="125" height="24" rx="3" />
+      <svg x="20" y="1" width="18" height="22" viewBox="35 0 193 263" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#585858" d="M110 51C110.176 52.8781 110.438 54.1995 111 56C114.412 54.554 117.304 54.0408 121 54C121.098 57.3231 121.891 59.8961 123 63C125.501 59.9281 126.568 56.0781 130 54C130.133 58.472 131.286 63.2393 135 66L135 54C138.623 54.0848 141.6 54.7605 145 56L146 51C141.59 50.3516 137.497 49.0958 133 49C132.999 38.1014 129.38 26.9121 131.148 16.0193C131.84 11.7554 139.656 10.5105 139.079 7.09105C138.706 4.88409 135.788 4.0101 133.995 3.44366C129.782 2.11255 119.612 1.14389 117.176 6.22375C115.338 10.057 123.774 11.4327 124.667 15.0579C125.376 17.9323 124.287 21.1157 124.09 24C123.749 28.9693 124.01 34.0208 124 39C123.994 41.6804 124.456 45.3007 122.397 47.4005C119.838 50.0092 113.478 50.4886 110 51z"/>
+        <path fill="#c80000" d="M127 57C123.931 66.9655 116.307 76.6581 120 87C117.876 86.1007 117.899 86.1237 117 84C114.759 86.8177 114.185 89.4297 114 93L112 92C111.298 97.3964 109.445 102.758 106 107C111.589 109.375 118.785 108.55 120 116C117.703 116.674 117.226 116.965 116 119L120 119C121.146 122.601 124.302 124.663 126 128C122.121 127.473 118.919 125.432 115 125L118 129C112.226 128.095 108.196 125.51 106 120L103 120C102.438 123.025 102.064 125.922 102 129C100.805 127.777 100.684 127.58 100 126C98.6036 126.661 98.1863 126.964 97 128L99 132C90.0433 132.708 85.088 148.095 85 156C83.8137 154.814 83.4721 154.416 83 153C81.5248 156.247 78.9923 160.638 78.3418 164.09C77.3953 169.112 81.7278 177.524 73.9807 178.852C72.3706 179.128 70.6241 178.994 69 179C67.0678 186.426 60.5774 192.13 60 200C56.9413 200.423 57.3042 203.11 55.6667 205.569C51.1591 212.34 45.1389 219.501 45 228C40.7119 229.426 39.6628 232.756 39 237C42.5514 235.961 42.7518 233.47 43 230L46 230L46 234C50.9694 231.729 55.5913 229.209 61 228L61 225C66.1086 224.94 70.101 221.865 75 222C80.1229 216.744 87.0093 214.593 94.0895 213.255C99.2141 212.287 105.995 212.763 108 207C103.782 205.128 102.74 189.771 108 189C108.285 182.367 108.223 175.577 109 169C111.113 170.501 112.403 170.822 115 171C117.89 159.946 135.188 163.543 141 170L144 168C143.189 173.826 146.59 177.427 147 183C148.627 179.12 147.751 175.046 147 171C153.425 175.15 150 188.319 150 195C152.364 194.518 152.518 194.364 153 192C156.253 197.674 157.877 204.834 153 210C156.71 212.92 161.395 212.962 166 213C165.528 211.584 165.186 211.186 164 210L168 210L168 216L174 216L174 219C179.428 219.064 183.667 221.827 189 222L189 225L195 225L195 228C199.386 228 204.385 226.967 207 231L213 230C211.447 223.415 206.582 218.425 205 212L201 212C198.109 203.167 185.208 197.637 177 195L177 198C174.386 195.28 174.811 192.55 174 189C176.442 188.89 178.623 188.572 181 188L181 192L186 192L186 195L193 195C192.928 187.016 187.968 182.317 186 175C182.776 175 181.44 168.877 180.333 166C178.663 161.657 175.199 158.652 173 154.667C170.94 150.934 169.626 146.861 168 143L163 144C165.706 136.363 160.544 132.414 160 125C157.102 123.23 156.53 121.316 156 118C154.7 118.65 155 118.147 155 120C154.776 118.316 154.782 117.687 155 116C150.355 111.83 149.052 104.108 146.12 98.588C144.828 96.1544 144.753 93.4106 142 93C140.843 80.1436 130.838 69.9134 130 57L127 57z"/>
+        <path fill="#eaeaea" d="M132 12L132 18C132.951 15.7147 132.951 14.2853 132 12z"/>
+        <path fill="#cacaca" d="M132 18L132 32C133.667 28.0279 133.667 21.9721 132 18z"/>
+        <path fill="#616161" d="M124 234L124 243C125.256 240.006 125.256 236.994 124 234z"/>
+        <path fill="#8e8e8e" d="M131 240L131 243C131.696 241.446 131.696 241.554 131 240z"/>
+        <path fill="#8b8b8b" d="M124 243L124 246C124.696 244.446 124.696 244.554 124 243z"/>
+        <path fill="#c6c6c6" d="M124 246L124 249C124.696 247.446 124.696 247.554 124 246z"/>
+        <path fill="#717171" d="M126 252L126 255C126.696 253.446 126.696 253.554 126 252z"/>
+        <path fill="#c9c9c9" d="M126 255L126 258C126.696 256.446 126.696 256.554 126 255z"/>
+      </svg>
+      <text class="st-mono badge-label lbl-ba" x="43" y="15.5">Black Arch</text>
     </g>
 
-    <line class="divider" x1="120" y1="190" x2="840" y2="190" />
-
-    <text class="text stat-label" x="180" y="220">[MODULE]</text>
-    <text class="text stat-val" x="250" y="220">subdomain_enum v2.4</text>
-
-    <text class="text stat-label" x="530" y="220">[THREADS]</text>
-    <text class="text stat-val" x="610" y="220">1500 / DNS · 15 / HTTP</text>
-
-    <text class="text stat-label" x="180" y="245">[DNS]</text>
-    <text class="text stat-val" x="250" y="245">c-ares async · DoH fallback</text>
-
-    <text class="text stat-label" x="530" y="245">[SOURCES]</text>
-    <text class="text stat-val" x="610" y="245">crt.sh · VT · HackerTarget</text>
-
-    <text class="text stat-label" x="180" y="270">[PROTO]</text>
-    <text class="text stat-val" x="250" y="270">WAF/Tech fingerprint · JSON</text>
-
-    <text class="text stat-label" x="530" y="270">[STATUS]</text>
-    <text class="text stat-val" x="610" y="270">ARMED &amp; READY</text>
-
-    <line class="divider" x1="120" y1="290" x2="840" y2="290" />
-
-    <text class="text tagline" x="480" y="325" text-anchor="middle">
-      <tspan class="bracket">[</tspan> penetration testing framework <tspan class="bracket">]</tspan>   <tspan class="cursor">█</tspan>
+    <!-- Glowing ASCII Banner -->
+    <text class="cr-mono banner-glow" text-anchor="middle" x="510" y="65">
+      <tspan x="510" dy="15" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
     </text>
 
-    <rect class="bottombar" x="20" y="335" width="920" height="25" />
-    <line class="titlebar-line" x1="20" y1="335" x2="940" y2="335" />
-    <text class="text bb-text" x="35" y="352">v2.0.0-dev  ·  C++  ·  libcares · libcurl</text>
-    <text class="text bb-right" x="925" y="352" text-anchor="end">bug bounty certified ▓▓▓▓▓▓▓░░░ 74%</text>
+    <!-- Main ASCII Banner -->
+    <text class="cr-mono banner-main" text-anchor="middle" x="510" y="65">
+      <tspan x="510" dy="15" xml:space="preserve">██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║</tspan>
+      <tspan x="510" dy="15" xml:space="preserve">╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</tspan>
+    </text>
 
-    <rect class="scanline" x="21" y="21" width="918" height="20" />
+    <!-- Top Divider -->
+    <line class="divider" x1="80" y1="180" x2="940" y2="180" />
+
+    <!-- Bullets -->
+    <text class="st-mono bullet-line" x="220" y="210">
+      <tspan class="bullet-tag">[+]</tspan> <tspan class="hl">Offensive</tspan> Security Intelligence
+    </text>
+    <text class="st-mono bullet-line" x="220" y="235">
+      <tspan class="bullet-tag">[+]</tspan> Automated Network Reconnaissance &amp; <tspan class="hl">Vulnerability Discovery</tspan>
+    </text>
+    <text class="st-mono bullet-line" x="220" y="260">
+      <tspan class="bullet-tag">[+]</tspan> Deep Infrastructure Analysis &amp; High-Speed Subdomain Enumeration
+    </text>
+    <text class="st-mono bullet-line" x="220" y="285">
+      <tspan class="bullet-tag">[+]</tspan> Built for Stealth, Speed, and Tactical OSINT gathering
+    </text>
+
+    <!-- Bottom Divider -->
+    <line class="divider" x1="80" y1="310" x2="940" y2="310" />
+
+    <!-- Tagline -->
+    <text class="st-mono tagline-wrap" text-anchor="middle" x="510" y="335">
+      <tspan class="tagline-bracket">[</tspan> penetration testing framework <tspan class="tagline-bracket">]</tspan>   <tspan class="cursor">█</tspan>
+    </text>
+
+    <!-- Bottombar -->
+    <rect class="bottombar" x="0" y="345" width="1020" height="25" />
+    <line class="title-border" x1="0" y1="345" x2="1020" y2="345" />
+
+    <text class="st-mono bb-text" x="14" y="362">
+      <tspan class="bb-hl">C++</tspan> · <tspan class="bb-hl">libcares</tspan> · <tspan class="bb-hl">libcurl</tspan> · v2.0.0-dev
+    </text>
+    
+    <text class="st-mono bb-text" text-anchor="end" x="1006" y="362">
+      bug bounty certified ▓▓▓▓▓▓▓░░░ <tspan class="bb-hl">74%</tspan>
+    </text>
   </g>
 </svg>
