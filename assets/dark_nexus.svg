@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 374" width="100%" height="100%">
   <defs>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap');  
+      @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&amp;display=swap');
       .bg { fill: #060001; }
       .terminal { fill: rgba(8,0,1,0.97); stroke: #dc143c; stroke-width: 1.5; animation: border-pulse 4s ease-in-out infinite, flicker 9s infinite, screen-jump 8s infinite; }
       @keyframes border-pulse { 0%,100% { filter: drop-shadow(0 0 4px rgba(220,20,60,.35)); } 50% { filter: drop-shadow(0 0 14px rgba(220,20,60,.6)); } }
@@ -10,25 +10,31 @@
       @keyframes badge-glow { 0%,100% { filter: drop-shadow(0 0 2px rgba(220,20,60,.2)); } 50% { filter: drop-shadow(0 0 7px rgba(220,20,60,.5)); } }
       @keyframes txt-glow-kali { 0%,100% { text-shadow: 0 0 5px rgba(220,20,60,.45); } 50% { text-shadow: 0 0 10px rgba(220,20,60,.8); } }
       @keyframes txt-glow-ba { 0%,100% { text-shadow: 0 0 5px rgba(255,42,80,.45); } 50% { text-shadow: 0 0 10px rgba(255,42,80,.8); } }
-      @keyframes glow-breathe { 0%,100%{opacity:.28} 50%{opacity:.44} }
-      @keyframes neon-breathe { 0%,100% { filter: drop-shadow(0 0 3px #ff2040) drop-shadow(0 0 8px rgba(220,20,60,.4)); } 50% { filter: drop-shadow(0 0 5px #ff3050) drop-shadow(0 0 12px rgba(220,20,60,.6)); } }
+      @keyframes glow-breathe { 0%,100%{opacity:.5} 50%{opacity:1} }
       @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
       @keyframes text-glitch-anim { 0%, 93%, 96%, 100% { transform: translate(0, 0); } 94% { transform: translate(-4px, 1px); } 95% { transform: translate(4px, -1px); } }
       @keyframes subtle-twitch { 0%, 96%, 98%, 100% { transform: translate(0,0); opacity: 1; } 97% { transform: translate(-2px, 0); opacity: 0.8; } }
       @keyframes screen-jump { 0%, 92%, 94%, 100% { transform: translateY(0); } 93% { transform: translateY(-1.5px); } }
+      
       .st-mono { font-family: 'Share Tech Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       .cr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; }
       .titlebar { fill: rgba(20,0,4,0.9); }
       .title-border { stroke: #8b0020; stroke-width: 1; }
       .dot { fill: #1a0004; stroke: #3d0010; stroke-width: 1; }
+      
       .badge-bg { fill: #0d0002; stroke: #3d0010; stroke-width: 1; animation: badge-glow 3s ease-in-out infinite; }
       .badge-bg.blackarch { animation-delay: 1.5s; }
       .badge-label { font-size: 10px; letter-spacing: 1.8px; text-transform: uppercase; }
       .lbl-kali { fill: #dc143c; animation: txt-glow-kali 3s ease-in-out infinite; }
       .lbl-ba { fill: #ff2a50; animation: txt-glow-ba 3s ease-in-out infinite; animation-delay: 1.5s; }
       .sep { fill: #3d0010; font-size: 16px; font-weight: bold; }
-      .banner-glow { fill: #ff0025; animation: glow-breathe 3s ease-in-out infinite; filter: blur(4px); }
-      .banner-main { fill: #e01030; animation: neon-breathe 3s ease-in-out infinite, text-glitch-anim 6s infinite; }
+      
+      /* Имитация неона через обводку для обхода блокировок фильтров */
+      .glow-anim { animation: glow-breathe 3s ease-in-out infinite; }
+      .banner-glow-wide { stroke: #ff0025; stroke-width: 8px; opacity: 0.25; stroke-linejoin: round; fill: none; }
+      .banner-glow-core { stroke: #ff0025; stroke-width: 3px; opacity: 0.55; stroke-linejoin: round; fill: none; }
+      .banner-main { fill: #e01030; animation: text-glitch-anim 6s infinite; }
+      
       .divider { stroke: #8b0020; stroke-width: 1; opacity: 0.5; }
       .bullet-line { font-size: 11.5px; fill: #dc143c; letter-spacing: 0.5px; }
       .bl-1 { animation: subtle-twitch 4.2s infinite; }
@@ -78,7 +84,8 @@
       <!-- Row 5 -->
       <use href="#P_BL" x="0" y="75"/><use href="#P_H5" x="6.71" y="75"/><use href="#P_BR" x="40.26" y="75"/><use href="#P_BL" x="53.68" y="75"/><use href="#P_H1" x="60.39" y="75"/><use href="#P_BR" x="67.10" y="75"/><use href="#P_BL" x="87.23" y="75"/><use href="#P_H1" x="93.94" y="75"/><use href="#P_BR" x="100.65" y="75"/><use href="#P_BL" x="107.36" y="75"/><use href="#P_H1" x="114.07" y="75"/><use href="#P_BR" x="120.78" y="75"/><use href="#P_BL" x="140.91" y="75"/><use href="#P_H1" x="147.62" y="75"/><use href="#P_BR" x="154.33" y="75"/><use href="#P_BL" x="161.04" y="75"/><use href="#P_H1" x="167.75" y="75"/><use href="#P_BR" x="174.46" y="75"/><use href="#P_BL" x="194.59" y="75"/><use href="#P_H1" x="201.30" y="75"/><use href="#P_BR" x="208.01" y="75"/><use href="#P_BL" x="241.56" y="75"/><use href="#P_H1" x="248.27" y="75"/><use href="#P_BR" x="254.98" y="75"/><use href="#P_BL" x="275.11" y="75"/><use href="#P_H3" x="281.82" y="75"/><use href="#P_BR" x="301.95" y="75"/><use href="#P_BL" x="308.66" y="75"/><use href="#P_H6" x="315.37" y="75"/><use href="#P_BR" x="355.63" y="75"/><use href="#P_BL" x="362.34" y="75"/><use href="#P_H1" x="369.05" y="75"/><use href="#P_BR" x="375.76" y="75"/><use href="#P_BL" x="395.89" y="75"/><use href="#P_H1" x="402.60" y="75"/><use href="#P_BR" x="409.31" y="75"/><use href="#P_BL" x="422.73" y="75"/><use href="#P_H5" x="429.44" y="75"/><use href="#P_BR" x="462.99" y="75"/><use href="#P_BL" x="476.41" y="75"/><use href="#P_H6" x="483.12" y="75"/><use href="#P_BR" x="523.38" y="75"/>
     </g>
-  </defs>  
+  </defs>
+
   <rect class="bg" width="640" height="374" />
   <g transform="translate(2, 2)">
     <rect class="terminal" width="636" height="370" />
@@ -112,8 +119,12 @@
       <text class="st-mono badge-label lbl-ba" x="43" y="15.5">Black Arch</text>
     </g>
 
+    <!-- Секция баннера с безотказным свечением -->
     <g transform="translate(53, 69)">
-      <use href="#banner-text" class="banner-glow" />
+      <g class="glow-anim">
+        <use href="#banner-text" class="banner-glow-wide" />
+        <use href="#banner-text" class="banner-glow-core" />
+      </g>
       <use href="#banner-text" class="banner-main" />
     </g>
 
