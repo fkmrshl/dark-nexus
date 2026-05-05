@@ -54,7 +54,7 @@ void export_json(const std::string& fname) {
 
     f << "]\n}\n";
 
-    std::cout << GREEN << "  saved: " << fname << "\n" << RESET;
+    std::cout << BLOOD_RED << "  saved: " << fname << "\n" << RESET;
     LOG_INFO("export", "json saved: " + fname);
 }
 
@@ -89,27 +89,27 @@ void draw_progress(int done, int total, const std::string& label) {
     if(filled<w) bar+='>';
     bar+=std::string(std::max(0,w-filled-1),' ');
     int pct=(int)((double)done/total*100);
-    std::cout<<"\r"<<CYAN<<"  ["<<GREEN<<bar<<CYAN<<"] "<<WHITE<<std::setw(3)<<pct<<"% "<<GRAY<<label<<RESET<<std::flush;
+    std::cout<<"\r"<<BLOOD_RED<<"  ["<<BLOOD_RED<<bar<<BLOOD_RED<<"] "<<WHITE<<std::setw(3)<<pct<<"% "<<WHITE<<label<<RESET<<std::flush;
 }
 
 void print_sep() {
-    std::cout<<CYAN<<"  "<<std::string(58,'=')<<RESET<<"\n";
+    std::cout<<BLOOD_RED<<"  "<<std::string(58,'=')<<RESET<<"\n";
 }
 
 void print_header(const std::string& title) {
-    std::cout<<"\n"<<CYAN<<BOLD<<"  +"<<std::string(58,'-')<<"+\n"
-             <<"  |  "<<WHITE<<std::left<<std::setw(56)<<title<<CYAN<<"|\n"
+    std::cout<<"\n"<<BLOOD_RED<<BOLD<<"  +"<<std::string(58,'-')<<"+\n"
+             <<"  |  "<<WHITE<<std::left<<std::setw(56)<<title<<BLOOD_RED<<"|\n"
              <<"  +"<<std::string(58,'-')<<"+\n"<<RESET;
 }
 
 void print_section(const std::string& title) {
     int pad=std::max(0,46-(int)title.size());
-    std::cout<<"\n"<<CYAN<<BOLD<<"  -- "<<WHITE<<title<<CYAN<<" "<<std::string(pad,'-')<<RESET<<"\n";
+    std::cout<<"\n"<<BLOOD_RED<<BOLD<<"  -- "<<WHITE<<title<<BLOOD_RED<<" "<<std::string(pad,'-')<<RESET<<"\n";
 }
 
 void print_row(const std::string& label, const std::string& val) {
     if(val.empty()||val=="null") return;
-    std::cout<<CYAN<<"  ["<<WHITE<<std::left<<std::setw(16)<<label<<CYAN<<"] "<<RESET<<sanitize(val)<<"\n";
+    std::cout<<BLOOD_RED<<"  ["<<WHITE<<std::left<<std::setw(16)<<label<<BLOOD_RED<<"] "<<RESET<<sanitize(val)<<"\n";
 }
 
 std::vector<std::string> split_lines(const std::string& s) {
