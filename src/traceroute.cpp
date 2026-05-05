@@ -1,4 +1,5 @@
 #include "../include/dark_nexus.hpp"
+#include "../include/security.hpp"
 
 class TracerouteEngine {
 public:
@@ -42,36 +43,27 @@ public:
     static std::string as_lookup(const std::string& ip) {
         struct in_addr addr;
         if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return "";
+
         uint8_t* o = reinterpret_cast<uint8_t*>(&addr.s_addr);
-        std::ostringstream query;
-        query << (int)o[3] << "." << (int)o[2] << "."
-              << (int)o[1] << "." << (int)o[0] << ".origin.asn.cymru.com";
-        std::string q = query.str();
-        int fds[2];
-        if (pipe(fds) < 0) return "";
-        pid_t pid = fork();
-        if (pid == 0) {
-            dup2(fds[1], STDOUT_FILENO);
-            close(fds[0]); close(fds[1]);
-            execlp("dig", "dig", "+short", "+time=1", "+tries=1", q.c_str(), "TXT", nullptr);
-            _exit(127);
-        }
-        close(fds[1]);
-        char buf[256] = {};
-        read(fds[0], buf, sizeof(buf) - 1);
-        close(fds[0]);
-        int st; waitpid(pid, &st, 0);
-        std::string result(buf);
+        std::string q = std::to_string((int)o[3]) + "." + std::to_string((int)o[2]) + "."
+        + std::to_string((int)o[1]) + "." + std::to_string((int)o[0])
+        + ".origin.asn.cymru.com";
+
+        std::string result = safe_exec({"dig", "+short", "+time=1", "+tries=1", q, "TXT"}, 3);
+        result = InputGuard::sanitize_output(result);
         result.erase(std::remove(result.begin(), result.end(), '"'), result.end());
         while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
             result.pop_back();
+
         auto pipe_pos = result.find('|');
         if (pipe_pos != std::string::npos) {
             std::string asn = result.substr(0, pipe_pos);
             while (!asn.empty() && asn.back() == ' ') asn.pop_back();
+
             auto desc_pos = result.rfind('|');
             std::string desc = (desc_pos != std::string::npos && desc_pos != pipe_pos)
-                ? result.substr(desc_pos + 1) : "";
+            ? result.substr(desc_pos + 1) : "";
+
             while (!desc.empty() && desc.front() == ' ') desc.erase(desc.begin());
             if (!asn.empty()) return "AS" + asn + (desc.empty() ? "" : " " + desc.substr(0, 30));
         }
