@@ -6,9 +6,12 @@
 
 **Network intelligence tool · C++17 · Linux**
 
-![Language](https://img.shields.io/badge/language-C%2B%2B17-blue?style=flat-square)
-![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?style=flat-square)
-![Modules](https://img.shields.io/badge/modules-12-cyan?style=flat-square)
+<div align="center">
+  
+  ![Language](https://img.shields.io/badge/language-C%2B%2B17-dc143c?style=flat-square)
+  ![Platform](https://img.shields.io/badge/platform-Linux-dc143c?style=flat-square)
+  ![Modules](https://img.shields.io/badge/modules-12-dc143c?style=flat-square)
+
 
 </div>
 
