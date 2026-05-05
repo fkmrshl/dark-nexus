@@ -1,16 +1,27 @@
 CXX      = g++
 
-CXXFLAGS = -std=c++17 -O3 -march=native -flto=auto -pthread \
-           -pipe -fno-plt -Wall -Wextra
+CXXFLAGS = -std=c++17 -O2 \
+           -fstack-protector-strong \
+           -fPIE \
+           -D_FORTIFY_SOURCE=2 \
+           -Wformat -Wformat-security \
+           -fno-common \
+           -fno-plt \
+           -pipe \
+           -Wall -Wextra \
+           -pthread \
+           -I$(INC_DIR)
 
-LDFLAGS  = -Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now \
+LDFLAGS  = -pie \
+           -Wl,-O1,--sort-common,--as-needed \
+           -Wl,-z,relro,-z,now,-z,noexecstack \
            -lssl -lcrypto -lcares -lcurl -luring
 
-TARGET  = dark_nexus
-SRC_DIR = src
-INC_DIR = include
+TARGET   = dark_nexus
+SRC_DIR  = src
+INC_DIR  = include
 
-WORDLIST_URL = https://raw.githubusercontent.com/fkmrshl/dark-nexus/refs/heads/main/best-dns-wordlist.txt 
+WORDLIST_URL = https://raw.githubusercontent.com/fkmrshl/dark-nexus/refs/heads/main/best-dns-wordlist.txt
 
 SRCS = $(SRC_DIR)/globals.cpp \
        $(SRC_DIR)/proc.cpp \
@@ -34,7 +45,7 @@ $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $(CXXFLAGS) -I$(INC_DIR) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 wordlist:
 	@if [ ! -f ./best-dns-wordlist.txt ]; then \
