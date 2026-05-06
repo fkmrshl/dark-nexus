@@ -4,10 +4,12 @@
  
 <div align="center">
 
-**Network intelligence tool · C++17 · Linux**
+
 
 <div align="center">
+
   
+
   ![Language](https://img.shields.io/badge/language-C%2B%2B17-dc143c?style=flat-square)
   ![Platform](https://img.shields.io/badge/platform-Linux-dc143c?style=flat-square)
   ![Modules](https://img.shields.io/badge/modules-12-dc143c?style=flat-square)
@@ -17,6 +19,7 @@
 
 
 ---
+## Preview:
 
 <img width="703" height="546" alt="image" src="https://github.com/user-attachments/assets/e159597b-0bd4-4eb8-9fcf-91abf88cfe86" />
 
