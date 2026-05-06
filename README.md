@@ -30,7 +30,9 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 ---
 ## Preview
 
-<img width="703" height="546" alt="image" src="https://github.com/user-attachments/assets/e159597b-0bd4-4eb8-9fcf-91abf88cfe86" /> 
+<img width="662" height="530" alt="image" src="https://github.com/user-attachments/assets/3c17b229-4d00-4335-b3e0-f6f60a8de3d4" />
+
+
 
 
 
