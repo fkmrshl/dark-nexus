@@ -25,7 +25,7 @@
 
 Dark Nexus replaces dozens of scattered utilities. Written in C++17, this tool is compiled into a single, standalone executable that requires no complex environment setup or dependency hell. Everything is controlled through an intuitive, interactive CLI menu.
 
-Under the hood, it leverages aggressive multi-threading, custom network engines (Raw Sockets, c-ares + io_uring), and 11 powerful modules: ranging from ultra-fast subdomain scanning with Takeover validation, to in-depth OSINT gathering and heuristic OS fingerprinting.
+Under the hood, it leverages aggressive multi-threading, custom network engines (Raw Sockets, c-ares + io_uring + Thread Pool), and 11 powerful modules: ranging from ultra-fast subdomain scanning with Takeover validation, to in-depth OSINT gathering and heuristic OS fingerprinting.
 
 ---
 ## Preview
