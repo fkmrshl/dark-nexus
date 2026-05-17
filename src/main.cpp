@@ -150,6 +150,7 @@ int main(int argc, char** argv) {
             else if (mode == "traceroute") traceroute(ip_res);
             else if (mode == "recon") full_recon(ip_res);
             else { std::cout<<BLOOD_RED<<"  unknown module: "<<mode<<"\n"<<RESET; return 1; }
+
         }
 
         if (!json_out.empty()) {
