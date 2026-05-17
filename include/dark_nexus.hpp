@@ -70,6 +70,7 @@ bool        valid_port(int p);
 std::string sanitize(const std::string& s);
 std::string resolve(const std::string& host);
 bool        tcp_probe(const std::string& ip, int port, int ms = 500);
+bool        udp_probe(const std::string& ip, int port, int ms = 500);
 std::pair<bool,int> tcp_probe_ms(const std::string& ip, int port, int ms = 1000);
 std::string ptr_lookup(const std::string& ip);
 std::string svc(int port);
@@ -90,7 +91,7 @@ std::vector<std::string> split_lines(const std::string& s);
 std::string dig_short(const std::string& domain, const std::string& type, int t = 6);
 std::string dig_full(const std::string& domain, const std::string& type, int t = 6);
 
-void        port_scan(const std::string& ip, int start, int end_port);
+void        port_scan(const std::string& ip, int start, int end_port, bool scan_udp = false);
 void        net_scan(const std::string& subnet);
 std::string guess_os_from_ports(const std::vector<int>& open);
 

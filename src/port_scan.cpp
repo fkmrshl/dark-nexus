@@ -115,9 +115,9 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
         inet_pton(AF_INET,ip.c_str(),&sa.sin_addr);
         fcntl(fd,F_SETFL,O_NONBLOCK);
         connect(fd,(sockaddr*)&sa,sizeof(sa));
-        fd_set fds; FD_ZERO(&fds); FD_SET(fd,&fds);
-        timeval tv{0,800000};
-        int r=select(fd+1,nullptr,&fds,nullptr,&tv);
+        struct pollfd pfd{};
+        pfd.fd=fd; pfd.events=POLLOUT;
+        int r=poll(&pfd, 1, 800);
         auto t1=std::chrono::high_resolution_clock::now();
         close(fd);
         if (r>0) {
@@ -170,13 +170,11 @@ static std::pair<int,bool> probe_with_retry(const std::string& ip, int port,
 
         if (errno!=EINPROGRESS) { close(fd); return {-1,false}; }
 
-        fd_set wfds,efds;
-        FD_ZERO(&wfds); FD_SET(fd,&wfds);
-        FD_ZERO(&efds); FD_SET(fd,&efds);
-        timeval tv{timeout_ms/1000,(timeout_ms%1000)*1000};
-        int sel=select(fd+1,nullptr,&wfds,&efds,&tv);
+        struct pollfd pfd{};
+        pfd.fd=fd; pfd.events=POLLOUT;
+        int sel=poll(&pfd, 1, timeout_ms);
 
-        if (sel>0&&FD_ISSET(fd,&wfds)) {
+        if (sel>0&&(pfd.revents&POLLOUT)) {
             int sockerr=0; socklen_t errlen=sizeof(sockerr);
             getsockopt(fd,SOL_SOCKET,SO_ERROR,&sockerr,&errlen);
             int ms=std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -218,7 +216,7 @@ std::string guess_os_from_ports(const std::vector<int>& open) {
     return "unknown";
 }
 
-void port_scan(const std::string& ip, int start, int end_port) {
+void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     print_header("PORT SCAN // " + ip);
 
     std::vector<int> ports;
@@ -271,7 +269,14 @@ void port_scan(const std::string& ip, int start, int end_port) {
             futs.push_back(pool.submit([&,i]{
                 int p=sorted_ports[i];
                 port_rl.acquire();
-                auto [lat, filtered] = probe_with_retry(ip, p, cfg.connect_ms, cfg.retry_count);
+                std::pair<int,bool> res;
+                if (scan_udp) {
+                    bool up = udp_probe(ip, p, cfg.connect_ms);
+                    res = {up ? 10 : -1, false};
+                } else {
+                    res = probe_with_retry(ip, p, cfg.connect_ms, cfg.retry_count);
+                }
+                auto [lat, filtered] = res;
                 done_c++;
 
                 if (lat>0) {
@@ -517,7 +522,8 @@ void net_scan(const std::string& subnet) {
     for (int i=0;i<(int)alive_hosts.size();i++) {
         for (int p:PROBE_PORTS) {
             futs2.push_back(pool.submit([&,i,p]{
-                if(!tcp_probe(alive_hosts[i]->ip,p,400)) return;
+                auto [lat, filtered] = probe_with_retry(alive_hosts[i]->ip, p, 400, 1);
+                if(lat <= 0) return;
                 std::string b=banner(alive_hosts[i]->ip,p,1000);
                 std::lock_guard<std::mutex> lk(g_print_mtx);
                 alive_hosts[i]->ports.emplace_back(p,b);

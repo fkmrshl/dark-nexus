@@ -257,83 +257,19 @@ public:
                 if (pr.addr == target_ip) pr.reached_target = true;
             }
         } else {
-            fd_set wfds; FD_ZERO(&wfds); FD_SET(sock_send, &wfds);#include "../include/dark_nexus.hpp"
-#include "../include/security.hpp"
-
-class TracerouteEngine {
-public:
-    explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool)
-        : cfg_(cfg), pool_(pool) {}
-
-    static uint16_t icmp_checksum(const void* data, int len) {
-        auto p = reinterpret_cast<const uint16_t*>(data);
-        uint32_t sum = 0;
-        for (; len > 1; len -= 2) sum += *p++;
-        if (len == 1) sum += *reinterpret_cast<const uint8_t*>(p);
-        sum = (sum >> 16) + (sum & 0xffff);
-        sum += (sum >> 16);
-        return static_cast<uint16_t>(~sum);
-    }
-
-    bool resolve_target(std::string& out_ip) {
-        struct addrinfo hints{}, *res = nullptr;
-        hints.ai_family   = AF_INET;
-        hints.ai_socktype = SOCK_RAW;
-        if (getaddrinfo(cfg_.target.c_str(), nullptr, &hints, &res) != 0 || !res)
-            return false;
-        char buf[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &((struct sockaddr_in*)res->ai_addr)->sin_addr, buf, sizeof(buf));
-        out_ip = buf;
-        freeaddrinfo(res);
-        return true;
-    }
-
-    static std::string reverse_dns(const std::string& ip) {
-        struct sockaddr_in sa{};
-        sa.sin_family = AF_INET;
-        inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-        char host[NI_MAXHOST];
-        if (getnameinfo((struct sockaddr*)&sa, sizeof(sa),
-                        host, sizeof(host), nullptr, 0, NI_NAMEREQD) == 0)
-            return host;
-        return "";
-    }
-
-    static std::string as_lookup(const std::string& ip) {
-        struct in_addr addr;
-        if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return "";
-
-        uint8_t* o = reinterpret_cast<uint8_t*>(&addr.s_addr);
-        std::string q = std::to_string((int)o[3]) + "." + std::to_string((int)o[2]) + "."
-        + std::to_string((int)o[1]) + "." + std::to_string((int)o[0])
-        + ".origin.asn.cymru.com";
-
-        std::string result = safe_exec({"dig", "+short", "+time=1", "+tries=1", q, "TXT"}, 3);
-        result = InputGuard::sanitize_output(result);
-        result.erase(std::remove(result.begin(), result.end(), '"'), result.end());
-        while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
-            result.pop_back();
-
-        auto pipe_pos = result.find('|');
-        if (pipe_pos != std::string::npos) {
-            std::string asn = result.substr(0, pipe_pos);
-            while (!asn.empty() && asn.back() == ' ') asn.pop_back();
-
-            auto desc_pos = result.rfind('|');
-
-            struct timeval stv{0, 10000};
-            if (select(sock_send + 1, nullptr, &wfds, nullptr, &stv) > 0) {
+            struct pollfd pfd{};
+            pfd.fd = sock_send;
+            pfd.events = POLLOUT;
+            if (poll(&pfd, 1, 10) > 0) {
                 auto t_end = std::chrono::high_resolution_clock::now();
                 double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
                 pr.addr = target_ip; pr.rtt_ms = rtt; pr.reached_target = true;
             }
         }
-
         close(sock_send); close(sock_recv);
         if (cfg_.resolve_dns && !pr.addr.empty()) pr.hostname = reverse_dns(pr.addr);
         return pr;
     }
-
     std::vector<HopStats> run(const std::string& target_ip) {
         std::vector<HopStats> hops;
         bool reached = false;
@@ -629,5 +565,5 @@ void full_recon(const std::string& ip) {
     ip_intel(ip);
     dns_lookup(ip);
     os_detect(ip);
-    port_scan(ip, 0, 0);
+    port_scan(ip, 0, 0, false);
 }

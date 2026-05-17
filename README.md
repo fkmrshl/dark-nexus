@@ -93,6 +93,35 @@ sudo ./dark_nexus
 
 > `sudo` is required for raw socket operations used by the Traceroute and OS Detection modules.
 
+## Usage
+Dark Nexus supports both an interactive menu and command-line arguments.
+
+**Interactive Mode:**
+```bash
+sudo ./dark_nexus
+```
+
+**Command Line Mode:**
+```bash
+sudo ./dark_nexus [options] <target>
+```
+
+**Options:**
+- `--portscan <ip> [ports]`  Run port scan (e.g. 0 for top1000, 0U for UDP, or 80-443)
+- `--netscan <subnet>`       Run network scan (e.g. 192.168.1.1)
+- `--os-detect <ip>`         Run OS detection
+- `--ip-intel <ip>`          Run full IP intelligence
+- `--dns <domain>`           Run DNS lookup
+- `--whois <target>`         Run WHOIS lookup
+- `--site <url>`             Convert site URL to IP and run intel
+- `--osint <target>`         Run OSINT on username/email/phone
+- `--traceroute <ip>`        Run traceroute
+- `--recon <ip>`             Run full IP recon
+- `--subdomain <domain>`     Run subdomain scan
+- `--mode <F|D>`             Subdomain scan mode (Fast or Deep)
+- `--json <file>`            Export result to JSON file
+- `-h, --help`               Show help menu
+
 ---
 
 
