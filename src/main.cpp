@@ -24,7 +24,7 @@ static void print_menu() {
     std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<std::left<<std::setw(4)<<"NUM"<<BLOOD_RED<<" | "<<std::setw(18)<<"MODULE"<<BLOOD_RED<<" | "<<std::setw(32)<<"EXAMPLE"<<BLOOD_RED<<"   |\n"<<RESET;
     sep();
     auto row=[&](const std::string& n,const std::string& m,const std::string& e){
-        std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<std::left<<std::setw(4)<<n<<BLOOD_RED<<" | "<<BLOOD_RED<<std::setw(18)<<m<<RED<<" | "<<WHITE<<std::setw(34)<<e<<BLOOD_RED<<" |\n"<<RESET;
+        std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<std::left<<std::setw(4)<<n<<BLOOD_RED<<" | "<<BLOOD_RED<<std::setw(18)<<m<<BLOOD_RED<<" | "<<WHITE<<std::setw(34)<<e<<BLOOD_RED<<" |\n"<<RESET;
     };
     row(" [1]","PORT SCAN",      "192.168.1.1   0=top1000 (add U for UDP)");
     row(" [2]","NETWORK SCAN",   "192.168.1.1");
