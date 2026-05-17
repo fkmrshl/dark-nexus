@@ -257,83 +257,19 @@ public:
                 if (pr.addr == target_ip) pr.reached_target = true;
             }
         } else {
-            fd_set wfds; FD_ZERO(&wfds); FD_SET(sock_send, &wfds);#include "../include/dark_nexus.hpp"
-#include "../include/security.hpp"
-
-class TracerouteEngine {
-public:
-    explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool)
-        : cfg_(cfg), pool_(pool) {}
-
-    static uint16_t icmp_checksum(const void* data, int len) {
-        auto p = reinterpret_cast<const uint16_t*>(data);
-        uint32_t sum = 0;
-        for (; len > 1; len -= 2) sum += *p++;
-        if (len == 1) sum += *reinterpret_cast<const uint8_t*>(p);
-        sum = (sum >> 16) + (sum & 0xffff);
-        sum += (sum >> 16);
-        return static_cast<uint16_t>(~sum);
-    }
-
-    bool resolve_target(std::string& out_ip) {
-        struct addrinfo hints{}, *res = nullptr;
-        hints.ai_family   = AF_INET;
-        hints.ai_socktype = SOCK_RAW;
-        if (getaddrinfo(cfg_.target.c_str(), nullptr, &hints, &res) != 0 || !res)
-            return false;
-        char buf[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &((struct sockaddr_in*)res->ai_addr)->sin_addr, buf, sizeof(buf));
-        out_ip = buf;
-        freeaddrinfo(res);
-        return true;
-    }
-
-    static std::string reverse_dns(const std::string& ip) {
-        struct sockaddr_in sa{};
-        sa.sin_family = AF_INET;
-        inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-        char host[NI_MAXHOST];
-        if (getnameinfo((struct sockaddr*)&sa, sizeof(sa),
-                        host, sizeof(host), nullptr, 0, NI_NAMEREQD) == 0)
-            return host;
-        return "";
-    }
-
-    static std::string as_lookup(const std::string& ip) {
-        struct in_addr addr;
-        if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return "";
-
-        uint8_t* o = reinterpret_cast<uint8_t*>(&addr.s_addr);
-        std::string q = std::to_string((int)o[3]) + "." + std::to_string((int)o[2]) + "."
-        + std::to_string((int)o[1]) + "." + std::to_string((int)o[0])
-        + ".origin.asn.cymru.com";
-
-        std::string result = safe_exec({"dig", "+short", "+time=1", "+tries=1", q, "TXT"}, 3);
-        result = InputGuard::sanitize_output(result);
-        result.erase(std::remove(result.begin(), result.end(), '"'), result.end());
-        while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
-            result.pop_back();
-
-        auto pipe_pos = result.find('|');
-        if (pipe_pos != std::string::npos) {
-            std::string asn = result.substr(0, pipe_pos);
-            while (!asn.empty() && asn.back() == ' ') asn.pop_back();
-
-            auto desc_pos = result.rfind('|');
-
-            struct timeval stv{0, 10000};
-            if (select(sock_send + 1, nullptr, &wfds, nullptr, &stv) > 0) {
+            struct pollfd pfd{};
+            pfd.fd = sock_send;
+            pfd.events = POLLOUT;
+            if (poll(&pfd, 1, 10) > 0) {
                 auto t_end = std::chrono::high_resolution_clock::now();
                 double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
                 pr.addr = target_ip; pr.rtt_ms = rtt; pr.reached_target = true;
             }
         }
-
         close(sock_send); close(sock_recv);
         if (cfg_.resolve_dns && !pr.addr.empty()) pr.hostname = reverse_dns(pr.addr);
         return pr;
     }
-
     std::vector<HopStats> run(const std::string& target_ip) {
         std::vector<HopStats> hops;
         bool reached = false;
@@ -399,7 +335,7 @@ private:
 };
 
 static std::string rtt_bar(double rtt_ms) {
-    if (rtt_ms < 0) return std::string(BLOOD_RED) + "         " + RESET;
+    if (rtt_ms < 0) return std::string(RED) + "         " + RESET;
     int buckets[] = {5, 15, 30, 60, 100, 200, 500, 1000, 2000};
     int idx = 0;
     for (int b : buckets) { if (rtt_ms < b) break; idx++; }
@@ -425,7 +361,7 @@ void traceroute(const std::string& target) {
     TraceConfig cfg;
     cfg.target = target;
 
-    std::cout << BLOOD_RED << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
+    std::cout << RED << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
     std::string pc;
     std::getline(std::cin >> std::ws, pc);
     bool all_modes = (pc == "0");
@@ -433,7 +369,7 @@ void traceroute(const std::string& target) {
     else if (pc == "3") cfg.protocol = TraceConfig::TCP_SYN;
     else                cfg.protocol = TraceConfig::ICMP;
 
-    std::cout << BLOOD_RED << "  probes/hop (default=5): " << RESET;
+    std::cout << RED << "  probes/hop (default=5): " << RESET;
     std::string qc;
     std::getline(std::cin >> std::ws, qc);
     if (!qc.empty()) {
@@ -447,7 +383,7 @@ void traceroute(const std::string& target) {
             if (inet_addr(target.c_str()) != INADDR_NONE)
                 target_ip = target;
             else {
-                std::cout << BLOOD_RED << "  could not resolve " << WHITE << target << "\n" << RESET;
+                std::cout << RED << "  could not resolve " << WHITE << target << "\n" << RESET;
                 return;
             }
         }
@@ -457,14 +393,14 @@ void traceroute(const std::string& target) {
         TraceConfig pcfg = cfg;
         pcfg.protocol = proto;
 
-        std::cout << "\n" << BLOOD_RED << "  target:   " << WHITE << target_ip << "\n"
-        << BLOOD_RED << "  protocol: " << WHITE << BOLD << proto_label(proto) << "\n" << RESET
-        << BLOOD_RED << "  probes:   " << WHITE << pcfg.queries_per_hop << BLOOD_RED << "/hop\n"
-        << BLOOD_RED << "  max hops: " << WHITE << pcfg.max_hops << "\n"
-        << BLOOD_RED << "  parallel: " << WHITE << pcfg.parallel_hops << BLOOD_RED << " hops at once\n"
+        std::cout << "\n" << RED << "  target:   " << WHITE << target_ip << "\n"
+        << RED << "  protocol: " << WHITE << BOLD << proto_label(proto) << "\n" << RESET
+        << RED << "  probes:   " << WHITE << pcfg.queries_per_hop << RED << "/hop\n"
+        << RED << "  max hops: " << WHITE << pcfg.max_hops << "\n"
+        << RED << "  parallel: " << WHITE << pcfg.parallel_hops << RED << " hops at once\n"
         << RESET << "\n";
 
-        std::cout << BLOOD_RED << BOLD
+        std::cout << RED << BOLD
         << "  HOP  ADDRESS           HOSTNAME                  "
         "AVG      MIN      MAX      JITTER   LOSS  AS INFO\n"
         << "  " << std::string(110, '-') << "\n" << RESET;
@@ -488,12 +424,12 @@ void traceroute(const std::string& target) {
     auto hops = all_results[0].second;
 
     for (auto& hs : hops) {
-        std::cout << BLOOD_RED << "  " << WHITE << std::setw(3) << hs.ttl << "  ";
+        std::cout << RED << "  " << WHITE << std::setw(3) << hs.ttl << "  ";
 
         if (hs.received == 0) {
             std::cout << WHITE << std::left << std::setw(18) << "*"
-            << BLOOD_RED << std::setw(27) << "request timeout"
-            << BLOOD_RED << std::string(36, ' ')
+            << RED << std::setw(27) << "request timeout"
+            << RED << std::string(36, ' ')
             << WHITE   << "100%"
             << RESET << "\n";
             continue;
@@ -527,7 +463,7 @@ void traceroute(const std::string& target) {
         }
 
         if (hs.mtu > 0)
-            std::cout << BLOOD_RED << "  MTU:" << WHITE << hs.mtu;
+            std::cout << RED << "  MTU:" << WHITE << hs.mtu;
 
         if (!hs.asn_info.empty())
             std::cout << WHITE << "  " << hs.asn_info.substr(0, 28);
@@ -536,7 +472,7 @@ void traceroute(const std::string& target) {
         std::cout << RESET << "\n";
 
         if (hs.is_target)
-            std::cout << "\n" << BLOOD_RED << BOLD << "  [+] " << WHITE << "destination reached in " << hs.ttl << BLOOD_RED << " hops\n" << RESET;
+            std::cout << "\n" << RED << BOLD << "  [+] " << WHITE << "destination reached in " << hs.ttl << RED << " hops\n" << RESET;
     }
 
     print_section("TRACE SUMMARY");
@@ -557,34 +493,34 @@ void traceroute(const std::string& target) {
         }
 
         auto& last = hops.back();
-        std::cout << BLOOD_RED << "  [hops]          " << WHITE << total_hops << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [total RTT]     " << WHITE << std::fixed << std::setprecision(1)
+        std::cout << RED << "  [hops]          " << WHITE << total_hops << "\n" << RESET;
+        std::cout << RED << "  [total RTT]     " << WHITE << std::fixed << std::setprecision(1)
         << total_latency << "ms\n" << RESET;
-        std::cout << BLOOD_RED << "  [timeout hops]  " << WHITE << timeout_hops << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [hops w/ loss]  " << WHITE << total_loss << "\n" << RESET;
+        std::cout << RED << "  [timeout hops]  " << WHITE << timeout_hops << "\n" << RESET;
+        std::cout << RED << "  [hops w/ loss]  " << WHITE << total_loss << "\n" << RESET;
         if (max_jitter > 0)
-            std::cout << BLOOD_RED << "  [worst jitter]  " << WHITE
+            std::cout << RED << "  [worst jitter]  " << WHITE
             << std::fixed << std::setprecision(1) << max_jitter << "ms  "
-            << BLOOD_RED << "@ " << WHITE << worst_hop << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [reached]       " << WHITE
+            << RED << "@ " << WHITE << worst_hop << "\n" << RESET;
+        std::cout << RED << "  [reached]       " << WHITE
         << (last.is_target ? "yes" : "no (TTL exhausted)")
         << "\n" << RESET;
 
         std::cout << "\n";
         double avg_rtt = (total_hops > 0) ? total_latency / total_hops : 0;
         if      (avg_rtt < 20 && total_loss == 0 && timeout_hops == 0)
-            std::cout << BLOOD_RED << BOLD << "  [quality] " << WHITE << "EXCELLENT -- low latency, no loss\n" << RESET;
+            std::cout << RED << BOLD << "  [quality] " << WHITE << "EXCELLENT -- low latency, no loss\n" << RESET;
         else if (avg_rtt < 80 && total_loss <= 1)
-            std::cout << BLOOD_RED << "  [quality] " << WHITE << "GOOD -- acceptable path\n" << RESET;
+            std::cout << RED << "  [quality] " << WHITE << "GOOD -- acceptable path\n" << RESET;
         else if (avg_rtt < 200 || total_loss <= 2)
-            std::cout << BLOOD_RED << "  [quality] " << WHITE << "FAIR -- some congestion or loss detected\n" << RESET;
+            std::cout << RED << "  [quality] " << WHITE << "FAIR -- some congestion or loss detected\n" << RESET;
         else
-            std::cout << BLOOD_RED << "  [quality] " << WHITE << "POOR -- high latency or significant loss\n" << RESET;
+            std::cout << RED << "  [quality] " << WHITE << "POOR -- high latency or significant loss\n" << RESET;
     }
 
     if (all_modes && all_results.size() > 1) {
         print_section("PROTOCOL COMPARISON");
-        std::cout << "\n" << BLOOD_RED << BOLD
+        std::cout << "\n" << RED << BOLD
         << "  " << std::left << std::setw(12) << "PROTOCOL"
         << std::setw(8)  << "HOPS"
         << std::setw(12) << "TOTAL RTT"
@@ -608,7 +544,7 @@ void traceroute(const std::string& target) {
             else if (avg_per_hop < 200 || timeouts <= 2) { quality = "FAIR"; }
             else                                          { quality = "POOR"; }
 
-            std::cout << "  " << BLOOD_RED << std::left << std::setw(12) << proto_label(proto)
+            std::cout << "  " << RED << std::left << std::setw(12) << proto_label(proto)
             << WHITE << std::setw(8)  << ph.size()
             << WHITE << std::setw(12) << (std::to_string((int)total_rtt) + "ms")
             << WHITE << std::setw(10) << (std::to_string((int)avg_per_hop) + "ms")
@@ -622,12 +558,12 @@ void traceroute(const std::string& target) {
 }
 
 void full_recon(const std::string& ip) {
-    std::cout << "\n" << BLOOD_RED << BOLD
+    std::cout << "\n" << RED << BOLD
     << "  +" << std::string(56,'=') << "+\n"
-    << "  |  " << WHITE << "FULL RECON // " << std::left << std::setw(40) << ip << BLOOD_RED << "|\n"
+    << "  |  " << WHITE << "FULL RECON // " << std::left << std::setw(40) << ip << RED << "|\n"
     << "  +" << std::string(56,'=') << "+\n" << RESET;
     ip_intel(ip);
     dns_lookup(ip);
     os_detect(ip);
-    port_scan(ip, 0, 0);
+    port_scan(ip, 0, 0, false);
 }

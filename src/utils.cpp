@@ -22,17 +22,17 @@ std::string resolve(const std::string& host) {
 bool tcp_probe(const std::string& ip, int port, int ms) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return false; }
-    timeval tv{ ms / 1000, (ms % 1000) * 1000 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
     sa.sin_port   = htons(port);
     inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
     fcntl(fd, F_SETFL, O_NONBLOCK);
     connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
-    fd_set fds; FD_ZERO(&fds); FD_SET(fd, &fds);
-    int r = select(fd + 1, nullptr, &fds, nullptr, &tv);
+    struct pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    int r = poll(&pfd, 1, ms);
     close(fd);
     return r > 0;
 }
@@ -90,27 +90,27 @@ std::string risk_label(int port) {
 std::string banner(const std::string& ip, int port, int ms) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return ""; }
-    timeval tv{ ms / 1000, (ms % 1000) * 1000 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
     sa.sin_port   = htons(port);
     inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
     fcntl(fd, F_SETFL, O_NONBLOCK);
     connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
-    fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
-    timeval ctv{ ms / 1000, (ms % 1000) * 1000 };
-    if (select(fd + 1, nullptr, &wfds, nullptr, &ctv) <= 0) { close(fd); return ""; }
+    struct pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    if (poll(&pfd, 1, ms) <= 0) { close(fd); return ""; }
     if (port == 80 || port == 8080 || port == 8888) {
         std::string req = "HEAD / HTTP/1.0\r\nHost: " + ip + "\r\n\r\n";
         send(fd, req.c_str(), req.size(), 0);
     }
     std::vector<char> buf(512, 0);
-    fd_set rfds; FD_ZERO(&rfds); FD_SET(fd, &rfds);
-    timeval rtv{ 0, ms * 1000 };
+    struct pollfd rpfd{};
+    rpfd.fd = fd;
+    rpfd.events = POLLIN;
     std::string result;
-    if (select(fd + 1, &rfds, nullptr, nullptr, &rtv) > 0) {
+    if (poll(&rpfd, 1, ms) > 0) {
         ssize_t n = recv(fd, buf.data(), buf.size() - 1, 0);
         if (n > 0) {
             result = std::string(buf.data(), n);
@@ -128,9 +128,7 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return ""; }
 
-    timeval tv{ ms / 1000, (ms % 1000) * 1000 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
 
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
@@ -140,9 +138,10 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
     fcntl(fd, F_SETFL, O_NONBLOCK);
     connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
 
-    fd_set wfds; FD_ZERO(&wfds); FD_SET(fd, &wfds);
-    timeval ctv{ ms / 1000, (ms % 1000) * 1000 };
-    if (select(fd + 1, nullptr, &wfds, nullptr, &ctv) <= 0) { close(fd); return ""; }
+    struct pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    if (poll(&pfd, 1, ms) <= 0) { close(fd); return ""; }
 
     int sockerr = 0; socklen_t errlen = sizeof(sockerr);
     getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockerr, &errlen);
@@ -185,10 +184,10 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
         int elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - t_start).count();
         if (elapsed >= ms) break;
 
-        fd_set rfds; FD_ZERO(&rfds); FD_SET(fd, &rfds);
-        timeval rtv{ 0, 100000 };
-
-        int s = select(fd + 1, &rfds, nullptr, nullptr, &rtv);
+        struct pollfd rpfd{};
+        rpfd.fd = fd;
+        rpfd.events = POLLIN;
+        int s = poll(&rpfd, 1, 100);
         if (s > 0) {
             ssize_t n = recv(fd, buf.data(), buf.size() - 1, 0);
             if (n > 0) {
@@ -220,4 +219,31 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
         if (first.size() > 80) { first = first.substr(0, 80) + "..."; }
 
         return sanitize(first);
+}
+
+bool udp_probe(const std::string& ip, int port, int ms) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return false;
+    timeval tv{ ms / 1000, (ms % 1000) * 1000 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port   = htons(port);
+    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
+
+    char payload[] = "\x00\x00\x00\x00";
+    sendto(fd, payload, sizeof(payload)-1, 0, (sockaddr*)&sa, sizeof(sa));
+
+    char buf[128];
+    struct pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    int r = poll(&pfd, 1, ms);
+    if (r > 0) {
+        recv(fd, buf, sizeof(buf), 0);
+        close(fd);
+        return true;
+    }
+    close(fd);
+    return false;
 }
