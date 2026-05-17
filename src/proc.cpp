@@ -71,19 +71,20 @@ static ProcResult proc_run(const std::vector<std::string>& args,
         auto now = std::chrono::steady_clock::now();
         if (now >= deadline) { kill(-pid, SIGKILL); res.timed_out = true; break; }
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(deadline-now);
-        timeval tv{us.count()/1000000, us.count()%1000000};
-        fd_set rfds; FD_ZERO(&rfds);
-        int maxfd = -1;
-        if (ofd>=0){FD_SET(ofd,&rfds); maxfd=std::max(maxfd,ofd);}
-        if (efd>=0){FD_SET(efd,&rfds); maxfd=std::max(maxfd,efd);}
-        if (select(maxfd+1,&rfds,nullptr,nullptr,&tv) <= 0) continue;
+        int timeout_ms = std::max(1, (int)(us.count()/1000));
+        struct pollfd pfds[2];
+        int nfds = 0;
+        int o_idx = -1, e_idx = -1;
+        if (ofd>=0){pfds[nfds].fd=ofd; pfds[nfds].events=POLLIN; o_idx=nfds++;}
+        if (efd>=0){pfds[nfds].fd=efd; pfds[nfds].events=POLLIN; e_idx=nfds++;}
+        if (poll(pfds, nfds, timeout_ms) <= 0) continue;
         std::vector<char> buf(8192);
-        if (ofd>=0 && FD_ISSET(ofd,&rfds)) {
+        if (o_idx>=0 && (pfds[o_idx].revents & POLLIN)) {
             ssize_t n = read(ofd, buf.data(), buf.size());
             if (n > 0) res.out.append(buf.data(), static_cast<size_t>(n));
             else if (n == 0) { close(ofd); ofd = -1; }
         }
-        if (efd>=0 && FD_ISSET(efd,&rfds)) {
+        if (e_idx>=0 && (pfds[e_idx].revents & POLLIN)) {
             ssize_t n = read(efd, buf.data(), buf.size());
             if (n <= 0) { close(efd); efd = -1; }
             else if (res.err.size() < max_out) res.err.append(buf.data(), static_cast<size_t>(n));
@@ -101,7 +102,7 @@ std::string safe_exec(const std::vector<std::string>& args, int t) {
 }
 
 std::string safe_curl(const std::string& url, int t) {
-    if (!InputGuard::is_safe_url(url)) return "";   // заменяет ручную проверку на '
+    if (!InputGuard::is_safe_url(url)) return "";
     return safe_exec({"curl","-s","--max-time",std::to_string(t),
         "-L","-A","Mozilla/5.0","--",url}, t+2);
 }
