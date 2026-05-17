@@ -149,7 +149,10 @@ int main(int argc, char** argv) {
             else if (mode == "whois") whois_lookup(ip_res);
             else if (mode == "traceroute") traceroute(ip_res);
             else if (mode == "recon") full_recon(ip_res);
+            else { std::cout<<BLOOD_RED<<"  unknown module: "<<mode<<"\n"<<RESET; return 1; }
+
             else { std::cout<<RED<<"  unknown module: "<<mode<<"\n"<<RESET; return 1; }
+
         }
 
         if (!json_out.empty()) {
@@ -183,7 +186,7 @@ int main(int argc, char** argv) {
             std::getline(std::cin, u);
             while(!u.empty()&&(u.front()==' '||u.front()=='\t')) u.erase(u.begin());
             while(!u.empty()&&(u.back()==' '||u.back()=='\t'))   u.pop_back();
-            if(u.empty()){std::cout<<RED<<"  empty input\n"<<RESET;}
+            if(u.empty()){std::cout<<BLOOD_RED<<"  empty input\n"<<RESET;}
             else osint_scan(u);
         } else if(choice==7){
             std::string s; std::cout<<BLOOD_RED<<"\n  site: "<<RESET; std::cin>>s;
@@ -192,7 +195,7 @@ int main(int argc, char** argv) {
             std::string d;
             std::cout<<WHITE<<"\n  domain: "<<RESET; std::cin>>d;
             if(!valid_target(d)){
-                std::cout<<RED<<"  invalid domain\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  invalid domain\n"<<RESET;
             } else {
                 std::string wl = auto_find_wordlist();
 

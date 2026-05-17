@@ -9,13 +9,13 @@ std::string now_str() {
 
 void export_json(const std::string& fname) {
     if (fname.find('/') != std::string::npos || fname.find("..") != std::string::npos) {
-        std::cout << RED << "  invalid filename\n" << RESET;
+        std::cout << BLOOD_RED << "  invalid filename\n" << RESET;
         return;
     }
 
     std::ofstream f(fname);
     if (!f.is_open()) {
-        std::cout << RED << "  [!] failed to open file for writing: " << fname << "\n" << RESET;
+        std::cout << BLOOD_RED << "  [!] failed to open file for writing: " << fname << "\n" << RESET;
         LOG_ERR("export", "failed to open file: " + fname);
         return;
     }

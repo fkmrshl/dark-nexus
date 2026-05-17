@@ -82,7 +82,7 @@ std::string svc(int port) {
 std::string risk_label(int port) {
     static const std::vector<int> hi = {21,23,512,513,514,3389,5900,445,2375,111,4444,7001,50070};
     static const std::vector<int> md = {22,3306,5432,27017,6379,1433,9200,1521,8888,10000};
-    if (std::find(hi.begin(), hi.end(), port) != hi.end()) { return std::string(RED)+"HIGH"+RESET; }
+    if (std::find(hi.begin(), hi.end(), port) != hi.end()) { return std::string(BLOOD_RED)+"HIGH"+RESET; }
     if (std::find(md.begin(), md.end(), port) != md.end()) { return std::string(WHITE)+"MED"+RESET; }
     return std::string(WHITE)+"LOW"+RESET;
 }
