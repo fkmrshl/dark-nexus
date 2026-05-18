@@ -23,7 +23,7 @@
  
 **The ultimate multi-threaded reconnaissance and pentesting toolkit packed into a single binary.**
 
-Dark Nexus replaces dozens of scattered utilities. Written in C++17, this tool is compiled into a single, standalone executable that requires no complex environment setup or dependency hell. Everything is controlled through an intuitive, interactive CLI menu.
+Dark Nexus replaces dozens of disjointed utilities. Written in C++17, it compiles into a single standalone executable that requires no complex environment setup or dependency management. Everything is controlled through an intuitive hybrid CLI, supporting both an interactive menu and direct arguments
 
 Under the hood, it leverages aggressive multi-threading, custom network engines (Raw Sockets, c-ares + io_uring + Thread Pool), and 11 powerful modules: ranging from ultra-fast subdomain scanning with Takeover validation, to in-depth OSINT gathering and heuristic OS fingerprinting.
 
