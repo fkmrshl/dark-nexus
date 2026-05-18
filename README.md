@@ -61,21 +61,23 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 ## Requirements and Installation
 
 - Linux (Kali, Black Arch recommended)
+- `cmake` and `ninja` (for building)
 - `g++` with C++17 support
-- `curl` `whois` `dig` `traceroute` `openssl` `ping`
+- `openssl`, `liburing` (for static/dynamic linking)
+- `whois` `dig` `traceroute` `ping` (runtime utilities)
 
                                              
 ## For Debian / Kali Linux:
 ```bash
 sudo apt update && sudo apt install -y \
-    build-essential g++ libssl-dev libcurl4-openssl-dev \
-    libc-ares-dev liburing-dev curl whois dnsutils traceroute iputils-ping
+    build-essential cmake ninja-build g++ libssl-dev \
+    liburing-dev whois dnsutils traceroute iputils-ping
 ```
 
 
 ## For Arch Linux / BlackArch: 
 ```bash
-sudo pacman -Syu --needed base-devel openssl curl c-ares \
+sudo pacman -Syu --needed base-devel cmake ninja openssl \
     liburing whois bind traceroute iputils
 ```
 
@@ -83,27 +85,27 @@ sudo pacman -Syu --needed base-devel openssl curl c-ares \
 ## Build & Setup
 ```bash
 git clone https://github.com/fkmrshl/dark-nexus.git
-
 cd dark-nexus
 
-make
+# Build using CMake and Ninja
+cmake -B build -G Ninja
+cmake --build build
 
-sudo ./dark_nexus
+# Run Dark Nexus
+sudo ./build/dark_nexus
 ```
-
-> `sudo` is required for raw socket operations used by the Traceroute and OS Detection modules.
 
 ## Usage
 Dark Nexus supports both an interactive menu and command-line arguments.
 
 **Interactive Mode:**
 ```bash
-sudo ./dark_nexus
+sudo ./build/dark_nexus
 ```
 
 **Command Line Mode:**
 ```bash
-sudo ./dark_nexus [options] <target>
+sudo ./build/dark_nexus [options] <target>
 ```
 
 **Options:**
