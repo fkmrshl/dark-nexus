@@ -6,9 +6,9 @@ void ip_intel(const std::string& ip) {
     g_result.target=ip; g_result.timestamp=now_str();
 
     print_section("GEOLOCATION");
-    std::cout<<BLOOD_RED<<"  fetching...\n"<<RESET;
+    std::cout<<RED<<"  fetching...\n"<<RESET;
     if (!InputGuard::is_valid_ipv4(ip) && !InputGuard::is_valid_ipv6(ip)) {
-        std::cout << BLOOD_RED << "  invalid ip\n" << RESET;
+        std::cout << RED << "  invalid ip\n" << RESET;
         return;
     }
     std::string body = safe_curl("http://ip-api.com/json/" + ip + "?fields=...");
@@ -31,31 +31,31 @@ void ip_intel(const std::string& ip) {
             print_row("hostname",g("reverse"));
             print_section("FLAGS");
             auto proxy=g("proxy"), hosting=g("hosting"), mobile=g("mobile");
-            std::cout<<BLOOD_RED<<"  [proxy/vpn]    "<<WHITE<<(proxy=="true"?"YES  detected":"no")<<"\n";
-            std::cout<<BLOOD_RED<<"  [hosting/dc]   "<<WHITE<<(hosting=="true"?"yes - datacenter":"no - residential")<<"\n";
-            std::cout<<BLOOD_RED<<"  [mobile]       "<<WHITE<<(mobile=="true"?"yes":"no")<<"\n";
+            std::cout<<RED<<"  [proxy/vpn]    "<<WHITE<<(proxy=="true"?"YES  detected":"no")<<"\n";
+            std::cout<<RED<<"  [hosting/dc]   "<<WHITE<<(hosting=="true"?"yes - datacenter":"no - residential")<<"\n";
+            std::cout<<RED<<"  [mobile]       "<<WHITE<<(mobile=="true"?"yes":"no")<<"\n";
             g_result.geo_country=g("country"); g_result.geo_city=g("city");
             g_result.geo_isp=g("isp"); g_result.geo_as=g("as");
             g_result.proxy=proxy=="true"; g_result.hosting=hosting=="true";
             auto lat=g("lat"), lon=g("lon");
-            if(!lat.empty()) std::cout<<"\n"<<BLOOD_RED<<"  map: "<<WHITE<<"https://maps.google.com/?q="<<lat<<","<<lon<<"\n"<<RESET;
+            if(!lat.empty()) std::cout<<"\n"<<RED<<"  map: "<<WHITE<<"https://maps.google.com/?q="<<lat<<","<<lon<<"\n"<<RESET;
         }
     }
 
     print_section("REVERSE DNS");
     auto rdns=safe_exec({"host",ip},5);
-    std::cout<<(rdns.empty()?std::string(BLOOD_RED)+"  none\n"+RESET:std::string(WHITE)+rdns+RESET);
+    std::cout<<(rdns.empty()?std::string(RED)+"  none\n"+RESET:std::string(WHITE)+rdns+RESET);
 
     print_section("ASN / BGP");
     auto bgp=safe_exec({"whois","-h","whois.radb.net",ip},8);
-    if(bgp.empty()){std::cout<<BLOOD_RED<<"  no bgp info\n"<<RESET;}
+    if(bgp.empty()){std::cout<<RED<<"  no bgp info\n"<<RESET;}
     else{
         std::istringstream ss(bgp); std::string line; int c=0;
         while(std::getline(ss,line)&&c<6){
             if(line.find("route:")!=std::string::npos||line.find("origin:")!=std::string::npos||line.find("descr:")!=std::string::npos){
                 auto col=line.find(':');
                 if(col!=std::string::npos)
-                    std::cout<<BLOOD_RED<<"  ["<<std::left<<std::setw(8)<<line.substr(0,col)<<"] "<<WHITE<<sanitize(line.substr(col+1))<<"\n";
+                    std::cout<<RED<<"  ["<<std::left<<std::setw(8)<<line.substr(0,col)<<"] "<<WHITE<<sanitize(line.substr(col+1))<<"\n";
                 c++;
             }
         }
@@ -75,7 +75,7 @@ void ip_intel(const std::string& ip) {
                 if(ll.find(wl)!=std::string::npos){
                     auto col=line.find(':');
                     if(col!=std::string::npos)
-                        std::cout<<BLOOD_RED<<"  ["<<std::left<<std::setw(16)<<line.substr(0,col)<<"] "<<WHITE<<sanitize(line.substr(col+1))<<RESET<<"\n";
+                        std::cout<<RED<<"  ["<<std::left<<std::setw(16)<<line.substr(0,col)<<"] "<<WHITE<<sanitize(line.substr(col+1))<<RESET<<"\n";
                     c++; break;
                 }
             }
@@ -89,12 +89,12 @@ void ip_intel(const std::string& ip) {
     std::string rev=pts[3]+"."+pts[2]+"."+pts[1]+"."+pts[0];
     for(auto& bl:lists){
         std::string hit=resolve(rev+"."+bl);
-        std::cout<<BLOOD_RED<<"  ["<<std::left<<std::setw(28)<<bl<<"] "<<WHITE<<(hit.empty()?"clean":"LISTED")<<RESET<<"\n";
+        std::cout<<RED<<"  ["<<std::left<<std::setw(28)<<bl<<"] "<<WHITE<<(hit.empty()?"clean":"LISTED")<<RESET<<"\n";
     }
 
     print_section("OPEN PORTS (quick)");
     std::vector<int> top={21,22,23,25,53,80,110,143,443,445,993,995,3306,3389,5432,5900,6379,8080,8443,27017};
-    std::cout<<BLOOD_RED<<BOLD<<"  PORT        SERVICE         RISK      BANNER\n  "<<std::string(65,'-')<<"\n"<<RESET;
+    std::cout<<RED<<BOLD<<"  PORT        SERVICE         RISK      BANNER\n  "<<std::string(65,'-')<<"\n"<<RESET;
     bool any=false;
     for(int p:top){
         if (!tcp_probe(ip, p, 600)) continue;
@@ -103,7 +103,7 @@ void ip_intel(const std::string& ip) {
         std::cout<<WHITE<<"  "<<std::left<<std::setw(12)<<p<<std::setw(16)<<s<<std::setw(10)<<risk_label(p)<<sanitize(b.size()>40?b.substr(0,40):b)<<"\n";
         g_result.open_ports.push_back({p,s});
     }
-    if(!any) std::cout<<BLOOD_RED<<"  top ports closed\n"<<RESET;
+    if(!any) std::cout<<RED<<"  top ports closed\n"<<RESET;
 
     if(tcp_probe(ip,443,500)){
         print_section("SSL CERTIFICATE");
@@ -111,7 +111,7 @@ void ip_intel(const std::string& ip) {
             "echo Q | openssl s_client -connect " +
             InputGuard::sanitize_output(ip) + ":443 -servername " +
             InputGuard::sanitize_output(ip) + " 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null"}, 10);
-        if(cert.empty()) std::cout<<BLOOD_RED<<"  could not fetch cert\n"<<RESET;
+        if(cert.empty()) std::cout<<RED<<"  could not fetch cert\n"<<RESET;
         else{
             std::istringstream ss(cert); std::string l;
             while(std::getline(ss,l)) std::cout<<WHITE<<"  "<<sanitize(l)<<"\n";
