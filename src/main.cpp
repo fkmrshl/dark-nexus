@@ -47,7 +47,7 @@ static void print_menu() {
 static void print_help() {
     print_banner();
     std::cout << WHITE << BOLD << "  USAGE:\n"<<RESET;
-    std::cout << BLOOD_RED << "    ./dark_nexus [options] <target>\n\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus [options] <target>\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  OPTIONS:\n"<<RESET;
     std::cout << BLOOD_RED << "    --portscan <ip> [ports] " << WHITE << "Run port scan (e.g. 0 for top1000, 0U for UDP, or 80-443)\n"<<RESET;
     std::cout << BLOOD_RED << "    --netscan <subnet>      " << WHITE << "Run network scan (e.g. 192.168.1.1)\n"<<RESET;
@@ -64,9 +64,9 @@ static void print_help() {
     std::cout << BLOOD_RED << "    --json <file>           " << WHITE << "Export result to JSON file\n"<<RESET;
     std::cout << BLOOD_RED << "    -h, --help              " << WHITE << "Show this help menu\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  EXAMPLES:\n"<<RESET;
-    std::cout << BLOOD_RED << "    ./dark_nexus --subdomain google.com --mode F --json result.json\n"<<RESET;
-    std::cout << BLOOD_RED << "    ./dark_nexus --portscan 192.168.1.1 0U\n"<<RESET;
-    std::cout << BLOOD_RED << "    ./dark_nexus --osint user@mail.com\n\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --json result.json\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0U\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --osint user@mail.com\n\n"<<RESET;
 }
 
 int main(int argc, char** argv) {

@@ -60,52 +60,29 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 
 ## Requirements and Installation
 
-- Linux (Kali, Black Arch recommended)
-- `cmake` and `ninja` (for building)
-- `g++` with C++17 support
-- `openssl`, `liburing` (for static/dynamic linking)
-- `whois` `dig` `traceroute` `ping` (runtime utilities)
+Dark Nexus is heavily automated. You can install it on any Debian, Ubuntu, Kali, Arch, or BlackArch system with a single command. It will automatically detect your OS, install the correct dependencies, build the project with CMake, and configure Linux capabilities so you can run it without sudo.
 
-                                             
-## For Debian / Kali Linux:
-```bash
-sudo apt update && sudo apt install -y \
-    build-essential cmake ninja-build g++ libssl-dev \
-    liburing-dev whois dnsutils traceroute iputils-ping
+### Quick Install
+```
+curl -sL https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh | sudo bash
 ```
 
-
-## For Arch Linux / BlackArch: 
-```bash
-sudo pacman -Syu --needed base-devel cmake ninja openssl \
-    liburing whois bind traceroute iputils
+### Local Install (if already cloned)
 ```
-
-
-## Build & Setup
-```bash
-git clone https://github.com/fkmrshl/dark-nexus.git
-cd dark-nexus
-
-# Build using CMake and Ninja
-cmake -B build -G Ninja
-cmake --build build
-
-# Run Dark Nexus
-sudo ./build/dark_nexus
+sudo bash install.sh
 ```
 
 ## Usage
-Dark Nexus supports both an interactive menu and command-line arguments.
+Dark Nexus supports both an interactive menu and command-line arguments. It is globally installed to `/usr/local/bin`, so you can run it from anywhere.
 
 **Interactive Mode:**
-```bash
-sudo ./build/dark_nexus
+```
+dark-nexus
 ```
 
 **Command Line Mode:**
-```bash
-sudo ./build/dark_nexus [options] <target>
+```
+dark-nexus [options] <target>
 ```
 
 **Options:**
