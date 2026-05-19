@@ -519,12 +519,12 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrenc
         constexpr int DOH_CAP = 2000;
         if ((int)doh_queue.size() > DOH_CAP) {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << BLOOD_RED << "  [*] DoH cascade: " << doh_queue.size()
+            std::cout << RED << "  [*] DoH cascade: " << doh_queue.size()
                       << " hosts unresolved via c-ares (capped at " << DOH_CAP << ")...\n" << RESET;
             doh_queue.resize(DOH_CAP);
         } else {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << BLOOD_RED << "  [*] DoH cascade: " << doh_queue.size()
+            std::cout << RED << "  [*] DoH cascade: " << doh_queue.size()
                       << " hosts unresolved via c-ares, trying DoH...\n" << RESET;
         }
 
@@ -540,7 +540,7 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrenc
 
         if (doh_ok > 0) {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << BLOOD_RED << "  [+] DoH resolved: " << doh_ok << "/"
+            std::cout << RED << "  [+] DoH resolved: " << doh_ok << "/"
                       << doh_queue.size() << "\n" << RESET;
         }
     }
