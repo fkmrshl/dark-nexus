@@ -113,8 +113,9 @@ void whois_lookup(const std::string& target) {
 void site_lookup(const std::string& raw) {
     print_header("SITE -> IP // " + raw);
     std::string s=raw;
-    for(auto& p:{"https://","http://","www."})
+    for(auto& p:{"https://","http://","www."}) {
         if(s.size()>=strlen(p)&&s.substr(0,strlen(p))==p) s=s.substr(strlen(p));
+    }
         for(char sep:{'/',  '?','#',':'}) {auto p=s.find(sep);if(p!=std::string::npos) s=s.substr(0,p);}
         while(!s.empty()&&(s.back()==' '||s.back()==10||s.back()==13)) s.pop_back();
         if(!valid_target(s)){std::cout<<BLOOD_RED<<"  invalid input\n"<<RESET;return;}

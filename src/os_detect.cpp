@@ -1,8 +1,10 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/security.hpp"
+#include <mutex>
+#include <atomic>
 
 void os_detect(const std::string& ip) {
-    print_header("OS DETECTION // " + ip);
+    print_header("ADVANCED OS DETECTION // " + ip);
 
     struct Check {
         int port; const char* name; const char* cat;
@@ -11,40 +13,51 @@ void os_detect(const std::string& ip) {
     static const std::vector<Check> checks = {
         {22,  "SSH",        "remote",   1, 10,  8,  5},
         {23,  "Telnet",     "remote",   2,  1,  1, 10},
-        {25,  "SMTP",       "mail",     3,  7,  5,  1},
-        {53,  "DNS",        "infra",    5,  7,  5,  8},
         {80,  "HTTP",       "web",      5,  7,  5,  3},
         {111, "RPCBind",    "unix",     0,  9,  8,  0},
         {135, "MSRPC",      "windows", 10,  0,  0,  0},
         {139, "NetBIOS-NS", "windows", 10,  1,  0,  0},
         {161, "SNMP",       "monitor",  5,  4,  3, 10},
-        {179, "BGP",        "routing",  0,  1,  1, 10},
-        {389, "LDAP",       "dir",      8,  4,  2,  0},
         {443, "HTTPS",      "web",      5,  7,  5,  3},
         {445, "SMB",        "windows", 10,  2,  1,  0},
-        {548, "AFP",        "apple",    0,  0, 10,  0},
-        {1433,"MSSQL",      "db",      10,  0,  0,  0},
-        {2049,"NFS",        "unix",     0,  9,  7,  0},
-        {3306,"MySQL",      "db",       3,  9,  5,  0},
         {3389,"RDP",        "windows", 10,  0,  0,  0},
         {5432,"PostgreSQL", "db",       2,  9,  7,  0},
-        {5900,"VNC",        "remote",   3,  6,  5,  0},
         {5985,"WinRM",      "windows", 10,  0,  0,  0},
         {6379,"Redis",      "db",       1,  9,  5,  0},
-        {9200,"Elastic",    "search",   2,  9,  4,  0},
     };
 
-    struct Result { int port; std::string name, cat, bnr; bool open; int w[4]; };
+    struct Result { int port; std::string name, cat, bnr; bool open; int w[4]; std::string extra; };
     std::vector<Result> results(checks.size());
     ThreadPool pool(checks.size());
     std::vector<std::future<void>> futs; futs.reserve(checks.size());
+
+    std::atomic<bool> tcp_fp_done{false};
+    std::string tcp_fp;
 
     for (int i=0;i<(int)checks.size();i++) {
         futs.push_back(pool.submit([&,i]{
             const auto& c=checks[i];
             bool ok=tcp_probe(ip,c.port,800);
-            std::string b; if(ok) b=banner(ip,c.port);
-            results[i]={c.port,c.name,c.cat,b,ok,{c.w_win,c.w_lin,c.w_bsd,c.w_net}};
+            std::string b, ext;
+            if(ok) {
+                b=smart_banner(ip,c.port,1000);
+
+                // Deep Inspections
+                if (c.port == 445) {
+                    std::string smb = smb_os_probe(ip, 1000);
+                    if (!smb.empty()) ext = "Native OS: " + smb;
+                } else if (c.port == 80 || c.port == 443) {
+                    std::string http = analyze_http_headers(ip, c.port, 1000);
+                    if (!http.empty()) ext = http;
+                }
+
+                // TCP SYN Fingerprinting (Trigger once on the first open port found)
+                bool expected = false;
+                if (tcp_fp_done.compare_exchange_strong(expected, true)) {
+                    tcp_fp = tcp_syn_fingerprint(ip, c.port, 1000);
+                }
+            }
+            results[i]={c.port,c.name,c.cat,b,ok,{c.w_win,c.w_lin,c.w_bsd,c.w_net},ext};
         }));
     }
     for (auto& f:futs) f.get();
@@ -54,12 +67,24 @@ void os_detect(const std::string& ip) {
     std::map<std::string,int> cat_open;
     int open_c=0;
 
-    std::cout<<"\n"<<BLOOD_RED<<BOLD<<"  PORT FINGERPRINT:\n"<<RESET;
+    print_section("DEEP TCP/SMB FINGERPRINTING");
+    if (!tcp_fp.empty()) std::cout << BLOOD_RED << "  [TCP SYN/ACK]  " << WHITE << tcp_fp << "\n";
+    else std::cout << BLOOD_RED << "  [TCP SYN/ACK]  " << WHITE << "Not detected (Raw Sockets disabled or firewalled)\n";
+
+    std::string smb_verdict;
+    std::string waf_verdict;
+
+    std::cout<<"\n"<<BLOOD_RED<<BOLD<<"  PORT ANALYSIS:\n"<<RESET;
     for (auto& r:results) {
         std::cout<<BLOOD_RED<<"  ["<<WHITE<<std::left<<std::setw(5)<<r.port<<" "<<std::setw(12)<<r.name<<" "<<std::setw(8)<<r.cat<<BLOOD_RED<<"] ";
         if (r.open) {
             std::cout<<WHITE<<"OPEN  "<<RESET;
-            if(!r.bnr.empty()) std::cout<<WHITE<<sanitize(r.bnr.substr(0,60));
+            if(!r.bnr.empty()) std::cout<<WHITE<<sanitize(r.bnr.substr(0,40))<<"  ";
+            if(!r.extra.empty()) {
+                std::cout<<BLOOD_RED<<" {"<<WHITE<<r.extra<<BLOOD_RED<<"}";
+                if (r.port == 445) smb_verdict = r.extra;
+                if (r.extra.find("WAF=") != std::string::npos || r.extra.find("Cloudflare") != std::string::npos) waf_verdict = r.extra;
+            }
             std::cout<<RESET;
             for(int j=0;j<4;j++) score[j]+=r.w[j];
             cat_open[r.cat]++;
@@ -69,10 +94,9 @@ void os_detect(const std::string& ip) {
         }
         std::cout<<"\n";
     }
-    std::cout<<BLOOD_RED<<"  open: "<<WHITE<<open_c<<BLOOD_RED<<"/"<<WHITE<<checks.size()<<"\n"<<RESET;
 
-    print_section("TTL ANALYSIS");
-    auto pout=safe_exec({"ping","-c5","-W1",ip},8);
+    print_section("ICMP TTL ANALYSIS");
+    auto pout=safe_exec({"ping","-c3","-W1",ip},5);
     std::vector<int> ttls;
     size_t sp=0;
     while(true){
@@ -99,43 +123,32 @@ void os_detect(const std::string& ip) {
     std::cout<<BLOOD_RED<<"  [hops]         "<<WHITE<<(hops?std::to_string(hops):"n/a")<<"\n"<<RESET;
     std::cout<<BLOOD_RED<<"  [stable]       "<<WHITE<<(stable?"yes":"NO -- load balancer/multipath")<<"\n"<<RESET;
 
-    print_section("BANNER ANALYSIS");
-    struct BHint{const char* kw,*os,*detail;};
-    static const std::vector<BHint> hints={
-        {"Microsoft","Windows","Microsoft service"},{"IIS","Windows","IIS web server"},
-        {"Win32","Windows","Win32 platform"},{"Windows","Windows","Windows banner"},
-        {"Ubuntu","Linux/Ubuntu","Ubuntu distro"},{"Debian","Linux/Debian","Debian distro"},
-        {"CentOS","Linux/CentOS","CentOS distro"},{"Red Hat","Linux/RHEL","RHEL distro"},
-        {"FreeBSD","BSD/FreeBSD","FreeBSD system"},{"OpenBSD","BSD/OpenBSD","OpenBSD system"},
-        {"Darwin","macOS","macOS/Darwin"},{"nginx","Linux","nginx web server"},
-        {"Apache","Linux","Apache web server"},{"OpenSSH","Linux/Unix","OpenSSH"}
-    };
-    std::set<std::string> os_hints_found;
-    for (auto& r:results) {
-        if(!r.open||r.bnr.empty()) continue;
-        std::string bl=r.bnr;
-        std::transform(bl.begin(),bl.end(),bl.begin(),::tolower);
-        for (auto& h:hints) {
-            std::string kl=h.kw;
-            std::transform(kl.begin(),kl.end(),kl.begin(),::tolower);
-            if(bl.find(kl)!=std::string::npos){
-                os_hints_found.insert(h.os);
-                std::cout<<BLOOD_RED<<"  [port "<<WHITE<<r.port<<BLOOD_RED<<"] "<<WHITE<<h.detail<<RESET<<"\n";
-            }
-        }
-    }
-
     print_section("VERDICT");
     static const char* os_names[4]={"Windows","Linux/Unix","BSD/macOS","Network Device"};
     int best=0;
     for(int i=1;i<4;i++) if(score[i]>score[best]) best=i;
 
-    if     (ttl>=120&&ttl<=128) score[0]+=5;
-    else if(ttl>=60 &&ttl<=64)  score[1]+=5;
-    else if(ttl>=250)            score[3]+=5;
+    if     (init_ttl==128) score[0]+=15; // High confidence Windows
+    else if(init_ttl==64)  score[1]+=15; // High confidence Linux/BSD
+    else if(init_ttl==255) score[3]+=15; // High confidence Cisco/Network
 
-    std::string verdict=os_names[best];
-    if(!os_hints_found.empty()) verdict=*os_hints_found.begin();
+    std::string verdict;
+
+    // Exact overrides based on deep signatures
+    if (!smb_verdict.empty()) {
+        verdict = smb_verdict;
+    } else if (tcp_fp.find("Windows") != std::string::npos) {
+        verdict = "Windows (Confirmed via TCP SYN)";
+    } else if (tcp_fp.find("Linux") != std::string::npos) {
+        verdict = tcp_fp;
+    } else if (tcp_fp.find("macOS") != std::string::npos) {
+        verdict = "macOS / FreeBSD";
+    } else if (tcp_fp.find("Network Device") != std::string::npos) {
+        verdict = tcp_fp;
+    } else {
+        verdict = os_names[best];
+        if (!waf_verdict.empty()) verdict += " (Behind Proxy/WAF)";
+    }
 
     std::cout<<BLOOD_RED<<"  [os]       "<<WHITE<<BOLD<<verdict<<RESET<<"\n";
     std::cout<<BLOOD_RED<<"  [scores]   "<<WHITE;

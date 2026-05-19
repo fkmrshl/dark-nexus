@@ -60,38 +60,46 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 
 ## Requirements and Installation
 
-- Linux (Kali, Black Arch recommended)
-- `g++` with C++17 support
-- `curl` `whois` `dig` `traceroute` `openssl` `ping`
+Dark Nexus is heavily automated. You can install it on any Debian, Ubuntu, Kali, Arch, or BlackArch system with a single command. It will automatically detect your OS, install the correct dependencies, build the project with CMake, and configure Linux capabilities so you can run it without sudo.
 
-                                             
-## For Debian / Kali Linux:
-```bash
-sudo apt update && sudo apt install -y \
-    build-essential g++ libssl-dev libcurl4-openssl-dev \
-    libc-ares-dev liburing-dev curl whois dnsutils traceroute iputils-ping
+### Quick Install
+```
+curl -sL https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh | sudo bash
 ```
 
-
-## For Arch Linux / BlackArch: 
-```bash
-sudo pacman -Syu --needed base-devel openssl curl c-ares \
-    liburing whois bind traceroute iputils
+### Local Install (if already cloned)
+```
+sudo bash install.sh
 ```
 
+## Usage
+Dark Nexus supports both an interactive menu and command-line arguments. It is globally installed to `/usr/local/bin`, so you can run it from anywhere.
 
-## Build & Setup
-```bash
-git clone https://github.com/fkmrshl/dark-nexus.git
-
-cd dark-nexus
-
-make
-
-sudo ./dark_nexus
+**Interactive Mode:**
+```
+dark-nexus
 ```
 
-> `sudo` is required for raw socket operations used by the Traceroute and OS Detection modules.
+**Command Line Mode:**
+```
+dark-nexus [options] <target>
+```
+
+**Options:**
+- `--portscan <ip> [ports]`  Run port scan (e.g. 0 for top1000, 0U for UDP, or 80-443)
+- `--netscan <subnet>`       Run network scan (e.g. 192.168.1.1)
+- `--os-detect <ip>`         Run OS detection
+- `--ip-intel <ip>`          Run full IP intelligence
+- `--dns <domain>`           Run DNS lookup
+- `--whois <target>`         Run WHOIS lookup
+- `--site <url>`             Convert site URL to IP and run intel
+- `--osint <target>`         Run OSINT on username/email/phone
+- `--traceroute <ip>`        Run traceroute
+- `--recon <ip>`             Run full IP recon
+- `--subdomain <domain>`     Run subdomain scan
+- `--mode <F|D>`             Subdomain scan mode (Fast or Deep)
+- `--json <file>`            Export result to JSON file
+- `-h, --help`               Show help menu
 
 ---
 
