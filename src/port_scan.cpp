@@ -222,29 +222,29 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     std::vector<int> ports;
     if (start==0&&end_port==0) {
         ports=TOP1000;
-        std::cout<<RED<<"  mode: "<<WHITE<<"top-1000 ports\n"<<RESET;
+        std::cout<<BLOOD_RED<<"  mode: "<<WHITE<<"top-1000 ports\n"<<RESET;
     } else {
         for (int p=start;p<=end_port;p++) ports.push_back(p);
-        std::cout<<RED<<"  range: "<<WHITE<<start<<"-"<<end_port
-        <<RED<<" ("<<WHITE<<ports.size()<<RED<<" ports)\n"<<RESET;
+        std::cout<<BLOOD_RED<<"  range: "<<WHITE<<start<<"-"<<end_port
+        <<BLOOD_RED<<" ("<<WHITE<<ports.size()<<BLOOD_RED<<" ports)\n"<<RESET;
     }
 
     print_section("PHASE 0 // CALIBRATION");
-    std::cout<<RED<<"  measuring target latency...\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  measuring target latency...\n"<<RESET;
 
     auto cfg=calibrate_target(ip);
-    std::cout<<RED<<"  rtt: "<<WHITE
+    std::cout<<BLOOD_RED<<"  rtt: "<<WHITE
     <<(cfg.median_rtt>=0?std::to_string(cfg.median_rtt)+"ms":"n/a")
-    <<RED<<"  timeout: "<<WHITE<<cfg.connect_ms<<"ms"
-    <<RED<<"  retries: "<<WHITE<<cfg.retry_count
-    <<RED<<"  threads: "<<WHITE<<cfg.pool_size<<"\n"<<RESET;
+    <<BLOOD_RED<<"  timeout: "<<WHITE<<cfg.connect_ms<<"ms"
+    <<BLOOD_RED<<"  retries: "<<WHITE<<cfg.retry_count
+    <<BLOOD_RED<<"  threads: "<<WHITE<<cfg.pool_size<<"\n"<<RESET;
 
     std::string hostname=ptr_lookup(ip);
     if (!hostname.empty()&&hostname!=ip)
-        std::cout<<RED<<"  ptr: "<<WHITE<<hostname<<"\n"<<RESET;
+        std::cout<<BLOOD_RED<<"  ptr: "<<WHITE<<hostname<<"\n"<<RESET;
 
     print_section("PHASE 1 // DISCOVERY");
-    std::cout<<RED<<"  sweeping "<<WHITE<<ports.size()<<RED<<" ports...\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  sweeping "<<WHITE<<ports.size()<<BLOOD_RED<<" ports...\n"<<RESET;
 
     struct QuickHit { int port; int latency_ms; };
     std::vector<QuickHit> open_hits;
@@ -304,18 +304,18 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     draw_progress(total,total,
                   std::to_string(open_c.load())+" open "+std::to_string(filt_c.load())+" filt");
     std::cout<<"\n";
-    std::cout<<RED<<"  discovery: "<<WHITE<<std::fixed<<std::setprecision(2)
-    <<scan_secs<<"s "<<RED<<"("<<WHITE<<(int)(total/std::max(scan_secs,0.01))<<RED<<" ports/sec)\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  discovery: "<<WHITE<<std::fixed<<std::setprecision(2)
+    <<scan_secs<<"s "<<BLOOD_RED<<"("<<WHITE<<(int)(total/std::max(scan_secs,0.01))<<BLOOD_RED<<" ports/sec)\n"<<RESET;
 
     std::sort(open_hits.begin(),open_hits.end(),
               [](const QuickHit& a,const QuickHit& b){return a.port<b.port;});
 
     if (open_hits.empty()) {
-        std::cout<<"\n"<<RED<<"  no open ports found\n"<<RESET;
+        std::cout<<"\n"<<BLOOD_RED<<"  no open ports found\n"<<RESET;
         if (!filtered_ports.empty()) {
             std::sort(filtered_ports.begin(),filtered_ports.end());
-            std::cout<<RED<<"  "<<WHITE<<filtered_ports.size()<<RED<<" filtered (fw silently drops)\n"<<RESET;
-            std::cout<<RED<<"  sample: "<<WHITE;
+            std::cout<<BLOOD_RED<<"  "<<WHITE<<filtered_ports.size()<<BLOOD_RED<<" filtered (fw silently drops)\n"<<RESET;
+            std::cout<<BLOOD_RED<<"  sample: "<<WHITE;
             for (int i=0;i<std::min(10,(int)filtered_ports.size());i++)
                 std::cout<<filtered_ports[i]<<" ";
             if ((int)filtered_ports.size()>10) std::cout<<"...";
@@ -327,7 +327,7 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     }
 
     print_section("PHASE 2 // DEEP ANALYSIS");
-    std::cout<<RED<<"  analyzing "<<WHITE<<open_hits.size()<<RED<<" open ports...\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  analyzing "<<WHITE<<open_hits.size()<<BLOOD_RED<<" open ports...\n"<<RESET;
 
     struct PortResult {
         int port, latency_ms;
@@ -372,7 +372,7 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     std::cout<<"\n";
 
     print_section("PHASE 3 // RESULTS");
-    std::cout<<"\n"<<RED<<BOLD
+    std::cout<<"\n"<<BLOOD_RED<<BOLD
     <<"  PORT      SERVICE         VERSION                  LATENCY   RISK      BANNER\n"
     <<"  "<<std::string(100,'-')<<"\n"<<RESET;
 
@@ -383,7 +383,7 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     for (auto& pr:results) {
         open_port_list.push_back(pr.port);
 
-        std::cout<<RED<<"  "<<WHITE<<std::left<<std::setw(10)<<pr.port
+        std::cout<<BLOOD_RED<<"  "<<WHITE<<std::left<<std::setw(10)<<pr.port
         <<std::setw(16)<<pr.service
         <<std::setw(25)<<(pr.version.empty()?"-":pr.version)
         <<std::setw(10)<<(std::to_string(pr.latency_ms)+"ms")
@@ -406,7 +406,7 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
 
     if (!filtered_ports.empty()) {
         std::sort(filtered_ports.begin(),filtered_ports.end());
-        std::cout<<"\n"<<RED<<"  "<<WHITE<<filtered_ports.size()<<RED<<" filtered: "<<WHITE;
+        std::cout<<"\n"<<BLOOD_RED<<"  "<<WHITE<<filtered_ports.size()<<BLOOD_RED<<" filtered: "<<WHITE;
         for (int i=0;i<std::min(15,(int)filtered_ports.size());i++)
             std::cout<<filtered_ports[i]<<" ";
         if ((int)filtered_ports.size()>15) std::cout<<"...";
@@ -422,26 +422,26 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
         });
 
         for (auto& v:all_vulns) {
-            std::cout<<RED<<"  "<<BOLD<<"["<<WHITE<<std::setw(4)<<v.severity<<RED<<"] "
+            std::cout<<BLOOD_RED<<"  "<<BOLD<<"["<<WHITE<<std::setw(4)<<v.severity<<BLOOD_RED<<"] "
             <<WHITE<<std::setw(16)<<v.cve<<"  "<<v.desc<<RESET<<"\n";
         }
 
-        std::cout<<"\n"<<RED<<"  vuln summary: "
-        <<WHITE<<vuln_crit <<RED<<" crit  "
-        <<WHITE<<vuln_high <<RED<<" high  "
-        <<WHITE<<vuln_med  <<RED<<" med  "
-        <<WHITE<<vuln_info <<RED<<" info"
+        std::cout<<"\n"<<BLOOD_RED<<"  vuln summary: "
+        <<WHITE<<vuln_crit <<BLOOD_RED<<" crit  "
+        <<WHITE<<vuln_high <<BLOOD_RED<<" high  "
+        <<WHITE<<vuln_med  <<BLOOD_RED<<" med  "
+        <<WHITE<<vuln_info <<BLOOD_RED<<" info"
         <<RESET<<"\n";
 
         if      (vuln_crit>0)
-            std::cout<<RED<<BOLD<<"\n  [!] "<<WHITE<<"CRITICAL issues found - immediate attention needed\n"<<RESET;
+            std::cout<<BLOOD_RED<<BOLD<<"\n  [!] "<<WHITE<<"CRITICAL issues found - immediate attention needed\n"<<RESET;
         else if (vuln_high>0)
-            std::cout<<RED<<"\n  [!] "<<WHITE<<"high severity issues - review recommended\n"<<RESET;
+            std::cout<<BLOOD_RED<<"\n  [!] "<<WHITE<<"high severity issues - review recommended\n"<<RESET;
     }
 
     std::string os_hint=guess_os_from_ports(open_port_list);
     if (os_hint!="unknown") {
-        std::cout<<"\n"<<RED<<"  os hint (ports): "<<WHITE<<os_hint<<RESET<<"\n";
+        std::cout<<"\n"<<BLOOD_RED<<"  os hint (ports): "<<WHITE<<os_hint<<RESET<<"\n";
         g_result.os_guess=os_hint;
     }
 
@@ -449,15 +449,15 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     auto total_time=std::chrono::duration<double>(
         std::chrono::steady_clock::now()-scan_start).count();
 
-        std::cout<<RED <<"  [target]       "<<WHITE<<ip<<"\n"<<RESET;
-        std::cout<<RED <<"  [ports tested] "<<WHITE<<total<<"\n"<<RESET;
-        std::cout<<RED <<"  [open]         "<<WHITE<<open_hits.size()<<"\n"<<RESET;
-        std::cout<<RED <<"  [filtered]     "<<WHITE<<filtered_ports.size()<<"\n"<<RESET;
-        std::cout<<RED <<"  [closed]       "<<WHITE
+        std::cout<<BLOOD_RED <<"  [target]       "<<WHITE<<ip<<"\n"<<RESET;
+        std::cout<<BLOOD_RED <<"  [ports tested] "<<WHITE<<total<<"\n"<<RESET;
+        std::cout<<BLOOD_RED <<"  [open]         "<<WHITE<<open_hits.size()<<"\n"<<RESET;
+        std::cout<<BLOOD_RED <<"  [filtered]     "<<WHITE<<filtered_ports.size()<<"\n"<<RESET;
+        std::cout<<BLOOD_RED <<"  [closed]       "<<WHITE
         <<(total-(int)open_hits.size()-(int)filtered_ports.size())<<"\n"<<RESET;
-        std::cout<<RED <<"  [total time]   "<<WHITE<<std::fixed<<std::setprecision(2)
+        std::cout<<BLOOD_RED <<"  [total time]   "<<WHITE<<std::fixed<<std::setprecision(2)
         <<total_time<<"s\n"<<RESET;
-        std::cout<<RED <<"  [avg speed]    "<<WHITE
+        std::cout<<BLOOD_RED <<"  [avg speed]    "<<WHITE
         <<(int)(total/std::max(total_time,0.01))<<" ports/sec\n"<<RESET;
 
         LOG_INFO("port_scan","done target="+ip+
@@ -471,7 +471,7 @@ void net_scan(const std::string& subnet) {
 
     static const std::vector<int> PROBE_PORTS={21,22,23,25,80,443,445,3389,8080,5985};
 
-    std::cout<<RED<<"  phase 1: host discovery...\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  phase 1: host discovery...\n"<<RESET;
 
     struct HostInfo {
         std::string ip, hostname, os;
@@ -503,14 +503,14 @@ void net_scan(const std::string& subnet) {
             h.hostname=strlen(hbuf)?sanitize(hbuf):"";
 
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout<<RED<<"  [+] "<<WHITE<<std::left<<std::setw(16)<<ip;
-            if(!h.hostname.empty()) std::cout<<RED<<" ("<<WHITE<<h.hostname<<RED<<")";
+            std::cout<<BLOOD_RED<<"  [+] "<<WHITE<<std::left<<std::setw(16)<<ip;
+            if(!h.hostname.empty()) std::cout<<BLOOD_RED<<" ("<<WHITE<<h.hostname<<BLOOD_RED<<")";
             std::cout<<RESET<<"\n";
         }));
     }
     for (auto& f:futs) f.get();
 
-    std::cout<<RED<<"\n  found "<<WHITE<<alive_c<<RED<<" hosts -- phase 2: port scan...\n\n"<<RESET;
+    std::cout<<BLOOD_RED<<"\n  found "<<WHITE<<alive_c<<BLOOD_RED<<" hosts -- phase 2: port scan...\n\n"<<RESET;
 
     std::vector<HostInfo*> alive_hosts;
     for (auto& h:hosts) if(h.alive) alive_hosts.push_back(&h);
@@ -532,27 +532,27 @@ void net_scan(const std::string& subnet) {
     }
     for (auto& f:futs2) f.get();
 
-    std::cout<<RED<<"  results:\n\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  results:\n\n"<<RESET;
     int total_open=0;
     for (auto* h:alive_hosts) {
         std::sort(h->ports.begin(),h->ports.end());
         std::vector<int> op; for(auto& [p,_]:h->ports) op.push_back(p);
         h->os=guess_os_from_ports(op);
 
-        std::cout<<RED<<"  ┌─ "<<WHITE<<std::left<<std::setw(16)<<h->ip;
-        if(!h->hostname.empty()) std::cout<<RED<<" ["<<WHITE<<h->hostname<<RED<<"]";
-        std::cout<<RED<<"  os: "<<WHITE<<h->os<<RESET<<"\n";
+        std::cout<<BLOOD_RED<<"  ┌─ "<<WHITE<<std::left<<std::setw(16)<<h->ip;
+        if(!h->hostname.empty()) std::cout<<BLOOD_RED<<" ["<<WHITE<<h->hostname<<BLOOD_RED<<"]";
+        std::cout<<BLOOD_RED<<"  os: "<<WHITE<<h->os<<RESET<<"\n";
 
-        if(h->ports.empty()) std::cout<<RED<<"  │  "<<WHITE<<"no open ports\n"<<RESET;
+        if(h->ports.empty()) std::cout<<BLOOD_RED<<"  │  "<<WHITE<<"no open ports\n"<<RESET;
         for (auto& [p,b]:h->ports) {
-            std::cout<<RED<<"  │  "<<WHITE<<std::setw(6)<<p<<" "<<std::setw(18)<<svc(p);
+            std::cout<<BLOOD_RED<<"  │  "<<WHITE<<std::setw(6)<<p<<" "<<std::setw(18)<<svc(p);
             if(!b.empty()) std::cout << "  " << sanitize(b);
             std::cout<<RESET<<"\n";
             total_open++;
         }
-        std::cout<<RED<<"  └"<<std::string(36,'-')<<RESET<<"\n";
+        std::cout<<BLOOD_RED<<"  └"<<std::string(36,'-')<<RESET<<"\n";
     }
 
-    std::cout<<"\n"<<RED<<"  hosts alive: "<<WHITE<<alive_c<<RED<<"  open ports: "<<WHITE<<total_open<<"\n"<<RESET;
+    std::cout<<"\n"<<BLOOD_RED<<"  hosts alive: "<<WHITE<<alive_c<<BLOOD_RED<<"  open ports: "<<WHITE<<total_open<<"\n"<<RESET;
     LOG_INFO("net_scan","done subnet="+subnet+" alive="+std::to_string(alive_c));
 }

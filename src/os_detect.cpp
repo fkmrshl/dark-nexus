@@ -76,7 +76,7 @@ void os_detect(const std::string& ip) {
 
     std::cout<<"\n"<<BLOOD_RED<<BOLD<<"  PORT ANALYSIS:\n"<<RESET;
     for (auto& r:results) {
-        std::cout<<RED<<"  ["<<WHITE<<std::left<<std::setw(5)<<r.port<<" "<<std::setw(12)<<r.name<<" "<<std::setw(8)<<r.cat<<RED<<"] ";
+        std::cout<<BLOOD_RED<<"  ["<<WHITE<<std::left<<std::setw(5)<<r.port<<" "<<std::setw(12)<<r.name<<" "<<std::setw(8)<<r.cat<<BLOOD_RED<<"] ";
         if (r.open) {
             std::cout<<WHITE<<"OPEN  "<<RESET;
             if(!r.bnr.empty()) std::cout<<WHITE<<sanitize(r.bnr.substr(0,40))<<"  ";
@@ -90,11 +90,11 @@ void os_detect(const std::string& ip) {
             cat_open[r.cat]++;
             open_c++;
         } else {
-            std::cout<<RED<<"closed"<<RESET;
+            std::cout<<BLOOD_RED<<"closed"<<RESET;
         }
         std::cout<<"\n";
     }
-    std::cout<<RED<<"  open: "<<WHITE<<open_c<<RED<<"/"<<WHITE<<checks.size()<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  open: "<<WHITE<<open_c<<BLOOD_RED<<"/"<<WHITE<<checks.size()<<"\n"<<RESET;
 
     print_section("ICMP TTL ANALYSIS");
     auto pout=safe_exec({"ping","-c3","-W1",ip},5);
@@ -119,10 +119,10 @@ void os_detect(const std::string& ip) {
         hops=init_ttl-ttl;
     }
 
-    std::cout<<RED<<"  [ttl]          "<<WHITE<<(ttl?std::to_string(ttl):"n/a")<<"\n"<<RESET;
-    std::cout<<RED<<"  [initial_ttl]  "<<WHITE<<(init_ttl?std::to_string(init_ttl):"n/a")<<"\n"<<RESET;
-    std::cout<<RED<<"  [hops]         "<<WHITE<<(hops?std::to_string(hops):"n/a")<<"\n"<<RESET;
-    std::cout<<RED<<"  [stable]       "<<WHITE<<(stable?"yes":"NO -- load balancer/multipath")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [ttl]          "<<WHITE<<(ttl?std::to_string(ttl):"n/a")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [initial_ttl]  "<<WHITE<<(init_ttl?std::to_string(init_ttl):"n/a")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [hops]         "<<WHITE<<(hops?std::to_string(hops):"n/a")<<"\n"<<RESET;
+    std::cout<<BLOOD_RED<<"  [stable]       "<<WHITE<<(stable?"yes":"NO -- load balancer/multipath")<<"\n"<<RESET;
 
     print_section("VERDICT");
     static const char* os_names[4]={"Windows","Linux/Unix","BSD/macOS","Network Device"};
@@ -151,8 +151,8 @@ void os_detect(const std::string& ip) {
         if (!waf_verdict.empty()) verdict += " (Behind Proxy/WAF)";
     }
 
-    std::cout<<RED<<"  [os]       "<<WHITE<<BOLD<<verdict<<RESET<<"\n";
-    std::cout<<RED<<"  [scores]   "<<WHITE;
+    std::cout<<BLOOD_RED<<"  [os]       "<<WHITE<<BOLD<<verdict<<RESET<<"\n";
+    std::cout<<BLOOD_RED<<"  [scores]   "<<WHITE;
     for(int i=0;i<4;i++) std::cout<<os_names[i]<<":"<<score[i]<<" ";
     std::cout<<"\n"<<RESET;
 

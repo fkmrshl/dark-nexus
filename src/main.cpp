@@ -212,8 +212,8 @@ int main(int argc, char** argv) {
                 std::cout<<"\n"<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  | "<<WHITE<<BOLD<<std::left<<std::setw(3)<<"MOD"<<RESET<<BLOOD_RED<<" | "<<WHITE<<BOLD<<std::left<<std::setw(50)<<"DESCRIPTION"<<BLOOD_RED<<" | "<<std::setw(8)<<"ETA"<<BLOOD_RED<<" |\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
-                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" F"<<RESET<<RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  — builtin 300 words + passive + enrich"<<BLOOD_RED<<" | "<<WHITE<<"~3 min  "<<RED<<" |\n"<<RESET;
-                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" D"<<RESET<<RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  — full wordlist + all sources + takeover scan"<<BLOOD_RED<<" | "<<WHITE<<"~1-2hr  "<<BLOOD_RED<<" |\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" F"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  — builtin 300 words + passive + enrich"<<BLOOD_RED<<" | "<<WHITE<<"~3 min  "<<BLOOD_RED<<" |\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" D"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  — full wordlist + all sources + takeover scan"<<BLOOD_RED<<" | "<<WHITE<<"~1-2hr  "<<BLOOD_RED<<" |\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
 
                 std::cout<<BLOOD_RED<<"  select mode [F/D]: "<<RESET;

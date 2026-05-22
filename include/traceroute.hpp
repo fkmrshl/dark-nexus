@@ -14,6 +14,7 @@ struct TraceConfig {
     int parallel_hops   = 8;
     int src_port        = 33434;
     int dst_port        = 33434;
+    int dns_timeout_ms  = 500;
     bool resolve_dns    = true;
     bool detect_mtu     = true;
     bool show_jitter    = true;
