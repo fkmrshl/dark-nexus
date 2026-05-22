@@ -52,7 +52,6 @@ target_link_libraries(dark_nexus
 )
 target_include_directories(dark_nexus PRIVATE ${URING_INCLUDE_DIRS})
 
-# Download wordlist if it does not exist
 set(WORDLIST_URL "https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/best-dns-wordlist.txt")
 set(WORDLIST_FILE "${CMAKE_SOURCE_DIR}/best-dns-wordlist.txt")
 
