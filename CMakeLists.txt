@@ -41,6 +41,8 @@ file(GLOB SOURCES "src/*.cpp")
 
 add_executable(dark_nexus ${SOURCES})
 
+target_compile_definitions(dark_nexus PRIVATE HAVE_OPENSSL)
+
 target_link_libraries(dark_nexus
     PRIVATE
     c-ares::cares_static

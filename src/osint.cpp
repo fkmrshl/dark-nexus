@@ -262,16 +262,16 @@ static std::vector<std::string> extract_links(const std::string& html, int max =
 
 static std::string conf_bar(double c) {
     int n = (int)(c * 10);
-    std::string b = std::string(RED) + "[";
-    for (int i = 0; i < 10; i++) b += (i < n ? std::string(WHITE) + "\xe2\x96\x88" : std::string(RED) + "\xe2\x96\x91");
-    return b + std::string(RED) + "]";
+    std::string b = std::string(BLOOD_RED) + "[";
+    for (int i = 0; i < 10; i++) b += (i < n ? std::string(WHITE) + "\xe2\x96\x88" : std::string(BLOOD_RED) + "\xe2\x96\x91");
+    return b + std::string(BLOOD_RED) + "]";
 }
 
 static std::string certainty_str(HitConfidence c) {
     switch (c) {
-        case HitConfidence::CONFIRMED: return std::string(RED) + "[" + std::string(WHITE) + "CONFIRMED" + std::string(RED) + "]" + std::string(RESET);
-        case HitConfidence::PROBABLE:  return std::string(RED) + "[" + std::string(WHITE) + "PROBABLE" + std::string(RED) + "] " + std::string(RESET);
-        default:                       return std::string(RED) + "[" + std::string(WHITE) + "POSSIBLE" + std::string(RED) + "] " + std::string(RESET);
+        case HitConfidence::CONFIRMED: return std::string(BLOOD_RED) + "[" + std::string(WHITE) + "CONFIRMED" + std::string(BLOOD_RED) + "]" + std::string(RESET);
+        case HitConfidence::PROBABLE:  return std::string(BLOOD_RED) + "[" + std::string(WHITE) + "PROBABLE" + std::string(BLOOD_RED) + "] " + std::string(RESET);
+        default:                       return std::string(BLOOD_RED) + "[" + std::string(WHITE) + "POSSIBLE" + std::string(BLOOD_RED) + "] " + std::string(RESET);
     }
 }
 
@@ -308,12 +308,12 @@ static double bayes_score(bool ok, bool dead_absent,
 
                           static void ensure_tool(const std::string& name, const std::string& pip_pkg) {
                               if (tool_exists(name)) return;
-                              std::cout << RED << "  [*] installing " << WHITE << name << RED << "...\n" << RESET;
+                              std::cout << BLOOD_RED << "  [*] installing " << WHITE << name << BLOOD_RED << "...\n" << RESET;
                               std::string out = safe_exec({"pip3", "install", "--break-system-packages", "-q", pip_pkg}, 120);
                               if (tool_exists(name))
-                                  std::cout << RED << "  [+] " << WHITE << name << RED << " installed\n" << RESET;
+                                  std::cout << BLOOD_RED << "  [+] " << WHITE << name << BLOOD_RED << " installed\n" << RESET;
                               else
-                                  std::cout << RED << "  [-] " << WHITE << name << RED << " install failed -- run: pip3 install " << WHITE << pip_pkg << "\n" << RESET;
+                                  std::cout << BLOOD_RED << "  [-] " << WHITE << name << BLOOD_RED << " install failed -- run: pip3 install " << WHITE << pip_pkg << "\n" << RESET;
                           }
 
                           static void ensure_tools_username() {
@@ -328,7 +328,7 @@ static double bayes_score(bool ok, bool dead_absent,
 
                           static void ensure_tools_phone() {
                               if (!tool_exists("phoneinfoga")) {
-                                  std::cout << RED << "  [*] phoneinfoga: install manually:\n" << RESET;
+                                  std::cout << BLOOD_RED << "  [*] phoneinfoga: install manually:\n" << RESET;
                                   std::cout << WHITE << "    go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest\n" << RESET;
                                   std::cout << WHITE << "    or: https://github.com/sundowndev/phoneinfoga/releases\n" << RESET;
                               }
@@ -338,7 +338,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               ToolResult r; r.tool = "sherlock"; r.available = tool_exists("sherlock");
                               if (!r.available) return r;
                               r.installed = true;
-                              std::cout << RED << "    running " << WHITE << "sherlock" << RED << "...\n" << RESET;
+                              std::cout << BLOOD_RED << "    running " << WHITE << "sherlock" << BLOOD_RED << "...\n" << RESET;
                               auto out = safe_exec({"sherlock", "--print-found", "--timeout", "10", username}, 180);
                               for (auto& line : split_lines(out)) {
                                   if (line.find("[+]") == std::string::npos) continue;
@@ -362,7 +362,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               ToolResult r; r.tool = "maigret"; r.available = tool_exists("maigret");
                               if (!r.available) return r;
                               r.installed = true;
-                              std::cout << RED << "    running " << WHITE << "maigret" << RED << "...\n" << RESET;
+                              std::cout << BLOOD_RED << "    running " << WHITE << "maigret" << BLOOD_RED << "...\n" << RESET;
                               auto out = safe_exec({"maigret", "--no-color", "--timeout", "10", "-a", username}, 300);
                               for (auto& line : split_lines(out)) {
                                   if (line.find("[+]") == std::string::npos) continue;
@@ -379,7 +379,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               ToolResult r; r.tool = "holehe"; r.available = tool_exists("holehe");
                               if (!r.available) return r;
                               r.installed = true;
-                              std::cout << RED << "    running " << WHITE << "holehe" << RED << "...\n" << RESET;
+                              std::cout << BLOOD_RED << "    running " << WHITE << "holehe" << BLOOD_RED << "...\n" << RESET;
                               auto out = safe_exec({"holehe", "--only-used", "--no-color", email}, 300);
                               for (auto& line : split_lines(out)) {
                                   if (line.find("[+]") == std::string::npos) continue;
@@ -397,7 +397,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               ToolResult r; r.tool = "theHarvester"; r.available = tool_exists("theHarvester");
                               if (!r.available) return r;
                               r.installed = true;
-                              std::cout << RED << "    running " << WHITE << "theHarvester" << RED << "...\n" << RESET;
+                              std::cout << BLOOD_RED << "    running " << WHITE << "theHarvester" << BLOOD_RED << "...\n" << RESET;
                               auto out = safe_exec({"theHarvester", "-d", domain, "-b", "all", "-l", "200"}, 180);
                               std::set<std::string> seen;
                               for (auto& line : split_lines(out)) {
@@ -420,7 +420,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               ToolResult r; r.tool = "phoneinfoga"; r.available = tool_exists("phoneinfoga");
                               if (!r.available) return r;
                               r.installed = true;
-                              std::cout << RED << "    running " << WHITE << "phoneinfoga" << RED << "...\n" << RESET;
+                              std::cout << BLOOD_RED << "    running " << WHITE << "phoneinfoga" << BLOOD_RED << "...\n" << RESET;
                               auto out = safe_exec({"phoneinfoga", "scan", "-n", e164}, 120);
                               std::set<std::string> seen;
                               for (auto& line : split_lines(out)) {
@@ -506,7 +506,7 @@ static double bayes_score(bool ok, bool dead_absent,
                           {
                               std::atomic<int> done_c(0);
                               int total = (int)SITES.size();
-                              std::cout << RED << "  scanning " << WHITE << total << RED << " platforms" << RESET;
+                              std::cout << BLOOD_RED << "  scanning " << WHITE << total << BLOOD_RED << " platforms" << RESET;
                               std::cout.flush();
 
                               ThreadPool pool(std::min(total, 40));
@@ -514,7 +514,9 @@ static double bayes_score(bool ok, bool dead_absent,
                               futs.reserve(total);
 
                               for (auto& s : SITES) {
+                                  if (g_cancel_token.cancelled) break;
                                   futs.push_back(pool.submit([&, s] {
+                                      if (g_cancel_token.cancelled) { ++done_c; return; }
                                       std::string url  = fill(s.url, username);
                                       if (!InputGuard::is_safe_url(url)) { ++done_c; return; }
                                       std::string body = safe_curl(url, 7);
@@ -555,7 +557,7 @@ static double bayes_score(bool ok, bool dead_absent,
 
                           static void print_results(const std::vector<OsintHit>& hits) {
                               if (hits.empty()) {
-                                  std::cout << RED << "  nothing found\n" << RESET;
+                                  std::cout << BLOOD_RED << "  nothing found\n" << RESET;
                                   return;
                               }
 
@@ -574,13 +576,13 @@ static double bayes_score(bool ok, bool dead_absent,
 
                               for (auto& cat : order) {
                                   if (!by_cat.count(cat)) continue;
-                                  std::cout << "\n" << RED << BOLD << "  " << WHITE << cat << RED << ":\n" << RESET;
+                                  std::cout << "\n" << BLOOD_RED << BOLD << "  " << WHITE << cat << BLOOD_RED << ":\n" << RESET;
                                   for (auto* h : by_cat[cat]) {
                                       std::cout << "  " << certainty_str(h->certainty)
                                       << "  " << WHITE << std::left << std::setw(16) << h->name;
                                       if (!h->url.empty()) std::cout << WHITE << h->url << RESET;
                                       if (!h->evidence.empty() && h->cat == "ext")
-                                          std::cout << RED << "  [via " << WHITE << h->evidence << RED << "]" << RESET;
+                                          std::cout << BLOOD_RED << "  [via " << WHITE << h->evidence << BLOOD_RED << "]" << RESET;
                                       std::cout << "\n";
                                   }
                               }
@@ -592,11 +594,11 @@ static double bayes_score(bool ok, bool dead_absent,
                               long possible  = std::count_if(hits.begin(), hits.end(),
                                                              [](const OsintHit& h){ return h.certainty == HitConfidence::POSSIBLE; });
 
-                              std::cout << "\n" << RED << "  +" << std::string(46,'-') << "+\n" << RESET;
-                              std::cout << RED << "  | " << WHITE << "CONFIRMED " << WHITE << std::left << std::setw(10) << confirmed
-                              << RED << "  | " << WHITE << "PROBABLE  " << WHITE << std::left << std::setw(10) << probable
-                              << RED << "  | " << WHITE << "POSSIBLE  " << WHITE << std::left << std::setw(10) << possible
-                              << RED << "  |\n  +" << std::string(46,'-') << "+\n" << RESET;
+                              std::cout << "\n" << BLOOD_RED << "  +" << std::string(46,'-') << "+\n" << RESET;
+                              std::cout << BLOOD_RED << "  | " << WHITE << "CONFIRMED " << WHITE << std::left << std::setw(10) << confirmed
+                              << BLOOD_RED << "  | " << WHITE << "PROBABLE  " << WHITE << std::left << std::setw(10) << probable
+                              << BLOOD_RED << "  | " << WHITE << "POSSIBLE  " << WHITE << std::left << std::setw(10) << possible
+                              << BLOOD_RED << "  |\n  +" << std::string(46,'-') << "+\n" << RESET;
                           }
 
                           static void run_username(const std::string& username, IdentityGraph& graph) {
@@ -616,11 +618,11 @@ static double bayes_score(bool ok, bool dead_absent,
 
                               auto print_tool_stat = [](const ToolResult& t) {
                                   if (t.installed)
-                                      std::cout << RED << "  [+] " << WHITE << std::left << std::setw(16) << t.tool
-                                      << RED << "found " << WHITE << t.hits.size() << RED << " hits\n" << RESET;
+                                      std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(16) << t.tool
+                                      << BLOOD_RED << "found " << WHITE << t.hits.size() << BLOOD_RED << " hits\n" << RESET;
                                   else
-                                      std::cout << RED << "  [-] " << WHITE << std::left << std::setw(16) << t.tool
-                                      << RED << "not installed\n" << RESET;
+                                      std::cout << BLOOD_RED << "  [-] " << WHITE << std::left << std::setw(16) << t.tool
+                                      << BLOOD_RED << "not installed\n" << RESET;
                               };
                               print_tool_stat(sr);
                               print_tool_stat(mr);
@@ -635,11 +637,11 @@ static double bayes_score(bool ok, bool dead_absent,
 
                               print_section("USERNAME VARIANTS");
                               auto patterns = gen_patterns(username);
-                              std::cout << RED << "  " << WHITE << patterns.size() << RED << " variants to check:\n" << RESET;
+                              std::cout << BLOOD_RED << "  " << WHITE << patterns.size() << BLOOD_RED << " variants to check:\n" << RESET;
                               for (size_t i = 0; i < std::min(patterns.size(), (size_t)10); i++)
                                   std::cout << WHITE << "    " << patterns[i] << "\n" << RESET;
                               if (patterns.size() > 10)
-                                  std::cout << RED << "    ... +" << WHITE << patterns.size()-10 << RED << " more\n" << RESET;
+                                  std::cout << BLOOD_RED << "    ... +" << WHITE << patterns.size()-10 << BLOOD_RED << " more\n" << RESET;
 
                               print_section("EMAIL HYPOTHESES");
                               static const std::vector<std::string> doms = {
@@ -648,7 +650,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               for (auto& d : doms) {
                                   std::string addr = username + "@" + d;
                                   graph.email_candidates.push_back(addr);
-                                  std::cout << RED << "  -> " << WHITE << addr << "\n" << RESET;
+                                  std::cout << BLOOD_RED << "  -> " << WHITE << addr << "\n" << RESET;
                               }
 
                               print_section("WEB MENTIONS");
@@ -664,7 +666,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                   shown++;
                                               }
                                           }
-                                          if (!shown) std::cout << RED << "  no public mentions\n" << RESET;
+                                          if (!shown) std::cout << BLOOD_RED << "  no public mentions\n" << RESET;
                                       }
                                   }
                               }
@@ -678,7 +680,7 @@ static double bayes_score(bool ok, bool dead_absent,
 
                           static void run_email(const std::string& email, IdentityGraph& graph) {
                               if (!InputGuard::is_valid_email(email)) {
-                                  std::cout << RED << "  [!] invalid email\n" << RESET; return;
+                                  std::cout << BLOOD_RED << "  [!] invalid email\n" << RESET; return;
                               }
 
                               auto at            = email.find('@');
@@ -699,17 +701,17 @@ static double bayes_score(bool ok, bool dead_absent,
                               ensure_tools_email();
 
                               print_section("EMAIL PROFILE");
-                              std::cout << RED << "  " << WHITE << email << "\n\n" << RESET;
-                              std::cout << RED << "  [local]      " << WHITE << local  << "\n" << RESET;
-                              std::cout << RED << "  [domain]     " << WHITE << domain << "\n" << RESET;
+                              std::cout << BLOOD_RED << "  " << WHITE << email << "\n\n" << RESET;
+                              std::cout << BLOOD_RED << "  [local]      " << WHITE << local  << "\n" << RESET;
+                              std::cout << BLOOD_RED << "  [domain]     " << WHITE << domain << "\n" << RESET;
                               auto dt = dom_types.find(domain);
                               if (dt != dom_types.end())
-                                  std::cout << RED << "  [type]       " << WHITE << dt->second << "\n" << RESET;
+                                  std::cout << BLOOD_RED << "  [type]       " << WHITE << dt->second << "\n" << RESET;
                               else if (disp)
-                                  std::cout << RED << "  [type]       " << WHITE << "DISPOSABLE/BURNER\n" << RESET;
+                                  std::cout << BLOOD_RED << "  [type]       " << WHITE << "DISPOSABLE/BURNER\n" << RESET;
                               else
-                                  std::cout << RED << "  [type]       " << WHITE << "corporate/custom domain\n" << RESET;
-                              std::cout << RED << "  [disposable] " << WHITE
+                                  std::cout << BLOOD_RED << "  [type]       " << WHITE << "corporate/custom domain\n" << RESET;
+                              std::cout << BLOOD_RED << "  [disposable] " << WHITE
                               << (disp ? "YES -- temp/spam domain" : "no") << "\n" << RESET;
 
                               print_section("DOMAIN REPUTATION");
@@ -724,24 +726,24 @@ static double bayes_score(bool ok, bool dead_absent,
                               auto a_rec = fut_a.get();
 
                               if (!mx.empty()) {
-                                  std::cout << RED << "  [MX]     " << WHITE;
+                                  std::cout << BLOOD_RED << "  [MX]     " << WHITE;
                                   for (auto& l : split_lines(mx)) std::cout << sanitize(l) << "  ";
                                   std::cout << "\n" << RESET;
                               } else {
-                                  std::cout << RED << "  [MX]     no records -- domain may not accept email\n" << RESET;
+                                  std::cout << BLOOD_RED << "  [MX]     no records -- domain may not accept email\n" << RESET;
                               }
 
                               bool spf_found = false;
                               for (auto& l : split_lines(spf)) {
                                   if (l.find("v=spf1") != std::string::npos)
-                                  { std::cout << RED << "  [SPF]    " << WHITE << sanitize(l) << "\n" << RESET; spf_found = true; }
+                                  { std::cout << BLOOD_RED << "  [SPF]    " << WHITE << sanitize(l) << "\n" << RESET; spf_found = true; }
                               }
-                              if (!spf_found) std::cout << RED << "  [SPF]    not found\n" << RESET;
+                              if (!spf_found) std::cout << BLOOD_RED << "  [SPF]    not found\n" << RESET;
 
-                              if (!dmarc.empty()) std::cout << RED << "  [DMARC]  " << WHITE << sanitize(dmarc) << "\n" << RESET;
-                              else                std::cout << RED << "  [DMARC]  not found\n" << RESET;
+                              if (!dmarc.empty()) std::cout << BLOOD_RED << "  [DMARC]  " << WHITE << sanitize(dmarc) << "\n" << RESET;
+                              else                std::cout << BLOOD_RED << "  [DMARC]  not found\n" << RESET;
 
-                              if (!a_rec.empty()) std::cout << RED << "  [A]      " << WHITE << sanitize(a_rec) << "\n" << RESET;
+                              if (!a_rec.empty()) std::cout << BLOOD_RED << "  [A]      " << WHITE << sanitize(a_rec) << "\n" << RESET;
 
                               print_section("BREACH INTELLIGENCE");
                               double breach_risk = 0.0;
@@ -755,10 +757,10 @@ static double bayes_score(bool ok, bool dead_absent,
                               { breach_risk += 0.05; risk_factors.push_back("digits in local -- typical in mass registrations"); }
                               breach_risk = std::min(breach_risk, 0.95);
 
-                              std::cout << RED << "  [breach_risk]  " << WHITE
+                              std::cout << BLOOD_RED << "  [breach_risk]  " << WHITE
                               << std::fixed << std::setprecision(0) << (breach_risk*100) << "%  "
                               << conf_bar(breach_risk) << "\n" << RESET;
-                              for (auto& f : risk_factors) std::cout << RED << "  [!] " << WHITE << f << "\n" << RESET;
+                              for (auto& f : risk_factors) std::cout << BLOOD_RED << "  [!] " << WHITE << f << "\n" << RESET;
 
                               {
                                   std::string hibp_url = "https://haveibeenpwned.com/api/v3/breachedaccount/" +
@@ -766,16 +768,16 @@ static double bayes_score(bool ok, bool dead_absent,
                                   if (InputGuard::is_safe_url(hibp_url)) {
                                       auto hibp = safe_curl(hibp_url, 12);
                                       if (!hibp.empty() && hibp.find("Name") != std::string::npos) {
-                                          std::cout << RED << "\n  [!!!] FOUND IN BREACH DATABASES:\n" << RESET;
+                                          std::cout << BLOOD_RED << "\n  [!!!] FOUND IN BREACH DATABASES:\n" << RESET;
                                           size_t p = 0; std::string mk = "\"Name\":\""; int cnt = 0;
                                           while ((p = hibp.find(mk, p)) != std::string::npos && cnt < 30) {
                                               p += mk.size(); auto end = hibp.find('"', p);
                                               if (end == std::string::npos) break;
-                                              std::cout << RED << "    [breach] " << WHITE << hibp.substr(p,end-p) << "\n" << RESET;
+                                              std::cout << BLOOD_RED << "    [breach] " << WHITE << hibp.substr(p,end-p) << "\n" << RESET;
                                               p = end; cnt++;
                                           }
                                       } else {
-                                          std::cout << RED << "  [ok] HIBP: not found (or API key required)\n" << RESET;
+                                          std::cout << BLOOD_RED << "  [ok] HIBP: not found (or API key required)\n" << RESET;
                                       }
                                   }
                               }
@@ -786,15 +788,15 @@ static double bayes_score(bool ok, bool dead_absent,
                                   if (InputGuard::is_safe_url(grav_url)) {
                                       auto grav = safe_curl(grav_url, 8);
                                       if (!grav.empty() && grav.find("entry") != std::string::npos) {
-                                          std::cout << RED << "  [+] Gravatar profile found:\n" << RESET;
+                                          std::cout << BLOOD_RED << "  [+] Gravatar profile found:\n" << RESET;
                                           for (auto& k : {"displayName","aboutMe","currentLocation","profileUrl","phoneNumbers"}) {
                                               auto v = json_val(grav, k);
                                               if (!v.empty())
-                                                  std::cout << RED << "  [" << WHITE << std::left << std::setw(16) << k << RED << "] "
+                                                  std::cout << BLOOD_RED << "  [" << WHITE << std::left << std::setw(16) << k << BLOOD_RED << "] "
                                                   << WHITE << sanitize(v) << "\n" << RESET;
                                           }
                                       } else {
-                                          std::cout << RED << "  no Gravatar profile\n" << RESET;
+                                          std::cout << BLOOD_RED << "  no Gravatar profile\n" << RESET;
                                       }
                                   }
                               }
@@ -805,23 +807,23 @@ static double bayes_score(bool ok, bool dead_absent,
                               auto hr = f_holehe.get();
                               auto tr = f_harvester.get();
 
-                              if (hr.installed)  std::cout << RED << "  [+] " << WHITE << std::left << std::setw(16) << "holehe"       << RED << "found " << WHITE << hr.hits.size() << RED << " services\n" << RESET;
-                              else               std::cout << RED << "  [-] " << WHITE << std::left << std::setw(16) << "holehe"       << RED << "not installed\n" << RESET;
-                              if (tr.installed)  std::cout << RED << "  [+] " << WHITE << std::left << std::setw(16) << "theHarvester" << RED << "found " << WHITE << tr.hits.size() << RED << " items\n" << RESET;
-                              else               std::cout << RED << "  [-] " << WHITE << std::left << std::setw(16) << "theHarvester" << RED << "not installed\n" << RESET;
+                              if (hr.installed)  std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(16) << "holehe"       << BLOOD_RED << "found " << WHITE << hr.hits.size() << BLOOD_RED << " services\n" << RESET;
+                              else               std::cout << BLOOD_RED << "  [-] " << WHITE << std::left << std::setw(16) << "holehe"       << BLOOD_RED << "not installed\n" << RESET;
+                              if (tr.installed)  std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(16) << "theHarvester" << BLOOD_RED << "found " << WHITE << tr.hits.size() << BLOOD_RED << " items\n" << RESET;
+                              else               std::cout << BLOOD_RED << "  [-] " << WHITE << std::left << std::setw(16) << "theHarvester" << BLOOD_RED << "not installed\n" << RESET;
 
                               if (hr.installed && !hr.hits.empty()) {
-                                  std::cout << "\n" << RED << BOLD << "  holehe -- registered services:\n" << RESET;
+                                  std::cout << "\n" << BLOOD_RED << BOLD << "  holehe -- registered services:\n" << RESET;
                                   for (auto& h : hr.hits)
-                                      std::cout << RED << "  [+] " << WHITE << h.platform << "\n" << RESET;
+                                      std::cout << BLOOD_RED << "  [+] " << WHITE << h.platform << "\n" << RESET;
                               }
 
                               if (tr.installed && !tr.hits.empty()) {
-                                  std::cout << "\n" << RED << BOLD << "  theHarvester -- domain intel:\n" << RESET;
+                                  std::cout << "\n" << BLOOD_RED << BOLD << "  theHarvester -- domain intel:\n" << RESET;
                                   for (size_t i = 0; i < std::min(tr.hits.size(), (size_t)20); i++)
                                       std::cout << WHITE << "  " << tr.hits[i].info << RESET << "\n";
                                   if (tr.hits.size() > 20)
-                                      std::cout << RED << "  ... +" << WHITE << tr.hits.size()-20 << RED << " more\n" << RESET;
+                                      std::cout << BLOOD_RED << "  ... +" << WHITE << tr.hits.size()-20 << BLOOD_RED << " more\n" << RESET;
                               }
 
                               print_section("USERNAME CANDIDATES");
@@ -842,7 +844,7 @@ static double bayes_score(bool ok, bool dead_absent,
                               }
                               std::sort(candidates.begin(),candidates.end());
                               candidates.erase(std::unique(candidates.begin(),candidates.end()),candidates.end());
-                              for (auto& c : candidates) std::cout << RED << "  -> " << WHITE << c << "\n" << RESET;
+                              for (auto& c : candidates) std::cout << BLOOD_RED << "  -> " << WHITE << c << "\n" << RESET;
                               graph.username_candidates = candidates;
 
                               extract_phone_from_email_sources(email, local, graph.profile);
@@ -870,7 +872,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                   shown++;
                                               }
                                           }
-                                          if (!shown) std::cout << RED << "  no public mentions\n" << RESET;
+                                          if (!shown) std::cout << BLOOD_RED << "  no public mentions\n" << RESET;
                                       }
                                   }
                               }
@@ -903,7 +905,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                       if (end != std::string::npos) {
                                                           std::string name = sanitize(resp2.substr(p, end-p));
                                                           if (!name.empty() && name.size() > 1) {
-                                                              std::cout << RED << "  [+] name: " << WHITE << name << "\n" << RESET;
+                                                              std::cout << BLOOD_RED << "  [+] name: " << WHITE << name << "\n" << RESET;
                                                               prof.add("getcontact_name", name);
                                                           }
                                                       }
@@ -915,8 +917,8 @@ static double bayes_score(bool ok, bool dead_absent,
                                       for (auto& k : {"name","displayName","tag","firstName","lastName"}) {
                                           auto v = json_val(resp, k);
                                           if (!v.empty() && v != "null") {
-                                              std::cout << RED << "  [+] " << WHITE << std::left << std::setw(14) << k
-                                              << RED << " " << WHITE << sanitize(v) << "\n" << RESET;
+                                              std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(14) << k
+                                              << BLOOD_RED << " " << WHITE << sanitize(v) << "\n" << RESET;
                                               prof.add(k, sanitize(v));
                                           }
                                       }
@@ -942,7 +944,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                   if (end != std::string::npos && end > pos) {
                                                       std::string val = sanitize(pbody.substr(pos, end-pos));
                                                       if (!val.empty() && val.size() > 2 && val.find("GetContact") == std::string::npos) {
-                                                          std::cout << RED << "  [+] contact name: " << WHITE << val << "\n" << RESET;
+                                                          std::cout << BLOOD_RED << "  [+] contact name: " << WHITE << val << "\n" << RESET;
                                                           prof.add("getcontact_tag", val);
                                                           break;
                                                       }
@@ -953,8 +955,8 @@ static double bayes_score(bool ok, bool dead_absent,
                                   }
                               }
 
-                              if (prof.names.empty()) std::cout << RED << "  no public data (API requires auth)\n" << RESET;
-                              std::cout << RED << "  tip: getcontact.com/ru/search/" << WHITE << e164.substr(e164[0]=='+'?1:0) << "\n" << RESET;
+                              if (prof.names.empty()) std::cout << BLOOD_RED << "  no public data (API requires auth)\n" << RESET;
+                              std::cout << BLOOD_RED << "  tip: getcontact.com/ru/search/" << WHITE << e164.substr(e164[0]=='+'?1:0) << "\n" << RESET;
                           }
 
                           static void lookup_truecaller(const std::string& e164, CorrelatedProfile& prof) {
@@ -970,17 +972,17 @@ static double bayes_score(bool ok, bool dead_absent,
                                           for (auto& k : {"name","firstName","lastName","cityName","countryCode","carrier","phoneType"}) {
                                               auto v = json_val(resp, k);
                                               if (!v.empty() && v != "null") {
-                                                  std::cout << RED << "  [+] " << WHITE << std::left << std::setw(14) << k
-                                                  << RED << " " << WHITE << sanitize(v) << "\n" << RESET;
+                                                  std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(14) << k
+                                                  << BLOOD_RED << " " << WHITE << sanitize(v) << "\n" << RESET;
                                                   prof.add(k, sanitize(v));
                                               }
                                           }
                                           auto img = json_val(resp, "image");
                                           if (!img.empty()) {
-                                              std::cout << RED << "  [avatar]       " << WHITE << sanitize(img) << "\n" << RESET;
+                                              std::cout << BLOOD_RED << "  [avatar]       " << WHITE << sanitize(img) << "\n" << RESET;
                                               prof.add("avatar", img);
                                           }
-                                          std::cout << RED << "  tip: truecaller.com/search/ru/" << WHITE << e164.substr(e164[0]=='+'?1:0) << "\n" << RESET;
+                                          std::cout << BLOOD_RED << "  tip: truecaller.com/search/ru/" << WHITE << e164.substr(e164[0]=='+'?1:0) << "\n" << RESET;
                                           return;
                                       }
                                   }
@@ -1000,7 +1002,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                               if (end != std::string::npos) {
                                                   std::string name = sanitize(web.substr(pos, end-pos));
                                                   if (!name.empty()) {
-                                                      std::cout << RED << "  [+] name: " << WHITE << name << "\n" << RESET;
+                                                      std::cout << BLOOD_RED << "  [+] name: " << WHITE << name << "\n" << RESET;
                                                       prof.add("truecaller_name", name);
                                                   }
                                               }
@@ -1009,8 +1011,8 @@ static double bayes_score(bool ok, bool dead_absent,
                                   }
                               }
                               if (prof.names.empty())
-                                  std::cout << RED << "  no data (Truecaller API requires bearer token)\n" << RESET;
-                              std::cout << RED << "  tip: truecaller.com/search/ru/" << WHITE << e164.substr(e164[0]=='+'?1:0) << "\n" << RESET;
+                                  std::cout << BLOOD_RED << "  no data (Truecaller API requires bearer token)\n" << RESET;
+                              std::cout << BLOOD_RED << "  tip: truecaller.com/search/ru/" << WHITE << e164.substr(e164[0]=='+'?1:0) << "\n" << RESET;
                           }
 
                           static void lookup_vk_by_phone(const std::string& e164, CorrelatedProfile& prof) {
@@ -1021,7 +1023,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                   if (InputGuard::is_safe_url(vk_url)) {
                                       auto resp = safe_curl(vk_url, 8);
                                       if (!resp.empty() && resp.find("\"id\"") != std::string::npos) {
-                                          std::cout << RED << "  [+] VK profile(s) found:\n" << RESET;
+                                          std::cout << BLOOD_RED << "  [+] VK profile(s) found:\n" << RESET;
                                           size_t p = 0;
                                           std::string mk = "\"id\":";
                                           int cnt = 0;
@@ -1034,7 +1036,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                               while (!uid.empty() && !std::isdigit(uid.back())) uid.pop_back();
                                               if (!uid.empty()) {
                                                   std::string profile_url = "https://vk.com/id" + uid;
-                                                  std::cout << RED << "    -> " << WHITE << profile_url << "\n" << RESET;
+                                                  std::cout << BLOOD_RED << "    -> " << WHITE << profile_url << "\n" << RESET;
                                                   prof.add("vk_profile", profile_url);
                                                   cnt++;
                                               }
@@ -1042,14 +1044,14 @@ static double bayes_score(bool ok, bool dead_absent,
                                           for (auto& k : {"first_name","last_name","domain","city","country","bdate"}) {
                                               auto v = json_val(resp, k);
                                               if (!v.empty() && v != "null") {
-                                                  std::cout << RED << "  [" << WHITE << std::left << std::setw(12) << k << RED << "] "
+                                                  std::cout << BLOOD_RED << "  [" << WHITE << std::left << std::setw(12) << k << BLOOD_RED << "] "
                                                   << WHITE << sanitize(v) << "\n" << RESET;
                                                   prof.add(k, sanitize(v));
                                               }
                                           }
                                       } else {
-                                          std::cout << RED << "  not found via public API\n" << RESET;
-                                          std::cout << RED << "  tip (with token): vk.com/dev/users.search\n" << RESET;
+                                          std::cout << BLOOD_RED << "  not found via public API\n" << RESET;
+                                          std::cout << BLOOD_RED << "  tip (with token): vk.com/dev/users.search\n" << RESET;
                                       }
                                   }
                               }
@@ -1067,7 +1069,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                   if (end != std::string::npos) {
                                                       std::string url = sanitize(web.substr(href, end-href));
                                                       if (!url.empty()) {
-                                                          std::cout << RED << "  [+] VK web search: " << WHITE << url << "\n" << RESET;
+                                                          std::cout << BLOOD_RED << "  [+] VK web search: " << WHITE << url << "\n" << RESET;
                                                           prof.add("vk_web", url);
                                                       }
                                                   }
@@ -1088,13 +1090,13 @@ static double bayes_score(bool ok, bool dead_absent,
                                   for (auto& k : {"name","location","uid"}) {
                                       auto v = json_val(resp, k);
                                       if (!v.empty() && v != "null") {
-                                          std::cout << RED << "  [+] " << WHITE << std::left << std::setw(10) << k
-                                          << RED << " " << WHITE << sanitize(v) << "\n" << RESET;
+                                          std::cout << BLOOD_RED << "  [+] " << WHITE << std::left << std::setw(10) << k
+                                          << BLOOD_RED << " " << WHITE << sanitize(v) << "\n" << RESET;
                                           prof.add("ok_" + std::string(k), sanitize(v));
                                       }
                                   }
                               } else {
-                                  std::cout << RED << "  not found (OK.ru requires app token)\n" << RESET;
+                                  std::cout << BLOOD_RED << "  not found (OK.ru requires app token)\n" << RESET;
                               }
                           }
 
@@ -1107,7 +1109,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                       auto tg1 = safe_curl(tg_url, 8);
                                       if (!tg1.empty() && tg1.find("tgme_page") != std::string::npos &&
                                           tg1.find("not found") == std::string::npos) {
-                                          std::cout << RED << "  [CONFIRMED] " << WHITE << "t.me/" << e164 << "\n" << RESET;
+                                          std::cout << BLOOD_RED << "  [CONFIRMED] " << WHITE << "t.me/" << e164 << "\n" << RESET;
                                       prof.add("telegram_phone", "t.me/" + e164);
 
                                       for (auto& mk : {"tgme_page_title\">","og:title\" content=\"","<title>"}) {
@@ -1118,7 +1120,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                               if (end != std::string::npos) {
                                                   std::string name = sanitize(tg1.substr(pos, end-pos));
                                                   if (!name.empty() && name.find("Telegram") == std::string::npos) {
-                                                      std::cout << RED << "  [+] display name: " << WHITE << name << "\n" << RESET;
+                                                      std::cout << BLOOD_RED << "  [+] display name: " << WHITE << name << "\n" << RESET;
                                                       prof.add("telegram_name", name);
                                                       break;
                                                   }
@@ -1134,14 +1136,14 @@ static double bayes_score(bool ok, bool dead_absent,
                                               if (end != std::string::npos) {
                                                   std::string photo_url = sanitize(tg1.substr(src, end-src));
                                                   if (!photo_url.empty()) {
-                                                      std::cout << RED << "  [+] profile photo: " << WHITE << photo_url << "\n" << RESET;
+                                                      std::cout << BLOOD_RED << "  [+] profile photo: " << WHITE << photo_url << "\n" << RESET;
                                                       prof.add("telegram_photo", photo_url);
                                                   }
                                               }
                                           }
                                       }
                                           } else {
-                                              std::cout << RED << "  [-] no Telegram profile at t.me/" << WHITE << e164 << "\n" << RESET;
+                                              std::cout << BLOOD_RED << "  [-] no Telegram profile at t.me/" << WHITE << e164 << "\n" << RESET;
                                           }
                                   }
                               }
@@ -1151,12 +1153,12 @@ static double bayes_score(bool ok, bool dead_absent,
                                       auto tg2 = safe_curl(tg2_url, 8);
                                       if (!tg2.empty() && tg2.find("tgme_page") != std::string::npos &&
                                           tg2.find("not found") == std::string::npos) {
-                                          std::cout << RED << "  [CONFIRMED] " << WHITE << "t.me/+" << without_plus << "\n" << RESET;
+                                          std::cout << BLOOD_RED << "  [CONFIRMED] " << WHITE << "t.me/+" << without_plus << "\n" << RESET;
                                       prof.add("telegram_plus", "t.me/+" + without_plus);
                                           }
                                   }
                               }
-                              std::cout << RED << "  [-] WhatsApp / Signal / Viber: no public lookup API\n" << RESET;
+                              std::cout << BLOOD_RED << "  [-] WhatsApp / Signal / Viber: no public lookup API\n" << RESET;
                           }
 
                           static void lookup_public_phonebooks(const std::string& /*e164*/,
@@ -1189,7 +1191,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                           if (end != std::string::npos && end > pos) {
                                               std::string val = sanitize(body.substr(pos, end-pos));
                                               if (!val.empty() && val.size() > 2) {
-                                                  std::cout << RED << "  [+] " << WHITE << name << RED << ": " << WHITE << val << "\n" << RESET;
+                                                  std::cout << BLOOD_RED << "  [+] " << WHITE << name << BLOOD_RED << ": " << WHITE << val << "\n" << RESET;
                                                   prof.add("phonebook_" + name, val);
                                                   break;
                                               }
@@ -1210,7 +1212,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                   shown++;
                                               }
                                           }
-                                          if (!shown) std::cout << RED << "  no public web mentions\n" << RESET;
+                                          if (!shown) std::cout << BLOOD_RED << "  no public web mentions\n" << RESET;
                                       }
                                   }
                               }
@@ -1234,14 +1236,14 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                        if (end != std::string::npos) {
                                                                                            std::string phone = sanitize(grav.substr(val_pos, end-val_pos));
                                                                                            if (!phone.empty()) {
-                                                                                               std::cout << RED << "  [+] Gravatar phone: " << WHITE << phone << "\n" << RESET;
+                                                                                               std::cout << BLOOD_RED << "  [+] Gravatar phone: " << WHITE << phone << "\n" << RESET;
                                                                                                prof.add("gravatar_phone", phone);
                                                                                            }
                                                                                        }
                                                                                    }
                                                                                }
                                                                            } else {
-                                                                               std::cout << RED << "  Gravatar: no phone in public profile\n" << RESET;
+                                                                               std::cout << BLOOD_RED << "  Gravatar: no phone in public profile\n" << RESET;
                                                                            }
                                                                        }
                                                                    }
@@ -1251,17 +1253,17 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                        if (InputGuard::is_safe_url(vk_url)) {
                                                                            auto vk = safe_curl(vk_url, 8);
                                                                            if (!vk.empty() && vk.find("\"id\"") != std::string::npos) {
-                                                                               std::cout << RED << "  [+] VK: email found in profile\n" << RESET;
+                                                                               std::cout << BLOOD_RED << "  [+] VK: email found in profile\n" << RESET;
                                                                                for (auto& k : {"first_name","last_name","mobile_phone","home_phone","domain"}) {
                                                                                    auto v = json_val(vk, k);
                                                                                    if (!v.empty() && v != "null") {
-                                                                                       std::cout << RED << "  [" << WHITE << std::left << std::setw(14) << k << RED << "] "
+                                                                                       std::cout << BLOOD_RED << "  [" << WHITE << std::left << std::setw(14) << k << BLOOD_RED << "] "
                                                                                        << WHITE << sanitize(v) << "\n" << RESET;
                                                                                        prof.add("vk_" + std::string(k), sanitize(v));
                                                                                    }
                                                                                }
                                                                            } else {
-                                                                               std::cout << RED << "  VK: email not found in public profiles\n" << RESET;
+                                                                               std::cout << BLOOD_RED << "  VK: email not found in public profiles\n" << RESET;
                                                                            }
                                                                        }
                                                                    }
@@ -1271,14 +1273,14 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                        if (InputGuard::is_safe_url(gh_url)) {
                                                                            auto hub = safe_curl(gh_url, 8);
                                                                            if (!hub.empty() && hub.find("\"login\"") != std::string::npos) {
-                                                                               std::cout << RED << "  [+] GitHub: profile linked to this email\n" << RESET;
+                                                                               std::cout << BLOOD_RED << "  [+] GitHub: profile linked to this email\n" << RESET;
                                                                                size_t p = 0; int cnt = 0;
                                                                                while ((p = hub.find("\"login\":\"", p)) != std::string::npos && cnt < 3) {
                                                                                    p += 9;
                                                                                    auto end = hub.find('"', p);
                                                                                    if (end != std::string::npos) {
                                                                                        std::string login = sanitize(hub.substr(p, end-p));
-                                                                                       std::cout << RED << "  [github] " << WHITE << "github.com/" << login << "\n" << RESET;
+                                                                                       std::cout << BLOOD_RED << "  [github] " << WHITE << "github.com/" << login << "\n" << RESET;
                                                                                        prof.add("github_account", "github.com/" + login);
                                                                                        cnt++;
                                                                                    }
@@ -1298,7 +1300,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                    if (end != std::string::npos) {
                                                                                        std::string chunk = sanitize(li.substr(pos, end-pos));
                                                                                        if (!chunk.empty())
-                                                                                           std::cout << RED << "  [+] LinkedIn match found\n" << RESET;
+                                                                                           std::cout << BLOOD_RED << "  [+] LinkedIn match found\n" << RESET;
                                                                                    }
                                                                                }
                                                                            }
@@ -1311,40 +1313,40 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                             const std::string& seed) {
                                                                                                                 print_section("CORRELATED IDENTITY PROFILE");
 
-                                                                                                                std::cout << RED << "  [seed]       " << WHITE << seed << "\n\n" << RESET;
+                                                                                                                std::cout << BLOOD_RED << "  [seed]       " << WHITE << seed << "\n\n" << RESET;
 
                                                                                                                 if (!prof.names.empty()) {
-                                                                                                                    std::cout << RED << BOLD << "  NAMES FOUND:\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << BOLD << "  NAMES FOUND:\n" << RESET;
                                                                                                                     for (auto& n : prof.names)
-                                                                                                                        std::cout << RED << "  [+] " << WHITE << n << "\n" << RESET;
+                                                                                                                        std::cout << BLOOD_RED << "  [+] " << WHITE << n << "\n" << RESET;
                                                                                                                     std::cout << "\n";
                                                                                                                 }
 
                                                                                                                 if (!prof.phones.empty()) {
-                                                                                                                    std::cout << RED << BOLD << "  PHONE NUMBERS:\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << BOLD << "  PHONE NUMBERS:\n" << RESET;
                                                                                                                     for (auto& p : prof.phones)
-                                                                                                                        std::cout << RED << "  [+] " << WHITE << p << "\n" << RESET;
+                                                                                                                        std::cout << BLOOD_RED << "  [+] " << WHITE << p << "\n" << RESET;
                                                                                                                     std::cout << "\n";
                                                                                                                 }
 
                                                                                                                 if (!prof.emails.empty()) {
-                                                                                                                    std::cout << RED << BOLD << "  EMAIL ADDRESSES:\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << BOLD << "  EMAIL ADDRESSES:\n" << RESET;
                                                                                                                     for (auto& e : prof.emails)
-                                                                                                                        std::cout << RED << "  [+] " << WHITE << e << "\n" << RESET;
+                                                                                                                        std::cout << BLOOD_RED << "  [+] " << WHITE << e << "\n" << RESET;
                                                                                                                     std::cout << "\n";
                                                                                                                 }
 
                                                                                                                 if (!prof.locations.empty()) {
-                                                                                                                    std::cout << RED << BOLD << "  LOCATIONS:\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << BOLD << "  LOCATIONS:\n" << RESET;
                                                                                                                     for (auto& l : prof.locations)
-                                                                                                                        std::cout << RED << "  [+] " << WHITE << l << "\n" << RESET;
+                                                                                                                        std::cout << BLOOD_RED << "  [+] " << WHITE << l << "\n" << RESET;
                                                                                                                     std::cout << "\n";
                                                                                                                 }
 
                                                                                                                 if (!prof.accounts.empty()) {
-                                                                                                                    std::cout << RED << BOLD << "  LINKED ACCOUNTS:\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << BOLD << "  LINKED ACCOUNTS:\n" << RESET;
                                                                                                                     for (auto& a : prof.accounts)
-                                                                                                                        std::cout << RED << "  [+] " << WHITE << a << "\n" << RESET;
+                                                                                                                        std::cout << BLOOD_RED << "  [+] " << WHITE << a << "\n" << RESET;
                                                                                                                     std::cout << "\n";
                                                                                                                 }
 
@@ -1360,25 +1362,25 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                 if (!prof.locations.empty()) completeness += 0.15;
                                                                                                                 if (confirmed > 0)           completeness += 0.15;
 
-                                                                                                                std::cout << RED << "  [completeness] " << WHITE
+                                                                                                                std::cout << BLOOD_RED << "  [completeness] " << WHITE
                                                                                                                 << std::fixed << std::setprecision(0) << (completeness*100) << "%  "
                                                                                                                 << conf_bar(completeness) << "\n" << RESET;
-                                                                                                                std::cout << RED << "  [confirmed]    " << WHITE << confirmed << RED << " accounts\n" << RESET;
-                                                                                                                std::cout << RED << "  [probable]     " << WHITE << probable  << RED << " accounts\n" << RESET;
-                                                                                                                std::cout << RED << "  [data_points]  " << WHITE << prof.raw.size() << "\n" << RESET;
+                                                                                                                std::cout << BLOOD_RED << "  [confirmed]    " << WHITE << confirmed << BLOOD_RED << " accounts\n" << RESET;
+                                                                                                                std::cout << BLOOD_RED << "  [probable]     " << WHITE << probable  << BLOOD_RED << " accounts\n" << RESET;
+                                                                                                                std::cout << BLOOD_RED << "  [data_points]  " << WHITE << prof.raw.size() << "\n" << RESET;
 
                                                                                                                 if (!prof.names.empty() && !prof.locations.empty())
-                                                                                                                    std::cout << RED << "\n  [IDENTITY] " << WHITE
-                                                                                                                    << prof.names[0] << RED << " -- " << WHITE << prof.locations[0] << "\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << "\n  [IDENTITY] " << WHITE
+                                                                                                                    << prof.names[0] << BLOOD_RED << " -- " << WHITE << prof.locations[0] << "\n" << RESET;
                                                                                                                 else if (!prof.names.empty())
-                                                                                                                    std::cout << RED << "\n  [IDENTITY] " << WHITE << prof.names[0] << "\n" << RESET;
+                                                                                                                    std::cout << BLOOD_RED << "\n  [IDENTITY] " << WHITE << prof.names[0] << "\n" << RESET;
                                                                                                                                             }
 
                                                                                                                                             static void run_phone(const std::string& phone_raw, IdentityGraph& graph) {
                                                                                                                                                 std::string phone;
                                                                                                                                                 for (char c : phone_raw) if (std::isdigit(c) || c=='+') phone += c;
                                                                                                                                                 if (!InputGuard::is_valid_phone(phone)) {
-                                                                                                                                                    std::cout << RED << "  [!] invalid phone\n" << RESET; return;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [!] invalid phone\n" << RESET; return;
                                                                                                                                                 }
                                                                                                                                                 std::string e164 = (phone[0] != '+') ? "+" + phone : phone;
                                                                                                                                                 std::string raw_digits;
@@ -1388,20 +1390,20 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                 ensure_tools_phone();
 
                                                                                                                                                 print_section("PHONE PROFILE");
-                                                                                                                                                std::cout << RED << "  " << WHITE << e164 << "\n\n" << RESET;
+                                                                                                                                                std::cout << BLOOD_RED << "  " << WHITE << e164 << "\n\n" << RESET;
 
                                                                                                                                                 const CountryInfo* cc = nullptr;
                                                                                                                                                 for (auto& c : COUNTRY_DB) if (e164.find(c.code)==0) { cc=&c; break; }
 
                                                                                                                                                 if (cc) {
-                                                                                                                                                    std::cout << RED << "  [country]    " << WHITE << cc->country << "\n" << RESET;
-                                                                                                                                                    std::cout << RED << "  [region]     " << WHITE << cc->region  << "\n" << RESET;
-                                                                                                                                                    std::cout << RED << "  [language]   " << WHITE << cc->lang    << "\n" << RESET;
-                                                                                                                                                    std::cout << RED << "  [code]       " << WHITE << cc->code    << "\n" << RESET;
-                                                                                                                                                    std::cout << RED << "  [carriers]   " << WHITE;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [country]    " << WHITE << cc->country << "\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [region]     " << WHITE << cc->region  << "\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [language]   " << WHITE << cc->lang    << "\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [code]       " << WHITE << cc->code    << "\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [carriers]   " << WHITE;
                                                                                                                                                     for (size_t i = 0; i < cc->carriers.size(); i++) {
                                                                                                                                                         std::cout << cc->carriers[i];
-                                                                                                                                                        if (i+1 < cc->carriers.size()) std::cout << RED << ", " << WHITE;
+                                                                                                                                                        if (i+1 < cc->carriers.size()) std::cout << BLOOD_RED << ", " << WHITE;
                                                                                                                                                     }
                                                                                                                                                     std::cout << "\n" << RESET;
                                                                                                                                                     graph.profile.add("country", cc->country);
@@ -1413,25 +1415,25 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                             std::string prefix = ln.substr(1,3);
                                                                                                                                                             auto it = RU_OPERATORS.find(prefix);
                                                                                                                                                             if (it != RU_OPERATORS.end()) {
-                                                                                                                                                                std::cout << RED << "  [operator]   " << WHITE << it->second.op
-                                                                                                                                                                << RED << " (prefix " << WHITE << prefix << RED << ")\n" << RESET;
-                                                                                                                                                                std::cout << RED << "  [reg_region] " << WHITE << it->second.region << "\n" << RESET;
+                                                                                                                                                                std::cout << BLOOD_RED << "  [operator]   " << WHITE << it->second.op
+                                                                                                                                                                << BLOOD_RED << " (prefix " << WHITE << prefix << BLOOD_RED << ")\n" << RESET;
+                                                                                                                                                                std::cout << BLOOD_RED << "  [reg_region] " << WHITE << it->second.region << "\n" << RESET;
                                                                                                                                                                 graph.profile.add("operator", it->second.op);
                                                                                                                                                                 graph.profile.add("registration_region", it->second.region);
                                                                                                                                                             } else {
-                                                                                                                                                                std::cout << RED << "  [operator]   " << WHITE << "unknown prefix " << prefix << "\n" << RESET;
+                                                                                                                                                                std::cout << BLOOD_RED << "  [operator]   " << WHITE << "unknown prefix " << prefix << "\n" << RESET;
                                                                                                                                                             }
 
                                                                                                                                                             auto ci = RU_CITY_CODES.find(prefix);
                                                                                                                                                             if (ci != RU_CITY_CODES.end()) {
-                                                                                                                                                                std::cout << RED << "  [city_hint]  " << WHITE << ci->second << "\n" << RESET;
+                                                                                                                                                                std::cout << BLOOD_RED << "  [city_hint]  " << WHITE << ci->second << "\n" << RESET;
                                                                                                                                                                 graph.profile.add("city_hint", ci->second);
                                                                                                                                                             }
                                                                                                                                                             for (int len : {4, 3}) {
                                                                                                                                                                 std::string long_pfx = ln.substr(1, len);
                                                                                                                                                                 auto lci = RU_CITY_CODES.find(long_pfx);
                                                                                                                                                                 if (lci != RU_CITY_CODES.end()) {
-                                                                                                                                                                    std::cout << RED << "  [city_exact] " << WHITE << lci->second << "\n" << RESET;
+                                                                                                                                                                    std::cout << BLOOD_RED << "  [city_exact] " << WHITE << lci->second << "\n" << RESET;
                                                                                                                                                                     graph.profile.add("city_exact", lci->second);
                                                                                                                                                                     break;
                                                                                                                                                                 }
@@ -1439,7 +1441,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                         }
                                                                                                                                                     }
                                                                                                                                                 } else {
-                                                                                                                                                    std::cout << RED << "  [country]    unknown code\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [country]    unknown code\n" << RESET;
                                                                                                                                                 }
 
                                                                                                                                                 print_section("LINE TYPE & CARRIER LOOKUP");
@@ -1451,7 +1453,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                             for (auto& k : {"valid","country_code","location","carrier","line_type","number_type"}) {
                                                                                                                                                                 auto v = json_val(nl, k);
                                                                                                                                                                 if (!v.empty() && v != "null") {
-                                                                                                                                                                    std::cout << RED << "  [" << WHITE << std::left << std::setw(14) << k << RED << "] "
+                                                                                                                                                                    std::cout << BLOOD_RED << "  [" << WHITE << std::left << std::setw(14) << k << BLOOD_RED << "] "
                                                                                                                                                                     << WHITE << sanitize(v) << "\n" << RESET;
                                                                                                                                                                     graph.profile.add(k, sanitize(v));
                                                                                                                                                                 }
@@ -1465,15 +1467,15 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                                     auto carrier = json_val(tw, "name");
                                                                                                                                                                     auto type    = json_val(tw, "type");
                                                                                                                                                                     if (!carrier.empty()) {
-                                                                                                                                                                        std::cout << RED << "  [carrier]    " << WHITE << sanitize(carrier) << "\n" << RESET;
+                                                                                                                                                                        std::cout << BLOOD_RED << "  [carrier]    " << WHITE << sanitize(carrier) << "\n" << RESET;
                                                                                                                                                                         graph.profile.add("carrier", sanitize(carrier));
                                                                                                                                                                     }
                                                                                                                                                                     if (!type.empty()) {
-                                                                                                                                                                        std::cout << RED << "  [line_type]  " << WHITE << sanitize(type) << "\n" << RESET;
+                                                                                                                                                                        std::cout << BLOOD_RED << "  [line_type]  " << WHITE << sanitize(type) << "\n" << RESET;
                                                                                                                                                                         graph.profile.add("line_type", sanitize(type));
                                                                                                                                                                     }
                                                                                                                                                                 } else {
-                                                                                                                                                                    std::cout << RED << "  carrier API unavailable (no key)\n" << RESET;
+                                                                                                                                                                    std::cout << BLOOD_RED << "  carrier API unavailable (no key)\n" << RESET;
                                                                                                                                                                 }
                                                                                                                                                             }
                                                                                                                                                         }
@@ -1488,23 +1490,23 @@ static double bayes_score(bool ok, bool dead_absent,
 
                                                                                                                                                 print_section("BEHAVIORAL PROFILE");
                                                                                                                                                 if (cc) {
-                                                                                                                                                    std::cout << RED << "  [messenger_note] " << WHITE << cc->messenger_note << "\n\n" << RESET;
-                                                                                                                                                    std::cout << RED << "  dominant platforms in " << WHITE << cc->country << RED << ":\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [messenger_note] " << WHITE << cc->messenger_note << "\n\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  dominant platforms in " << WHITE << cc->country << BLOOD_RED << ":\n" << RESET;
                                                                                                                                                     for (auto& p : cc->platforms)
-                                                                                                                                                        std::cout << RED << "    -> " << WHITE << p << "\n" << RESET;
+                                                                                                                                                        std::cout << BLOOD_RED << "    -> " << WHITE << p << "\n" << RESET;
                                                                                                                                                 }
 
                                                                                                                                                 print_section("EXTERNAL TOOLS");
                                                                                                                                                 ToolResult pif = run_phoneinfoga(e164);
                                                                                                                                                 if (pif.installed) {
-                                                                                                                                                    std::cout << RED << "  [+] " << WHITE << "phoneinfoga: found " << pif.hits.size() << " results\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [+] " << WHITE << "phoneinfoga: found " << pif.hits.size() << " results\n" << RESET;
                                                                                                                                                     for (auto& h : pif.hits)
                                                                                                                                                         if (!h.info.empty()) {
                                                                                                                                                             std::cout << WHITE << "  " << h.info << RESET << "\n";
                                                                                                                                                             graph.profile.add("phoneinfoga", h.info);
                                                                                                                                                         }
                                                                                                                                                 } else {
-                                                                                                                                                    std::cout << RED << "  [-] phoneinfoga: not installed\n"
+                                                                                                                                                    std::cout << BLOOD_RED << "  [-] phoneinfoga: not installed\n"
                                                                                                                                                     << WHITE   << "      install: go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest\n"
                                                                                                                                                     << RESET;
                                                                                                                                                 }
@@ -1526,10 +1528,10 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                     { fraud += 0.15; flags.push_back("unknown RU operator prefix: "+raw_digits.substr(1,3)); }
                                                                                                                                                 }
                                                                                                                                                 fraud = std::min(fraud, 0.95);
-                                                                                                                                                std::cout << RED << "  [fraud_score] " << WHITE
+                                                                                                                                                std::cout << BLOOD_RED << "  [fraud_score] " << WHITE
                                                                                                                                                 << std::fixed << std::setprecision(0) << (fraud*100) << "%  " << conf_bar(fraud) << "\n" << RESET;
-                                                                                                                                                for (auto& f : flags) std::cout << RED << "  [!] " << WHITE << f << "\n" << RESET;
-                                                                                                                                                if (flags.empty()) std::cout << RED << "  [ok] no suspicious patterns\n" << RESET;
+                                                                                                                                                for (auto& f : flags) std::cout << BLOOD_RED << "  [!] " << WHITE << f << "\n" << RESET;
+                                                                                                                                                if (flags.empty()) std::cout << BLOOD_RED << "  [ok] no suspicious patterns\n" << RESET;
 
                                                                                                                                                 print_section("PHONE FORMATS");
                                                                                                                                                 std::vector<std::string> fmts = {e164, raw_digits};
@@ -1562,7 +1564,7 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                 }
 
                                                                                                                                                 print_header("OSINT // " + type_str + " // " + input);
-                                                                                                                                                std::cout << RED << "  [auto-detected] " << WHITE << type_str << "\n" << RESET;
+                                                                                                                                                std::cout << BLOOD_RED << "  [auto-detected] " << WHITE << type_str << "\n" << RESET;
 
                                                                                                                                                 IdentityGraph graph;
                                                                                                                                                 graph.seed      = input;
@@ -1573,25 +1575,25 @@ static double bayes_score(bool ok, bool dead_absent,
                                                                                                                                                     case OsintInputType::EMAIL:    run_email(input, graph);    break;
                                                                                                                                                     case OsintInputType::PHONE:    run_phone(input, graph);    break;
                                                                                                                                                     default:
-                                                                                                                                                        std::cout << RED << "  [!] cannot determine input type\n" << RESET; return;
+                                                                                                                                                        std::cout << BLOOD_RED << "  [!] cannot determine input type\n" << RESET; return;
                                                                                                                                                 }
 
                                                                                                                                                 if (!graph.hits.empty() || !graph.username_candidates.empty()) {
                                                                                                                                                     print_section("IDENTITY GRAPH SUMMARY");
-                                                                                                                                                    std::cout << RED << "  [seed]    " << WHITE << input << RED << "  [" << WHITE << type_str << RED << "]\n" << RESET;
+                                                                                                                                                    std::cout << BLOOD_RED << "  [seed]    " << WHITE << input << BLOOD_RED << "  [" << WHITE << type_str << BLOOD_RED << "]\n" << RESET;
                                                                                                                                                     if (!graph.username_candidates.empty()) {
-                                                                                                                                                        std::cout << RED << "  [usernames] " << WHITE;
+                                                                                                                                                        std::cout << BLOOD_RED << "  [usernames] " << WHITE;
                                                                                                                                                         for (auto& u : graph.username_candidates) std::cout << u << "  ";
                                                                                                                                                         std::cout << "\n" << RESET;
                                                                                                                                                     }
                                                                                                                                                     if (!graph.email_candidates.empty()) {
-                                                                                                                                                        std::cout << RED << "  [emails]    " << WHITE;
+                                                                                                                                                        std::cout << BLOOD_RED << "  [emails]    " << WHITE;
                                                                                                                                                         for (size_t i = 0; i < std::min(graph.email_candidates.size(),(size_t)4); i++)
                                                                                                                                                             std::cout << graph.email_candidates[i] << "  ";
                                                                                                                                                         std::cout << "\n" << RESET;
                                                                                                                                                     }
                                                                                                                                                     if (!graph.phone_candidates.empty()) {
-                                                                                                                                                        std::cout << RED << "  [phones]    " << WHITE;
+                                                                                                                                                        std::cout << BLOOD_RED << "  [phones]    " << WHITE;
                                                                                                                                                         for (auto& p : graph.phone_candidates) std::cout << p << "  ";
                                                                                                                                                         std::cout << "\n" << RESET;
                                                                                                                                                     }
