@@ -3,10 +3,6 @@
 
 static std::atomic<uint16_t> g_probe_counter{1};
 
-struct CancellationToken {
-    std::atomic<bool> cancelled{false};
-};
-
 class TracerouteEngine {
 public:
     explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool, CancellationToken& cancel_token)
@@ -265,7 +261,7 @@ public:
                               (struct sockaddr*)&dest, sizeof(dest));
         if (sent <= 0) { close(sock_send); close(sock_recv); return pr; }
 
-        char buf[1500];
+        char buf[1500]; // MTU size to avoid truncation
         struct sockaddr_in from{};
         socklen_t fromlen = sizeof(from);
 
@@ -385,6 +381,12 @@ public:
         tcph->check = 0;
         tcph->urg_ptr = 0;
 
+        // Pseudo header for TCP checksum (simplified, assumes kernel fills some IP data if IP_HDRINCL allows)
+        // Without knowing our own IP reliably, IP_HDRINCL on TCP requires manual checksumming.
+        // We will fallback if raw TCP injection fails.
+        // For accurate RAW TCP we need to populate IP source address, which is complex in this context.
+        // Standard traceroute tools actually use SOCK_RAW with IPPROTO_TCP but *don't* set IP_HDRINCL, letting the kernel build the IP header. Let's do that!
+
         close(sock_send);
 
         // Re-open without IP_HDRINCL
@@ -406,6 +408,8 @@ public:
         tcph_only.syn = 1;
         tcph_only.window = htons(5840);
         tcph_only.check = 0;
+
+        // Retrieve local IP bound to the destination to compute checksum
         struct sockaddr_in local_addr{};
         socklen_t local_len = sizeof(local_addr);
         int dgram_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -495,6 +499,7 @@ public:
             }
 
             if (pfds[1].revents & (POLLIN | POLLERR)) {
+                // If the raw TCP socket becomes readable, it means we might have received a SYN-ACK or RST.
                 ssize_t n = recvfrom(sock_send, buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
                 if (n > 0) {
                     struct iphdr* ip_hdr = (struct iphdr*)buf;
@@ -752,19 +757,19 @@ static const char* proto_label(TraceConfig::Protocol p) {
     return "?";
 }
 
-static CancellationToken* g_cancel_token = nullptr;
+static CancellationToken* g_cancel_token_ptr = nullptr;
 
 void traceroute(const std::string& target) {
     print_header("ADVANCED TRACEROUTE // " + target);
 
     CancellationToken token;
-    g_cancel_token = &token;
+    g_cancel_token_ptr = &token;
 
     struct sigaction sa, old_sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = [](int) {
-        if (g_cancel_token) {
-            g_cancel_token->cancelled = true;
+        if (g_cancel_token_ptr) {
+            g_cancel_token_ptr->cancelled = true;
             const char* msg = "\n\033[38;2;139;0;0m  [!] Received SIGINT, cancelling traceroute...\033[0m\n";
             auto dummy = ::write(STDOUT_FILENO, msg, strlen(msg));
             (void)dummy;
@@ -971,7 +976,7 @@ void traceroute(const std::string& target) {
     LOG_INFO("traceroute", "done target=" + target + " hops=" + std::to_string(hops.size()));
 
     sigaction(SIGINT, &old_sa, nullptr);
-    g_cancel_token = nullptr;
+    g_cancel_token_ptr = nullptr;
 }
 
 void full_recon(const std::string& ip) {

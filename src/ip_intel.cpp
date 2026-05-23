@@ -88,6 +88,7 @@ void ip_intel(const std::string& ip) {
     for(char ch:ip){if(ch=='.'){pts[pi++]=tmp;tmp="";}else tmp+=ch;} pts[pi]=tmp;
     std::string rev=pts[3]+"."+pts[2]+"."+pts[1]+"."+pts[0];
     for(auto& bl:lists){
+        if (g_cancel_token.cancelled) break;
         std::string hit=resolve(rev+"."+bl);
         std::cout<<BLOOD_RED<<"  ["<<std::left<<std::setw(28)<<bl<<"] "<<WHITE<<(hit.empty()?"clean":"LISTED")<<RESET<<"\n";
     }
@@ -97,6 +98,7 @@ void ip_intel(const std::string& ip) {
     std::cout<<BLOOD_RED<<BOLD<<"  PORT        SERVICE         RISK      BANNER\n  "<<std::string(65,'-')<<"\n"<<RESET;
     bool any=false;
     for(int p:top){
+        if (g_cancel_token.cancelled) break;
         if (!tcp_probe(ip, p, 600)) continue;
         any = true;
         std::string b=banner(ip,p), s=svc(p);
@@ -105,7 +107,7 @@ void ip_intel(const std::string& ip) {
     }
     if(!any) std::cout<<BLOOD_RED<<"  top ports closed\n"<<RESET;
 
-    if(tcp_probe(ip,443,500)){
+    if(!g_cancel_token.cancelled && tcp_probe(ip,443,500)){
         print_section("SSL CERTIFICATE");
         auto cert = safe_exec({"sh","-c",
             "echo Q | openssl s_client -connect " +

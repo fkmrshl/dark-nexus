@@ -921,6 +921,7 @@ void subdomain_scan(const std::string& domain,
     };
 
     for (int bs = 0; bs < total_hosts; bs += DNS_BATCH) {
+        if (g_cancel_token.cancelled) break;
         int be = std::min(bs+DNS_BATCH, total_hosts);
         std::vector<std::string> batch(all_subs.begin()+bs, all_subs.begin()+be);
 

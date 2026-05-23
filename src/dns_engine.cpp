@@ -300,6 +300,7 @@ DnsEngine::run_ares_batch(const std::vector<std::string>& hosts,
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(deadline_s);
 
         while (true) {
+            if (g_cancel_token.cancelled) { break; }
             if (std::chrono::steady_clock::now() > deadline) { break; }
 
             while (pending.load(std::memory_order_acquire) < concurrency) {
@@ -377,6 +378,7 @@ doh_batch(const std::vector<std::string>& hosts, int max_slots)
 
     auto worker = [&]() {
         while (true) {
+            if (g_cancel_token.cancelled) { break; }
             int idx = next.fetch_add(1, std::memory_order_relaxed);
             if (idx >= total) { break; }
             auto ips = doh_resolve_single(hosts[idx]);

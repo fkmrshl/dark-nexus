@@ -514,7 +514,9 @@ static double bayes_score(bool ok, bool dead_absent,
                               futs.reserve(total);
 
                               for (auto& s : SITES) {
+                                  if (g_cancel_token.cancelled) break;
                                   futs.push_back(pool.submit([&, s] {
+                                      if (g_cancel_token.cancelled) { ++done_c; return; }
                                       std::string url  = fill(s.url, username);
                                       if (!InputGuard::is_safe_url(url)) { ++done_c; return; }
                                       std::string body = safe_curl(url, 7);
