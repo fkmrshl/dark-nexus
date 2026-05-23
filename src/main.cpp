@@ -26,17 +26,17 @@ static void print_menu() {
     auto row=[&](const std::string& n,const std::string& m,const std::string& e){
         std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<std::left<<std::setw(4)<<n<<BLOOD_RED<<" | "<<BLOOD_RED<<std::setw(18)<<m<<BLOOD_RED<<" | "<<WHITE<<std::setw(34)<<e<<BLOOD_RED<<" |\n"<<RESET;
     };
-    row(" [1]","PORT SCAN",      "192.168.1.1   0=top1000 (add U for UDP)");
-    row(" [2]","NETWORK SCAN",   "192.168.1.1");
-    row(" [3]","OS DETECTION",   "192.168.1.1");
-    row(" [4]","IP FULL INTEL",  "8.8.8.8");
-    row(" [5]","DNS LOOKUP",     "google.com");
-    row(" [6]","WHOIS LOOKUP",   "google.com / 8.8.8.8");
-    row(" [7]","SITE --> IP",    "https://google.com");
-    row(" [8]","OSINT",          "user / user@mail.com / +7900...");
-    row(" [9]","TRACEROUTE",     "8.8.8.8");
+    row(" [1]","SUBDOMAIN SCAN", "google.com");
+    row(" [2]","OSINT",          "user / user@mail.com / +7900...");
+    row(" [3]","PORT SCAN",      "192.168.1.1   0=top1000 (add U for UDP)");
+    row(" [4]","TRACEROUTE",     "8.8.8.8");
+    row(" [5]","OS DETECTION",   "192.168.1.1");
+    row(" [6]","NETWORK SCAN",   "192.168.1.1");
+    row(" [7]","DNS LOOKUP",     "google.com");
+    row(" [8]","WHOIS LOOKUP",   "google.com / 8.8.8.8");
+    row(" [9]","IP FULL INTEL",  "8.8.8.8");
     row("[10]","FULL IP RECON",  "8.8.8.8");
-    row("[11]","SUBDOMAIN SCAN", "google.com");
+    row("[11]","SITE --> IP",    "https://google.com");
     row("[12]","EXPORT JSON",    "save last scan");
     row(" [0]","EXIT",           "");
     sep();
@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
             print_banner(); continue;
         }
 
-        if(choice==8){
+        if(choice==2){
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
             std::string u;
             std::cout<<WHITE<<"\n  osint target "<<RESET<<WHITE<<"(username / email / +phone): "<<RESET;
@@ -204,10 +204,10 @@ int main(int argc, char** argv) {
             while(!u.empty()&&(u.back()==' '||u.back()=='\t'))   u.pop_back();
             if(u.empty()){std::cout<<BLOOD_RED<<"  empty input\n"<<RESET;}
             else osint_scan(u);
-        } else if(choice==7){
+        } else if(choice==11){
             std::string s; std::cout<<BLOOD_RED<<"\n  site: "<<RESET; std::cin>>s;
             site_lookup(s);
-        } else if(choice==11){
+        } else if(choice==1){
             std::string d;
             std::cout<<WHITE<<"\n  domain: "<<RESET; std::cin>>d;
             if(!valid_target(d)){
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
             else if(ip_res!=target) std::cout<<BLOOD_RED<<"  resolved: "<<target<<" -> "<<ip_res<<"\n"<<RESET;
 
             switch(choice){
-                case 1: {
+                case 3: {
                     std::string s_in;
                     std::cout<<BLOOD_RED<<"  start port (0=top1000) [add U for UDP, e.g. 0U]: "<<RESET; std::cin>>s_in;
                     bool udp = false;
@@ -274,12 +274,12 @@ int main(int argc, char** argv) {
                     }
                     break;
                 }
-                case 2:  net_scan(ip_res.substr(0,ip_res.rfind('.'))); break;
-                case 3:  os_detect(ip_res);    break;
-                case 4:  ip_intel(ip_res);     break;
-                case 5:  dns_lookup(ip_res);   break;
-                case 6:  whois_lookup(ip_res); break;
-                case 9:  traceroute(ip_res);   break;
+                case 6:  net_scan(ip_res.substr(0,ip_res.rfind('.'))); break;
+                case 5:  os_detect(ip_res);    break;
+                case 9:  ip_intel(ip_res);     break;
+                case 7:  dns_lookup(ip_res);   break;
+                case 8:  whois_lookup(ip_res); break;
+                case 4:  traceroute(ip_res);   break;
                 case 10: full_recon(ip_res);   break;
                 default: std::cout<<BLOOD_RED<<"  invalid option\n"<<RESET;
             }
