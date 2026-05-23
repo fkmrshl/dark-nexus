@@ -406,7 +406,6 @@ public:
         tcph_only.syn = 1;
         tcph_only.window = htons(5840);
         tcph_only.check = 0;
-ж
         struct sockaddr_in local_addr{};
         socklen_t local_len = sizeof(local_addr);
         int dgram_sock = socket(AF_INET, SOCK_DGRAM, 0);
