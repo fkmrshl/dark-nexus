@@ -265,7 +265,7 @@ public:
                               (struct sockaddr*)&dest, sizeof(dest));
         if (sent <= 0) { close(sock_send); close(sock_recv); return pr; }
 
-        char buf[1500]; // MTU size to avoid truncation
+        char buf[1500];
         struct sockaddr_in from{};
         socklen_t fromlen = sizeof(from);
 
@@ -385,12 +385,6 @@ public:
         tcph->check = 0;
         tcph->urg_ptr = 0;
 
-        // Pseudo header for TCP checksum (simplified, assumes kernel fills some IP data if IP_HDRINCL allows)
-        // Without knowing our own IP reliably, IP_HDRINCL on TCP requires manual checksumming.
-        // We will fallback if raw TCP injection fails.
-        // For accurate RAW TCP we need to populate IP source address, which is complex in this context.
-        // Standard traceroute tools actually use SOCK_RAW with IPPROTO_TCP but *don't* set IP_HDRINCL, letting the kernel build the IP header. Let's do that!
-
         close(sock_send);
 
         // Re-open without IP_HDRINCL
@@ -412,8 +406,7 @@ public:
         tcph_only.syn = 1;
         tcph_only.window = htons(5840);
         tcph_only.check = 0;
-
-        // Retrieve local IP bound to the destination to compute checksum
+ж
         struct sockaddr_in local_addr{};
         socklen_t local_len = sizeof(local_addr);
         int dgram_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -503,7 +496,6 @@ public:
             }
 
             if (pfds[1].revents & (POLLIN | POLLERR)) {
-                // If the raw TCP socket becomes readable, it means we might have received a SYN-ACK or RST.
                 ssize_t n = recvfrom(sock_send, buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
                 if (n > 0) {
                     struct iphdr* ip_hdr = (struct iphdr*)buf;
