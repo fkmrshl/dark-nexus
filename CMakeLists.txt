@@ -41,6 +41,8 @@ file(GLOB SOURCES "src/*.cpp")
 
 add_executable(dark_nexus ${SOURCES})
 
+target_compile_definitions(dark_nexus PRIVATE HAVE_OPENSSL)
+
 target_link_libraries(dark_nexus
     PRIVATE
     c-ares::cares_static
@@ -65,3 +67,8 @@ if(NOT EXISTS "${WORDLIST_FILE}")
         message(WARNING "Failed to download best-dns-wordlist.txt")
     endif()
 endif()
+
+add_custom_command(TARGET dark_nexus POST_BUILD
+    COMMAND sudo setcap cap_net_raw=eip $<TARGET_FILE:dark_nexus> || true
+    COMMENT "Applying cap_net_raw to executable"
+)

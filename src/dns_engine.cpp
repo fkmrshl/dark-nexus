@@ -300,6 +300,7 @@ DnsEngine::run_ares_batch(const std::vector<std::string>& hosts,
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(deadline_s);
 
         while (true) {
+            if (g_cancel_token.cancelled) { break; }
             if (std::chrono::steady_clock::now() > deadline) { break; }
 
             while (pending.load(std::memory_order_acquire) < concurrency) {
@@ -377,6 +378,7 @@ doh_batch(const std::vector<std::string>& hosts, int max_slots)
 
     auto worker = [&]() {
         while (true) {
+            if (g_cancel_token.cancelled) { break; }
             int idx = next.fetch_add(1, std::memory_order_relaxed);
             if (idx >= total) { break; }
             auto ips = doh_resolve_single(hosts[idx]);
@@ -519,12 +521,12 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrenc
         constexpr int DOH_CAP = 2000;
         if ((int)doh_queue.size() > DOH_CAP) {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << RED << "  [*] DoH cascade: " << doh_queue.size()
+            std::cout << BLOOD_RED << "  [*] DoH cascade: " << doh_queue.size()
                       << " hosts unresolved via c-ares (capped at " << DOH_CAP << ")...\n" << RESET;
             doh_queue.resize(DOH_CAP);
         } else {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << RED << "  [*] DoH cascade: " << doh_queue.size()
+            std::cout << BLOOD_RED << "  [*] DoH cascade: " << doh_queue.size()
                       << " hosts unresolved via c-ares, trying DoH...\n" << RESET;
         }
 
@@ -540,7 +542,7 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrenc
 
         if (doh_ok > 0) {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << RED << "  [+] DoH resolved: " << doh_ok << "/"
+            std::cout << BLOOD_RED << "  [+] DoH resolved: " << doh_ok << "/"
                       << doh_queue.size() << "\n" << RESET;
         }
     }

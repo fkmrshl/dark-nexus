@@ -49,6 +49,16 @@
 #include "traceroute.hpp"
 #include "thread_pool.hpp"
 
+struct FdGuard {
+    int fd;
+    explicit FdGuard(int f) : fd(f) {}
+    ~FdGuard() { if (fd >= 0) close(fd); }
+    FdGuard(const FdGuard&) = delete;
+    FdGuard& operator=(const FdGuard&) = delete;
+    int release() { int f = fd; fd = -1; return f; }
+    int get() const { return fd; }
+};
+
 struct ScanResult {
     std::string target, timestamp;
     std::vector<std::pair<int,std::string>> open_ports;
@@ -57,9 +67,14 @@ struct ScanResult {
     bool proxy = false, hosting = false;
 };
 
+struct CancellationToken {
+    std::atomic<bool> cancelled{false};
+};
+
 extern ScanResult   g_result;
 extern std::mutex   g_print_mtx;
 extern std::mutex g_result_mtx;
+extern CancellationToken g_cancel_token;
 
 std::string safe_exec(const std::vector<std::string>& args, int t = 8);
 std::string safe_curl(const std::string& url, int t = 8);

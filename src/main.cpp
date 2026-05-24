@@ -75,6 +75,24 @@ int main(int argc, char** argv) {
         std::cerr << "  [!] failed to drop privileges\n";
         return 1;
     }
+
+    static std::atomic<int> sigint_count{0};
+    static auto sigint_time = std::chrono::steady_clock::now();
+
+    signal(SIGINT, [](int) {
+        auto now = std::chrono::steady_clock::now();
+        if (sigint_count++ == 0) {
+            sigint_time = now;
+            g_cancel_token.cancelled = true;
+            const char* msg = "\n\033[38;2;139;0;0m  [!] Scan interrupted - partial results may follow.\033[0m\n";
+            auto dummy = ::write(STDOUT_FILENO, msg, strlen(msg));
+            (void)dummy;
+        } else {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - sigint_time).count();
+            if (elapsed < 2) std::exit(1);
+        }
+    });
+
     LOG_INFO("main","dark nexus started");
 
     if (argc > 1) {
@@ -212,8 +230,8 @@ int main(int argc, char** argv) {
                 std::cout<<"\n"<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  | "<<WHITE<<BOLD<<std::left<<std::setw(3)<<"MOD"<<RESET<<BLOOD_RED<<" | "<<WHITE<<BOLD<<std::left<<std::setw(50)<<"DESCRIPTION"<<BLOOD_RED<<" | "<<std::setw(8)<<"ETA"<<BLOOD_RED<<" |\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
-                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" F"<<RESET<<RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  — builtin 300 words + passive + enrich"<<BLOOD_RED<<" | "<<WHITE<<"~3 min  "<<RED<<" |\n"<<RESET;
-                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" D"<<RESET<<RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  — full wordlist + all sources + takeover scan"<<BLOOD_RED<<" | "<<WHITE<<"~1-2hr  "<<BLOOD_RED<<" |\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" F"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  — builtin 300 words + passive + enrich"<<BLOOD_RED<<" | "<<WHITE<<"~3 min  "<<BLOOD_RED<<" |\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" D"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  — full wordlist + all sources + takeover scan"<<BLOOD_RED<<" | "<<WHITE<<"~1-2hr  "<<BLOOD_RED<<" |\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
 
                 std::cout<<BLOOD_RED<<"  select mode [F/D]: "<<RESET;

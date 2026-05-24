@@ -101,8 +101,10 @@ std::string safe_exec(const std::vector<std::string>& args, int t) {
     return proc_run(args, t).out;
 }
 
+#include "../include/user_agents.hpp"
+
 std::string safe_curl(const std::string& url, int t) {
     if (!InputGuard::is_safe_url(url)) return "";
     return safe_exec({"curl","-s","--max-time",std::to_string(t),
-        "-L","-A","Mozilla/5.0","--",url}, t+2);
+        "-L","-A",random_ua(),"--",url}, t+2);
 }

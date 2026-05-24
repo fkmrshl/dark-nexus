@@ -1,6 +1,7 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/dns_engine.hpp"
 #include "../include/security.hpp"
+#include "../include/user_agents.hpp"
 
 bool valid_target(const std::string& s) {
     return InputGuard::is_valid_host(s);
@@ -152,10 +153,10 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
     switch (port) {
         case 80: case 8080: case 8888: case 8000: case 3000: case 9090:
             probe = "GET / HTTP/1.1\r\nHost: " + ip +
-            "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+            "\r\nUser-Agent: " + random_ua() + "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
             break;
         case 443: case 8443: case 9443:
-            probe = "GET / HTTP/1.0\r\nConnection: close\r\n\r\n";
+            probe = "GET / HTTP/1.0\r\nUser-Agent: " + random_ua() + "\r\nConnection: close\r\n\r\n";
             break;
         case 25: case 587:
             probe = "EHLO probe.local\r\n";
@@ -329,7 +330,7 @@ std::string analyze_http_headers(const std::string& ip, int port, int ms) {
     pfd.events = POLLOUT;
     if (poll(&pfd, 1, ms) <= 0) { close(fd); return ""; }
 
-    std::string req = "HEAD / HTTP/1.1\r\nHost: " + ip + "\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+    std::string req = "HEAD / HTTP/1.1\r\nHost: " + ip + "\r\nUser-Agent: " + random_ua() + "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
     send(fd, req.c_str(), req.size(), MSG_NOSIGNAL);
 
     pfd.events = POLLIN;

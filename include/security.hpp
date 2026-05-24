@@ -278,3 +278,15 @@ private:
     std::vector<char> buf_;
     size_t            used_;
 };
+
+#include <sys/capability.h>
+
+inline bool has_cap_net_raw() {
+    if (geteuid() == 0) return true;
+
+    struct __user_cap_header_struct hdr = {_LINUX_CAPABILITY_VERSION_3, 0};
+    struct __user_cap_data_struct data[2] = {};
+
+    if (capget(&hdr, data) < 0) return false;
+    return (data[0].effective & (1 << CAP_NET_RAW)) != 0;
+}

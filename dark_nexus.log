@@ -1,0 +1,39 @@
+{"t":"2026-05-22T22:28:59","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:35:56","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:51:50","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:51:50","lv":"INF","mod":"traceroute","msg":"done target=8.8.8.8 hops=40"}
+{"t":"2026-05-22T22:52:13","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:52:13","lv":"INF","mod":"traceroute","msg":"done target=8.8.8.8 hops=40"}
+{"t":"2026-05-22T22:52:40","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:52:40","lv":"INF","mod":"traceroute","msg":"done target=8.8.8.8 hops=40"}
+{"t":"2026-05-22T22:53:26","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:53:26","lv":"INF","mod":"traceroute","msg":"done target=173.194.194.100 hops=40"}
+{"t":"2026-05-22T22:54:12","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:54:12","lv":"INF","mod":"traceroute","msg":"done target=127.0.0.1 hops=40"}
+{"t":"2026-05-22T22:54:41","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-22T22:54:42","lv":"INF","mod":"traceroute","msg":"done target=142.251.184.100 hops=40"}
+{"t":"2026-05-23T15:28:40","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T15:28:40","lv":"INF","mod":"traceroute","msg":"done target=173.194.64.102 hops=40"}
+{"t":"2026-05-23T18:48:47","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T18:48:47","lv":"INF","mod":"port_scan","msg":"done target=127.0.0.1 open=0 filtered=0"}
+{"t":"2026-05-23T18:49:33","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T18:49:33","lv":"INF","mod":"port_scan","msg":"done target=45.33.32.156 open=1 filtered=0 time=0s"}
+{"t":"2026-05-23T18:51:02","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T18:51:03","lv":"INF","mod":"port_scan","msg":"done target=45.33.32.156 open=1 filtered=0 time=0s"}
+{"t":"2026-05-23T18:51:25","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T18:51:25","lv":"INF","mod":"port_scan","msg":"done target=45.33.32.156 open=1 filtered=0 time=0s"}
+{"t":"2026-05-23T18:52:08","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T18:52:08","lv":"INF","mod":"port_scan","msg":"done target=45.33.32.156 open=1 filtered=0 time=0s"}
+{"t":"2026-05-23T18:52:31","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T18:52:47","lv":"INF","mod":"net_scan","msg":"done subnet=192.168.1 alive=0"}
+{"t":"2026-05-23T22:48:42","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T22:48:43","lv":"INF","mod":"port_scan","msg":"done target=45.33.32.156 open=1 filtered=0 time=0s"}
+{"t":"2026-05-23T22:49:30","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T22:49:55","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T22:50:47","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T22:51:15","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T22:52:44","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-23T22:52:46","lv":"INF","mod":"port_scan","msg":"done target=8.8.8.8 open=1 filtered=0 time=0s"}
+{"t":"2026-05-24T20:02:59","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-24T20:03:25","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-24T20:03:26","lv":"INF","mod":"port_scan","msg":"done target=45.33.32.156 open=1 filtered=0 time=0s"}
