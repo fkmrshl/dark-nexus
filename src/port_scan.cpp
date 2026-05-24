@@ -281,7 +281,7 @@ static uint16_t tcp_csum(const struct pseudo_header* ph, const struct tcphdr* tc
 }
 
 static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeout_ms, int retries) {
-    if (geteuid() != 0) return probe_connect(ip, port, timeout_ms, retries);
+    if (!has_cap_net_raw()) return probe_connect(ip, port, timeout_ms, retries);
 
     for (int attempt = 0; attempt <= retries; attempt++) {
         FdGuard sock_send(socket(AF_INET, SOCK_RAW, IPPROTO_TCP));
@@ -602,9 +602,9 @@ static const std::vector<UdpProbe> UDP_PROBES = {
             'c','a','l',0x00,0x00,0x0c,0x00,0x01}},
 };
 
-static bool probe_udp_smart(const std::string& ip, int port, int timeout_ms) {
+static std::pair<int,bool> probe_udp_smart(const std::string& ip, int port, int timeout_ms) {
     FdGuard sock(socket(AF_INET, SOCK_DGRAM, 0));
-    if (sock.get() < 0) return false;
+    if (sock.get() < 0) return {-1, false};
 
     struct timeval tv;
     tv.tv_sec  = timeout_ms / 1000;
@@ -624,6 +624,7 @@ static bool probe_udp_smart(const std::string& ip, int port, int timeout_ms) {
         }
     }
 
+    auto t0 = std::chrono::high_resolution_clock::now();
     sendto(sock.get(), payload.data(), payload.size(), 0, (sockaddr*)&sa, sizeof(sa));
 
     char buf[1024];
@@ -634,12 +635,15 @@ static bool probe_udp_smart(const std::string& ip, int port, int timeout_ms) {
     if (poll(&pfd, 1, timeout_ms) > 0) {
         socklen_t len = sizeof(sa);
         ssize_t n = recvfrom(sock.get(), buf, sizeof(buf), 0, (sockaddr*)&sa, &len);
-        if (n > 0) return true; // Response received -> open
-        if (n < 0 && errno == ECONNREFUSED) return false; // Port unreach -> closed
+        if (n > 0) {
+            int ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - t0).count();
+            return {std::max(1, ms), false}; // Response received -> open
+        }
+        if (n < 0 && errno == ECONNREFUSED) return {-1, false}; // Port unreach -> closed
     }
 
-    // Timeout -> open|filtered (we treat as true/open for simplistic scanning logic)
-    return true;
+    // Timeout -> open|filtered (user explicitly requested returning filtered for timeout to avoid 100% false positives)
+    return {-1, true};
 }
 
 static int sev_rank(const std::string& s) {
@@ -663,254 +667,288 @@ std::string guess_os_from_ports(const std::vector<int>& open) {
     return "unknown";
 }
 
-void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
-    print_header("PORT SCAN // " + ip);
+PortScanEngine::PortScanEngine(PortScanConfig cfg, CancellationToken& token) : cfg_(cfg), token_(token) {}
 
-    std::vector<int> ports;
-    if (start==0&&end_port==0) {
-        ports=TOP1000;
-        std::cout<<BLOOD_RED<<"  mode: "<<WHITE<<"top-1000 ports\n"<<RESET;
-    } else {
-        for (int p=start;p<=end_port;p++) ports.push_back(p);
-        std::cout<<BLOOD_RED<<"  range: "<<WHITE<<start<<"-"<<end_port
-        <<BLOOD_RED<<" ("<<WHITE<<ports.size()<<BLOOD_RED<<" ports)\n"<<RESET;
-    }
+std::pair<int,bool> PortScanEngine::probe_connect(int port) {
+    return ::probe_connect(cfg_.ip, port, cfg_.connect_ms, cfg_.retry_count);
+}
 
-    print_section("PHASE 0 // CALIBRATION");
-    std::cout<<BLOOD_RED<<"  measuring target latency...\n"<<RESET;
+std::pair<int,bool> PortScanEngine::probe_syn(int port) {
+    return ::probe_syn(cfg_.ip, port, cfg_.connect_ms, cfg_.retry_count);
+}
 
-    auto cfg=calibrate_target(ip);
-    std::cout<<BLOOD_RED<<"  rtt: "<<WHITE
-    <<(cfg.median_rtt>=0?std::to_string(cfg.median_rtt)+"ms":"n/a")
-    <<BLOOD_RED<<"  timeout: "<<WHITE<<cfg.connect_ms<<"ms"
-    <<BLOOD_RED<<"  retries: "<<WHITE<<cfg.retry_count
-    <<BLOOD_RED<<"  threads: "<<WHITE<<cfg.pool_size<<"\n"<<RESET;
+bool PortScanEngine::probe_udp_smart(int port) {
+    auto res = ::probe_udp_smart(cfg_.ip, port, cfg_.connect_ms);
+    return res.first > 0;
+}
 
-    std::string hostname=ptr_lookup(ip);
-    if (!hostname.empty()&&hostname!=ip)
-        std::cout<<BLOOD_RED<<"  ptr: "<<WHITE<<hostname<<"\n"<<RESET;
+TLSInfo PortScanEngine::inspect_tls(int port) {
+    return ::inspect_tls(cfg_.ip, port, cfg_.banner_ms);
+}
 
-    print_section("PHASE 1 // DISCOVERY");
-    std::cout<<BLOOD_RED<<"  sweeping "<<WHITE<<ports.size()<<BLOOD_RED<<" ports...\n"<<RESET;
+HttpInfo PortScanEngine::probe_http(int port) {
+    return ::probe_http(cfg_.ip, port, cfg_.banner_ms, cfg_.aggressive);
+}
 
-    struct QuickHit { int port; int latency_ms; };
-    std::vector<QuickHit> open_hits;
-    std::vector<int> filtered_ports;
+std::string PortScanEngine::smart_banner(int port) {
+    return ::smart_banner(cfg_.ip, port, cfg_.banner_ms);
+}
+
+ScanResults PortScanEngine::run() {
+    ScanResults results;
     std::mutex mx;
     std::atomic<int> done_c{0}, open_c{0}, filt_c{0};
-    int total=ports.size();
+    int total = cfg_.ports.size();
 
-    std::vector<int> sorted_ports=ports;
-    std::sort(sorted_ports.begin(),sorted_ports.end(),[](int a,int b){
-        return service_priority(a)>service_priority(b);
+    std::vector<int> sorted_ports = cfg_.ports;
+    std::sort(sorted_ports.begin(), sorted_ports.end(), [](int a, int b){
+        return service_priority(a) > service_priority(b);
     });
 
-    auto scan_start=std::chrono::steady_clock::now();
+    print_section("PHASE 1 // DISCOVERY");
+    std::cout << BLOOD_RED << "  sweeping " << WHITE << total << BLOOD_RED << " ports...\n" << RESET;
+
+    auto scan_start = std::chrono::steady_clock::now();
     {
-        int psz=std::min(cfg.pool_size,(int)sorted_ports.size());
+        int psz = std::min(cfg_.pool_size, (int)sorted_ports.size());
         ThreadPool pool(psz);
         std::vector<std::future<void>> futs;
         futs.reserve(total);
 
-        for (int i=0;i<total;i++) {
-            futs.push_back(pool.submit([&,i]{
-                int p=sorted_ports[i];
+        for (int i = 0; i < total; i++) {
+            futs.push_back(pool.submit([&, i] {
+                if (token_.cancelled) return;
+
+                int p = sorted_ports[i];
                 port_rl.acquire();
+
                 std::pair<int,bool> res;
-                if (scan_udp) {
-                    bool up = probe_udp_smart(ip, p, cfg.connect_ms);
-                    res = {up ? 10 : -1, false};
+                if (cfg_.udp_scan) {
+                    res = ::probe_udp_smart(cfg_.ip, p, cfg_.connect_ms);
+                } else if (cfg_.syn_scan) {
+                    res = probe_syn(p);
                 } else {
-                    res = probe_connect(ip, p, cfg.connect_ms, cfg.retry_count);
+                    res = probe_connect(p);
                 }
+
                 auto [lat, filtered] = res;
                 done_c++;
 
-                if (lat>0) {
+                if (lat > 0) {
+                    PortResult pr{};
+                    pr.port = p; pr.latency_ms = lat;
+
                     std::lock_guard<std::mutex> lk(mx);
-                    open_hits.push_back({p,lat}); open_c++;
+                    results.open_ports.push_back(pr);
+                    open_c++;
+
+                    std::lock_guard<std::mutex> plk(g_print_mtx);
+                    std::cout << BLOOD_RED << "  [+] " << WHITE
+                              << std::left << std::setw(6) << p
+                              << "/tcp  open  " << std::setw(16) << svc(p)
+                              << "(" << lat << "ms)" << RESET << "\n";
+
                 } else if (filtered) {
                     std::lock_guard<std::mutex> lk(mx);
-                    filtered_ports.push_back(p); filt_c++;
-                }
-
-                if (done_c%50==0||done_c==total) {
-                    std::lock_guard<std::mutex> lk(g_print_mtx);
-                    draw_progress(done_c,total,
-                                  std::to_string(open_c.load())+" open "+
-                                  std::to_string(filt_c.load())+" filt");
+                    results.filtered_ports.push_back(p);
+                    filt_c++;
                 }
             }));
         }
-        for (auto& f:futs) f.get();
+        for (auto& f : futs) {
+            if (f.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {}
+        }
     }
 
-    auto scan_end=std::chrono::steady_clock::now();
-    double scan_secs=std::chrono::duration<double>(scan_end-scan_start).count();
+    if (token_.cancelled) {
+        std::cout << BLOOD_RED << "\n  [!] scan interrupted - partial results\n" << RESET;
+    }
 
-    draw_progress(total,total,
-                  std::to_string(open_c.load())+" open "+std::to_string(filt_c.load())+" filt");
-    std::cout<<"\n";
-    std::cout<<BLOOD_RED<<"  discovery: "<<WHITE<<std::fixed<<std::setprecision(2)
-    <<scan_secs<<"s "<<BLOOD_RED<<"("<<WHITE<<(int)(total/std::max(scan_secs,0.01))<<BLOOD_RED<<" ports/sec)\n"<<RESET;
+    auto scan_end = std::chrono::steady_clock::now();
+    results.total_time_s = std::chrono::duration<double>(scan_end - scan_start).count();
+    results.ports_per_sec = (int)(total / std::max(results.total_time_s, 0.01));
 
-    std::sort(open_hits.begin(),open_hits.end(),
-              [](const QuickHit& a,const QuickHit& b){return a.port<b.port;});
+    std::sort(results.open_ports.begin(), results.open_ports.end(),
+              [](const PortResult& a, const PortResult& b){ return a.port < b.port; });
 
-    if (open_hits.empty()) {
-        std::cout<<"\n"<<BLOOD_RED<<"  no open ports found\n"<<RESET;
-        if (!filtered_ports.empty()) {
-            std::sort(filtered_ports.begin(),filtered_ports.end());
-            std::cout<<BLOOD_RED<<"  "<<WHITE<<filtered_ports.size()<<BLOOD_RED<<" filtered (fw silently drops)\n"<<RESET;
-            std::cout<<BLOOD_RED<<"  sample: "<<WHITE;
-            for (int i=0;i<std::min(10,(int)filtered_ports.size());i++)
-                std::cout<<filtered_ports[i]<<" ";
-            if ((int)filtered_ports.size()>10) std::cout<<"...";
-            std::cout<<"\n"<<RESET;
+    if (!results.open_ports.empty()) {
+        print_section("PHASE 2 // DEEP ANALYSIS");
+        std::cout << BLOOD_RED << "  analyzing " << WHITE << results.open_ports.size() << BLOOD_RED << " open ports...\n" << RESET;
+
+        std::atomic<int> deep_done{0};
+        int deep_total = results.open_ports.size();
+
+        ThreadPool dpool(std::min(20, deep_total));
+        std::vector<std::future<void>> dfuts;
+        for (int i = 0; i < deep_total; i++) {
+            dfuts.push_back(dpool.submit([&, i] {
+                if (token_.cancelled) return;
+
+                int p = results.open_ports[i].port;
+                results.open_ports[i].service = svc(p);
+                results.open_ports[i].risk = risk_label(p);
+                results.open_ports[i].banner_raw = smart_banner(p);
+                results.open_ports[i].version = extract_version(results.open_ports[i].banner_raw, p);
+                results.open_ports[i].vulns = check_vulns(p, results.open_ports[i].version, results.open_ports[i].banner_raw);
+
+                if (cfg_.tls_inspect && (p==443||p==8443||p==465||p==993||p==995||p==636||p==5671||p==6443)) {
+                    results.open_ports[i].tls = inspect_tls(p);
+                    results.open_ports[i].tls_port = true;
+                    if (results.open_ports[i].tls.expired) {
+                        results.open_ports[i].vulns.push_back({"N/A", "TLS Certificate Expired", "HIGH"});
+                    }
+                    if (results.open_ports[i].tls.self_signed) {
+                        results.open_ports[i].vulns.push_back({"N/A", "TLS Self-Signed Certificate", "MED"});
+                    }
+                }
+
+                if (cfg_.http_probe && (p==80||p==8080||p==8008||p==3000||p==8888||p==443||p==8443)) {
+                    results.open_ports[i].http = probe_http(p);
+                    results.open_ports[i].http_port = true;
+                    if ((p==443||p==8443) && !results.open_ports[i].http.hsts && results.open_ports[i].http.status_code > 0)
+                        results.open_ports[i].vulns.push_back({"INFO", "missing HSTS header", "INFO"});
+                    if (!results.open_ports[i].http.x_frame && results.open_ports[i].http.status_code > 0)
+                        results.open_ports[i].vulns.push_back({"INFO", "clickjacking risk (missing X-Frame-Options)", "INFO"});
+                    if (!results.open_ports[i].http.csp && results.open_ports[i].http.status_code > 0)
+                        results.open_ports[i].vulns.push_back({"INFO", "no Content-Security-Policy", "INFO"});
+                }
+
+                deep_done++;
+                if (deep_done % 3 == 0 || deep_done == deep_total) {
+                    std::lock_guard<std::mutex> lk(g_print_mtx);
+                    draw_progress(deep_done, deep_total, "banners...");
+                }
+            }));
         }
-        LOG_INFO("port_scan","done target="+ip+" open=0 filtered="+
-        std::to_string(filtered_ports.size()));
+        for (auto& f : dfuts) {
+            if (f.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {}
+        }
+        std::cout << "\n";
+    }
+
+    std::vector<int> open_port_list;
+    for (const auto& pr : results.open_ports) open_port_list.push_back(pr.port);
+    results.os_hint = guess_os_from_ports(open_port_list);
+
+    return results;
+}
+
+void PortScanEngine::print_results(const ScanResults& r) {
+    if (r.open_ports.empty()) {
+        std::cout << "\n" << BLOOD_RED << "  no open ports found\n" << RESET;
+        if (!r.filtered_ports.empty()) {
+            std::cout << BLOOD_RED << "  " << WHITE << r.filtered_ports.size() << BLOOD_RED << " filtered (fw silently drops)\n" << RESET;
+        }
         return;
     }
 
-    print_section("PHASE 2 // DEEP ANALYSIS");
-    std::cout<<BLOOD_RED<<"  analyzing "<<WHITE<<open_hits.size()<<BLOOD_RED<<" open ports...\n"<<RESET;
-
-    struct PortResult {
-        int port, latency_ms;
-        std::string service, banner_raw, version, risk;
-        std::vector<VulnHint> vulns;
-    };
-
-    std::vector<PortResult> results(open_hits.size());
-    std::atomic<int> deep_done{0};
-    int deep_total=open_hits.size();
-
-    {
-        int dpool=std::min(30,deep_total);
-        ThreadPool deep_pool(dpool);
-        std::vector<std::future<void>> dfuts;
-        dfuts.reserve(deep_total);
-
-        for (int i=0;i<deep_total;i++) {
-            dfuts.push_back(deep_pool.submit([&,i]{
-                int p=open_hits[i].port;
-                PortResult pr;
-                pr.port=p;
-                pr.latency_ms=open_hits[i].latency_ms;
-                pr.service=svc(p);
-                pr.risk=risk_label(p);
-                pr.banner_raw=smart_banner(ip,p,cfg.banner_ms);
-                pr.version=extract_version(pr.banner_raw,p);
-                pr.vulns=check_vulns(p,pr.version,pr.banner_raw);
-                results[i]=pr;
-                deep_done++;
-
-                if (deep_done%3==0||deep_done==deep_total) {
-                    std::lock_guard<std::mutex> lk(g_print_mtx);
-                    draw_progress(deep_done,deep_total,"banners...");
-                }
-            }));
-        }
-        for (auto& f:dfuts) f.get();
-    }
-
-    draw_progress(deep_total,deep_total,"done");
-    std::cout<<"\n";
-
     print_section("PHASE 3 // RESULTS");
-    std::cout<<"\n"<<BLOOD_RED<<BOLD
-    <<"  PORT      SERVICE         VERSION                  LATENCY   RISK      BANNER\n"
-    <<"  "<<std::string(100,'-')<<"\n"<<RESET;
+    std::cout << "\n" << BLOOD_RED << BOLD
+              << "  PORT      SERVICE         VERSION                  LATENCY   RISK      BANNER\n"
+              << "  " << std::string(100, '-') << "\n" << RESET;
 
-    int vuln_crit=0,vuln_high=0,vuln_med=0,vuln_info=0;
+    int vuln_crit = 0, vuln_high = 0, vuln_med = 0, vuln_info = 0;
     std::vector<VulnHint> all_vulns;
-    std::vector<int> open_port_list;
 
-    for (auto& pr:results) {
-        open_port_list.push_back(pr.port);
+    for (const auto& pr : r.open_ports) {
+        std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(10) << pr.port
+                  << std::setw(16) << pr.service
+                  << std::setw(25) << (pr.version.empty() ? "-" : pr.version)
+                  << std::setw(10) << (std::to_string(pr.latency_ms) + "ms")
+                  << std::setw(10) << pr.risk;
 
-        std::cout<<BLOOD_RED<<"  "<<WHITE<<std::left<<std::setw(10)<<pr.port
-        <<std::setw(16)<<pr.service
-        <<std::setw(25)<<(pr.version.empty()?"-":pr.version)
-        <<std::setw(10)<<(std::to_string(pr.latency_ms)+"ms")
-        <<std::setw(10)<<pr.risk;
-
-        std::string dbnr=pr.banner_raw;
-        if (dbnr.size()>45) dbnr=dbnr.substr(0,45)+"...";
+        std::string dbnr = pr.banner_raw;
+        if (dbnr.size() > 45) dbnr = dbnr.substr(0, 45) + "...";
         std::cout << sanitize(dbnr) << RESET << "\n";
 
-        for (auto& v:pr.vulns) {
+        for (const auto& v : pr.vulns) {
             all_vulns.push_back(v);
-            if      (v.severity=="CRIT") vuln_crit++;
-            else if (v.severity=="HIGH") vuln_high++;
-            else if (v.severity=="MED")  vuln_med++;
+            if      (v.severity == "CRIT") vuln_crit++;
+            else if (v.severity == "HIGH") vuln_high++;
+            else if (v.severity == "MED")  vuln_med++;
             else                         vuln_info++;
         }
 
-        g_result.open_ports.push_back({pr.port,pr.service});
+        std::lock_guard<std::mutex> lk(g_result_mtx);
+        g_result.open_ports.push_back({pr.port, pr.service});
     }
 
-    if (!filtered_ports.empty()) {
-        std::sort(filtered_ports.begin(),filtered_ports.end());
-        std::cout<<"\n"<<BLOOD_RED<<"  "<<WHITE<<filtered_ports.size()<<BLOOD_RED<<" filtered: "<<WHITE;
-        for (int i=0;i<std::min(15,(int)filtered_ports.size());i++)
-            std::cout<<filtered_ports[i]<<" ";
-        if ((int)filtered_ports.size()>15) std::cout<<"...";
-        std::cout<<"\n"<<RESET;
-    }
+    g_result.os_guess = r.os_hint;
+
+    print_section("SCAN STATS");
+    std::cout << BLOOD_RED << "  [os guess]      " << WHITE << r.os_hint << "\n";
+    std::cout << BLOOD_RED << "  [open ports]    " << WHITE << r.open_ports.size() << "\n";
+    std::cout << BLOOD_RED << "  [filtered]      " << WHITE << r.filtered_ports.size() << "\n";
+    std::cout << BLOOD_RED << "  [scan time]     " << WHITE << std::fixed << std::setprecision(2) << r.total_time_s << "s\n";
+    std::cout << BLOOD_RED << "  [speed]         " << WHITE << r.ports_per_sec << " ports/sec\n";
 
     if (!all_vulns.empty()) {
         print_section("VULNERABILITY HINTS");
-        std::cout<<"\n";
+        std::cout << BLOOD_RED << "  " << WHITE << vuln_crit << BLOOD_RED << " CRIT  " << WHITE << vuln_high << BLOOD_RED << " HIGH  " << WHITE << vuln_med << BLOOD_RED << " MED\n\n" << RESET;
 
-        std::sort(all_vulns.begin(),all_vulns.end(),[](const VulnHint& a,const VulnHint& b){
-            return sev_rank(a.severity)<sev_rank(b.severity);
-        });
+        for (const auto& v : all_vulns) {
+            std::string c_col = WHITE;
+            if (v.severity == "CRIT") c_col = BLOOD_RED;
+            else if (v.severity == "HIGH") c_col = YELLOW;
 
-        for (auto& v:all_vulns) {
-            std::cout<<BLOOD_RED<<"  "<<BOLD<<"["<<WHITE<<std::setw(4)<<v.severity<<BLOOD_RED<<"] "
-            <<WHITE<<std::setw(16)<<v.cve<<"  "<<v.desc<<RESET<<"\n";
+            std::cout << "  " << c_col << "[" << std::left << std::setw(4) << v.severity << "] " << std::setw(14) << v.cve << " " << WHITE << v.desc << "\n" << RESET;
         }
-
-        std::cout<<"\n"<<BLOOD_RED<<"  vuln summary: "
-        <<WHITE<<vuln_crit <<BLOOD_RED<<" crit  "
-        <<WHITE<<vuln_high <<BLOOD_RED<<" high  "
-        <<WHITE<<vuln_med  <<BLOOD_RED<<" med  "
-        <<WHITE<<vuln_info <<BLOOD_RED<<" info"
-        <<RESET<<"\n";
-
-        if      (vuln_crit>0)
-            std::cout<<BLOOD_RED<<BOLD<<"\n  [!] "<<WHITE<<"CRITICAL issues found - immediate attention needed\n"<<RESET;
-        else if (vuln_high>0)
-            std::cout<<BLOOD_RED<<"\n  [!] "<<WHITE<<"high severity issues - review recommended\n"<<RESET;
     }
 
-    std::string os_hint=guess_os_from_ports(open_port_list);
-    if (os_hint!="unknown") {
-        std::cout<<"\n"<<BLOOD_RED<<"  os hint (ports): "<<WHITE<<os_hint<<RESET<<"\n";
-        g_result.os_guess=os_hint;
+    LOG_INFO("port_scan", "done target=" + cfg_.ip +
+        " open=" + std::to_string(r.open_ports.size()) +
+        " filtered=" + std::to_string(r.filtered_ports.size()) +
+        " time=" + std::to_string((int)r.total_time_s) + "s");
+}
+
+void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
+    print_header("PORT SCAN // " + ip);
+
+    PortScanConfig cfg{};
+    cfg.ip = ip;
+    cfg.udp_scan = scan_udp;
+    cfg.syn_scan = true;
+    cfg.tls_inspect = true;
+    cfg.http_probe = true;
+    cfg.aggressive = true;
+
+    if (start == 0 && end_port == 0) {
+        cfg.ports = TOP1000;
+        std::cout << BLOOD_RED << "  mode: " << WHITE << "top-1000 ports\n" << RESET;
+    } else {
+        if (end_port == 0 && start == 0) {
+            cfg.ports = TOP100;
+            std::cout << BLOOD_RED << "  mode: " << WHITE << "top-100 ports\n" << RESET;
+        } else {
+            for (int p = std::max(1, start); p <= std::min(65535, end_port); p++) cfg.ports.push_back(p);
+            std::cout << BLOOD_RED << "  range: " << WHITE << start << "-" << end_port
+                      << BLOOD_RED << " (" << WHITE << cfg.ports.size() << BLOOD_RED << " ports)\n" << RESET;
+        }
     }
 
-    print_section("SCAN STATS");
-    auto total_time=std::chrono::duration<double>(
-        std::chrono::steady_clock::now()-scan_start).count();
+    print_section("PHASE 0 // CALIBRATION");
+    std::cout << BLOOD_RED << "  measuring target latency...\n" << RESET;
 
-        std::cout<<BLOOD_RED <<"  [target]       "<<WHITE<<ip<<"\n"<<RESET;
-        std::cout<<BLOOD_RED <<"  [ports tested] "<<WHITE<<total<<"\n"<<RESET;
-        std::cout<<BLOOD_RED <<"  [open]         "<<WHITE<<open_hits.size()<<"\n"<<RESET;
-        std::cout<<BLOOD_RED <<"  [filtered]     "<<WHITE<<filtered_ports.size()<<"\n"<<RESET;
-        std::cout<<BLOOD_RED <<"  [closed]       "<<WHITE
-        <<(total-(int)open_hits.size()-(int)filtered_ports.size())<<"\n"<<RESET;
-        std::cout<<BLOOD_RED <<"  [total time]   "<<WHITE<<std::fixed<<std::setprecision(2)
-        <<total_time<<"s\n"<<RESET;
-        std::cout<<BLOOD_RED <<"  [avg speed]    "<<WHITE
-        <<(int)(total/std::max(total_time,0.01))<<" ports/sec\n"<<RESET;
+    auto acfg = calibrate_target(ip);
+    cfg.connect_ms = acfg.connect_ms;
+    cfg.banner_ms = acfg.banner_ms;
+    cfg.retry_count = acfg.retry_count;
+    cfg.pool_size = acfg.pool_size;
+    cfg.median_rtt = acfg.median_rtt;
 
-        LOG_INFO("port_scan","done target="+ip+
-        " open="+std::to_string(open_hits.size())+
-        " filtered="+std::to_string(filtered_ports.size())+
-        " time="+std::to_string((int)total_time)+"s");
+    std::cout << BLOOD_RED << "  rtt: " << WHITE
+              << (cfg.median_rtt >= 0 ? std::to_string(cfg.median_rtt) + "ms" : "n/a")
+              << BLOOD_RED << "  timeout: " << WHITE << cfg.connect_ms << "ms"
+              << BLOOD_RED << "  retries: " << WHITE << cfg.retry_count
+              << BLOOD_RED << "  threads: " << WHITE << cfg.pool_size << "\n" << RESET;
+
+    std::string hostname = ptr_lookup(ip);
+    if (!hostname.empty() && hostname != ip)
+        std::cout << BLOOD_RED << "  ptr: " << WHITE << hostname << "\n" << RESET;
+
+    PortScanEngine engine(cfg, g_cancel_token);
+    ScanResults res = engine.run();
+    engine.print_results(res);
 }
 
 void net_scan(const std::string& subnet) {

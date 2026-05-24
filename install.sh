@@ -29,7 +29,7 @@ echo -e "${WHITE}[*] Detecting distribution... ${RED}$OS${RESET}"
 if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || "$OS_LIKE" == *"debian"* || "$OS_LIKE" == *"ubuntu"* ]]; then
     echo -e "${WHITE}[*] Installing dependencies via APT...${RESET}"
     apt update
-    apt install -y build-essential cmake ninja-build g++ libssl-dev liburing-dev whois dnsutils traceroute iputils-ping git libcap2-bin
+    apt install -y build-essential cmake ninja-build g++ libssl-dev liburing-dev whois dnsutils traceroute iputils-ping git libcap2-bin libcap-dev
 elif [[ "$OS" == "arch" || "$OS" == "blackarch" || "$OS_LIKE" == *"arch"* ]]; then
     echo -e "${WHITE}[*] Installing dependencies via Pacman...${RESET}"
     pacman -Syu --noconfirm --needed base-devel cmake ninja openssl liburing whois bind traceroute iputils git libcap
@@ -50,11 +50,8 @@ cmake -B build -G Ninja
 cmake --build build
 
 echo -e "${WHITE}[*] Installing binary to /usr/local/bin/dark-nexus...${RESET}"
-cp build/dark_nexus /usr/local/bin/dark-nexus
+ln -sf $(pwd)/build/dark_nexus /usr/local/bin/dark-nexus
 chmod +x /usr/local/bin/dark-nexus
-
-echo -e "${WHITE}[*] Applying Linux Capabilities (no sudo required)...${RESET}"
-setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/dark-nexus
 
 echo -e "\n${RED}${BOLD}  [+] Installation Complete!${RESET}"
 echo -e "${WHITE}  You can now run the tool from anywhere using:${RESET}"
