@@ -37,6 +37,11 @@ FetchContent_MakeAvailable(curl)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(URING REQUIRED liburing)
 
+find_library(LIBCAP_LIB cap)
+if(NOT LIBCAP_LIB)
+    message(FATAL_ERROR "Missing libcap-dev! Please install it using: sudo apt install libcap-dev")
+endif()
+
 file(GLOB SOURCES "src/*.cpp")
 
 add_executable(dark_nexus ${SOURCES})
@@ -50,6 +55,7 @@ target_link_libraries(dark_nexus
     OpenSSL::SSL
     OpenSSL::Crypto
     ${URING_LIBRARIES}
+    ${LIBCAP_LIB}
     pthread
 )
 target_include_directories(dark_nexus PRIVATE ${URING_INCLUDE_DIRS})
