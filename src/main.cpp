@@ -1,6 +1,8 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/security.hpp"
 #include "../include/output.hpp"
+#include <filesystem>
+#include <cctype>
 static void print_banner() {
     if (write(STDOUT_FILENO, "\033[2J\033[H", 7)) {}
     std::cout<<"\n"<<BLOOD_RED<<BOLD;
@@ -68,6 +70,39 @@ static void print_help() {
     std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --output result.json\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0U\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --osint user@mail.com\n\n"<<RESET;
+
+}
+
+static std::string sanitize_filename(std::string s) {
+    if (s.empty()) return "scan";
+    for (char& c : s) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::iscntrl(uc) || c == '/' || c == '\\' || c == ':' || c == '*' ||
+            c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+            c = '_';
+        }
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '.' || s.back() == '_')) {
+        s.pop_back();
+    }
+    return s.empty() ? "scan" : s;
+}
+
+static bool save_scan_json(const std::string& path) {
+    try {
+        std::filesystem::path p(path);
+        if (p.has_parent_path()) {
+            std::error_code ec;
+            std::filesystem::create_directories(p.parent_path(), ec);
+        }
+
+        OutputWriter::write(g_result, p.string());
+
+        std::error_code ec;
+        return std::filesystem::exists(p, ec) && std::filesystem::file_size(p, ec) > 0;
+    } catch (...) {
+        return false;
+    }
 }
 
 int main(int argc, char** argv) {
@@ -195,7 +230,9 @@ int main(int argc, char** argv) {
         }
 
         if (!output_path.empty()) {
-            OutputWriter::write(g_result, output_path);
+            if (!save_scan_json(output_path)) {
+                std::cerr << BLOOD_RED << "  [!] failed to save output: " << WHITE << output_path << RESET << "\n";
+            }
         }
         return 0;
     }
@@ -209,9 +246,12 @@ int main(int argc, char** argv) {
         if(choice==0) break;
 
         if(choice==12){
-            std::string fn="dark_nexus_"+g_result.target+".json";
-            std::replace(fn.begin(),fn.end(),':','_');
-            export_json(fn);
+            std::string fn = "dark_nexus_" + sanitize_filename(g_result.target) + ".json";
+            if (save_scan_json(fn)) {
+                std::cout << BLOOD_RED << "  [*] saved: " << WHITE << fn << RESET << "\n";
+            } else {
+                std::cout << BLOOD_RED << "  [!] save failed: " << WHITE << fn << RESET << "\n";
+            }
             print_sep(); std::cout<<"  press enter..."; std::cin.ignore(); std::cin.get();
             print_banner(); 
             continue;
