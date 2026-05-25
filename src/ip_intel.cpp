@@ -107,7 +107,10 @@ void ip_intel(const std::string& ip) {
         if (!tcp_probe(ip, p, 600)) continue;
         any = true;
         std::string b=banner(ip,p), s=svc(p);
-        std::cout<<WHITE<<"  "<<std::left<<std::setw(12)<<p<<std::setw(16)<<s<<std::setw(10)<<risk_label(p)<<sanitize(b.size()>40?b.substr(0,40):b)<<"\n";
+        std::string r_lbl=risk_label(p);
+        std::string risk_color = WHITE;
+        if (r_lbl == "HIGH") risk_color = BLOOD_RED;
+        std::cout<<WHITE<<"  "<<std::left<<std::setw(12)<<p<<std::setw(16)<<s<<risk_color<<std::setw(10)<<r_lbl<<WHITE<<sanitize(b.size()>40?b.substr(0,40):b)<<"\n";
         g_result.open_ports.push_back({p,s});
     }
     if(!any) std::cout<<BLOOD_RED<<"  top ports closed\n"<<RESET;

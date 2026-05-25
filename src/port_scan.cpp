@@ -851,11 +851,14 @@ void PortScanEngine::print_results(const ScanResults& r) {
     std::vector<VulnHint> all_vulns;
 
     for (const auto& pr : r.open_ports) {
+        std::string risk_color = WHITE;
+        if (pr.risk == "HIGH") risk_color = BLOOD_RED;
+
         std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(10) << pr.port
                   << std::setw(16) << pr.service
                   << std::setw(25) << (pr.version.empty() ? "-" : pr.version)
                   << std::setw(10) << (std::to_string(pr.latency_ms) + "ms")
-                  << std::setw(10) << pr.risk;
+                  << risk_color << std::setw(10) << pr.risk << WHITE;
 
         std::string dbnr = pr.banner_raw;
         if (dbnr.size() > 45) dbnr = dbnr.substr(0, 45) + "...";

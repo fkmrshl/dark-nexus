@@ -1,0 +1,6 @@
+{"t":"2026-05-25T19:37:28","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-25T19:38:07","lv":"INF","mod":"dns_lookup","msg":"done domain=104.20.23.154"}
+{"t":"2026-05-25T20:04:25","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-25T20:04:27","lv":"INF","mod":"port_scan","msg":"done target=1.1.1.1 open=5 filtered=254 time=0s"}
+{"t":"2026-05-25T20:08:47","lv":"INF","mod":"main","msg":"dark nexus started"}
+{"t":"2026-05-25T20:09:26","lv":"INF","mod":"dns_lookup","msg":"done domain=104.20.23.154"}

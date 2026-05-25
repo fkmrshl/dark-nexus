@@ -319,11 +319,14 @@ int main(int argc, char** argv) {
 
         g_result.end_time = now_str();
 
-        std::tm tm_start = {}, tm_end = {};
+        std::tm tm_start = {};
         std::istringstream ss_start(g_result.start_time);
-        std::istringstream ss_end(g_result.end_time);
         ss_start >> std::get_time(&tm_start, "%Y-%m-%d %H:%M:%S");
+
+        std::tm tm_end = {};
+        std::istringstream ss_end(g_result.end_time);
         ss_end >> std::get_time(&tm_end, "%Y-%m-%d %H:%M:%S");
+
         if (!ss_start.fail() && !ss_end.fail()) {
             auto time_start = std::mktime(&tm_start);
             auto time_end = std::mktime(&tm_end);
