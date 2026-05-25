@@ -1,5 +1,6 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/security.hpp"
+#include "../include/output.hpp"
 
 static void print_banner() {
     if (write(STDOUT_FILENO, "\033[2J\033[H", 7)) {}
@@ -61,10 +62,11 @@ static void print_help() {
     std::cout << BLOOD_RED << "    --recon <ip>            " << WHITE << "Run full IP recon\n"<<RESET;
     std::cout << BLOOD_RED << "    --subdomain <domain>    " << WHITE << "Run subdomain scan\n"<<RESET;
     std::cout << BLOOD_RED << "    --mode <F|D>            " << WHITE << "Subdomain scan mode (Fast or Deep)\n"<<RESET;
-    std::cout << BLOOD_RED << "    --json <file>           " << WHITE << "Export result to JSON file\n"<<RESET;
+    std::cout << BLOOD_RED << "    --output <file>         " << WHITE << "Export result to file (auto-detects format from ext)\n"<<RESET;
+    std::cout << BLOOD_RED << "    --json <file>           " << WHITE << "Alias for --output\n"<<RESET;
     std::cout << BLOOD_RED << "    -h, --help              " << WHITE << "Show this help menu\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  EXAMPLES:\n"<<RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --json result.json\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --output result.json\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0U\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --osint user@mail.com\n\n"<<RESET;
 }
@@ -99,12 +101,12 @@ int main(int argc, char** argv) {
         std::vector<std::string> args;
         for (int i = 1; i < argc; i++) args.push_back(argv[i]);
 
-        std::string mode, target, extra, json_out;
+        std::string mode, target, extra, output_path;
         char sub_mode = 'F';
 
         for (size_t i = 0; i < args.size(); i++) {
             if (args[i] == "-h" || args[i] == "--help") { print_help(); return 0; }
-            else if (args[i] == "--json" && i + 1 < args.size()) { json_out = args[++i]; }
+            else if ((args[i] == "--json" || args[i] == "--output") && i + 1 < args.size()) { output_path = args[++i]; }
             else if (args[i] == "--mode" && i + 1 < args.size()) {
                 sub_mode = toupper(args[++i][0]);
                 if (sub_mode != 'F' && sub_mode != 'D') sub_mode = 'F';
@@ -128,11 +130,17 @@ int main(int argc, char** argv) {
 
         print_banner();
 
+        g_result.target = target;
+        g_result.start_time = now_str();
+
         if (mode == "osint") {
+            g_result.scan_type = "osint";
             osint_scan(target);
         } else if (mode == "site") {
+            g_result.scan_type = "site";
             site_lookup(target);
         } else if (mode == "subdomain") {
+            g_result.scan_type = "subdomain";
             if(!valid_target(target)) { std::cout<<BLOOD_RED<<"  invalid domain\n"<<RESET; return 1; }
             std::string wl = auto_find_wordlist();
             if (sub_mode == 'F') subdomain_scan(target, "", 200, false, true, true);
@@ -143,7 +151,10 @@ int main(int argc, char** argv) {
             if(ip_res.empty()) ip_res=target;
             else if(ip_res!=target) std::cout<<BLOOD_RED<<"  resolved: "<<target<<" -> "<<ip_res<<"\n"<<RESET;
 
+            g_result.resolved_ip = ip_res;
+
             if (mode == "portscan") {
+                g_result.scan_type = "port_scan";
                 bool udp = false;
                 if (!extra.empty() && (extra.back() == 'U' || extra.back() == 'u')) {
                     udp = true; extra.pop_back();
@@ -160,21 +171,32 @@ int main(int argc, char** argv) {
                 }
                 port_scan(ip_res, s, e, udp);
             }
-            else if (mode == "netscan") net_scan(ip_res.substr(0,ip_res.rfind('.')));
-            else if (mode == "os-detect") os_detect(ip_res);
-            else if (mode == "ip-intel") ip_intel(ip_res);
-            else if (mode == "dns") dns_lookup(ip_res);
-            else if (mode == "whois") whois_lookup(ip_res);
-            else if (mode == "traceroute") traceroute(ip_res);
-            else if (mode == "recon") full_recon(ip_res);
+            else if (mode == "netscan") { g_result.scan_type = "netscan"; net_scan(ip_res.substr(0,ip_res.rfind('.'))); }
+            else if (mode == "os-detect") { g_result.scan_type = "os_detect"; os_detect(ip_res); }
+            else if (mode == "ip-intel") { g_result.scan_type = "ip_intel"; ip_intel(ip_res); }
+            else if (mode == "dns") { g_result.scan_type = "dns"; dns_lookup(ip_res); }
+            else if (mode == "whois") { g_result.scan_type = "whois"; whois_lookup(ip_res); }
+            else if (mode == "traceroute") { g_result.scan_type = "traceroute"; traceroute(ip_res); }
+            else if (mode == "recon") { g_result.scan_type = "recon"; full_recon(ip_res); }
             else { std::cout<<BLOOD_RED<<"  unknown module: "<<mode<<"\n"<<RESET; return 1; }
 
         }
 
-        if (!json_out.empty()) {
-            g_result.target = target;
-            g_result.timestamp = now_str();
-            export_json(json_out);
+        g_result.end_time = now_str();
+
+        std::tm tm_start = {}, tm_end = {};
+        std::istringstream ss_start(g_result.start_time);
+        std::istringstream ss_end(g_result.end_time);
+        ss_start >> std::get_time(&tm_start, "%Y-%m-%d %H:%M:%S");
+        ss_end >> std::get_time(&tm_end, "%Y-%m-%d %H:%M:%S");
+        if (!ss_start.fail() && !ss_end.fail()) {
+            auto time_start = std::mktime(&tm_start);
+            auto time_end = std::mktime(&tm_end);
+            g_result.duration_ms = (int)std::difftime(time_end, time_start) * 1000;
+        }
+
+        if (!output_path.empty()) {
+            OutputWriter::write(g_result, output_path);
         }
         return 0;
     }
@@ -187,7 +209,10 @@ int main(int argc, char** argv) {
         int choice=-1; try{choice=std::stoi(cs);}catch(...){}
         if(choice==0) break;
 
+        g_result.start_time = now_str();
+
         if(choice==12){
+            g_result.end_time = now_str();
             std::string fn="dark_nexus_"+g_result.target+".json";
             std::replace(fn.begin(),fn.end(),':','_');
             export_json(fn);
@@ -196,6 +221,7 @@ int main(int argc, char** argv) {
         }
 
         if(choice==2){
+            g_result.scan_type = "osint";
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
             std::string u;
             std::cout<<WHITE<<"\n  osint target "<<RESET<<WHITE<<"(username / email / +phone): "<<RESET;
@@ -205,9 +231,11 @@ int main(int argc, char** argv) {
             if(u.empty()){std::cout<<BLOOD_RED<<"  empty input\n"<<RESET;}
             else osint_scan(u);
         } else if(choice==11){
+            g_result.scan_type = "site";
             std::string s; std::cout<<BLOOD_RED<<"\n  site: "<<RESET; std::cin>>s;
             site_lookup(s);
         } else if(choice==1){
+            g_result.scan_type = "subdomain";
             std::string d;
             std::cout<<WHITE<<"\n  domain: "<<RESET; std::cin>>d;
             if(!valid_target(d)){
@@ -254,8 +282,12 @@ int main(int argc, char** argv) {
             if(ip_res.empty()) ip_res=target;
             else if(ip_res!=target) std::cout<<BLOOD_RED<<"  resolved: "<<target<<" -> "<<ip_res<<"\n"<<RESET;
 
+            g_result.target = target;
+            g_result.resolved_ip = ip_res;
+
             switch(choice){
                 case 3: {
+                    g_result.scan_type = "port_scan";
                     std::string s_in;
                     std::cout<<BLOOD_RED<<"  start port (0=top1000) [add U for UDP, e.g. 0U]: "<<RESET; std::cin>>s_in;
                     bool udp = false;
@@ -274,15 +306,28 @@ int main(int argc, char** argv) {
                     }
                     break;
                 }
-                case 6:  net_scan(ip_res.substr(0,ip_res.rfind('.'))); break;
-                case 5:  os_detect(ip_res);    break;
-                case 9:  ip_intel(ip_res);     break;
-                case 7:  dns_lookup(ip_res);   break;
-                case 8:  whois_lookup(ip_res); break;
-                case 4:  traceroute(ip_res);   break;
-                case 10: full_recon(ip_res);   break;
+                case 6:  g_result.scan_type = "netscan"; net_scan(ip_res.substr(0,ip_res.rfind('.'))); break;
+                case 5:  g_result.scan_type = "os_detect"; os_detect(ip_res);    break;
+                case 9:  g_result.scan_type = "ip_intel"; ip_intel(ip_res);     break;
+                case 7:  g_result.scan_type = "dns"; dns_lookup(ip_res);   break;
+                case 8:  g_result.scan_type = "whois"; whois_lookup(ip_res); break;
+                case 4:  g_result.scan_type = "traceroute"; traceroute(ip_res);   break;
+                case 10: g_result.scan_type = "recon"; full_recon(ip_res);   break;
                 default: std::cout<<BLOOD_RED<<"  invalid option\n"<<RESET;
             }
+        }
+
+        g_result.end_time = now_str();
+
+        std::tm tm_start = {}, tm_end = {};
+        std::istringstream ss_start(g_result.start_time);
+        std::istringstream ss_end(g_result.end_time);
+        ss_start >> std::get_time(&tm_start, "%Y-%m-%d %H:%M:%S");
+        ss_end >> std::get_time(&tm_end, "%Y-%m-%d %H:%M:%S");
+        if (!ss_start.fail() && !ss_end.fail()) {
+            auto time_start = std::mktime(&tm_start);
+            auto time_end = std::mktime(&tm_end);
+            g_result.duration_ms = (int)std::difftime(time_end, time_start) * 1000;
         }
 
         print_sep();

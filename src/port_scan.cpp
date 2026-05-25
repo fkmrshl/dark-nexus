@@ -861,8 +861,22 @@ void PortScanEngine::print_results(const ScanResults& r) {
         if (dbnr.size() > 45) dbnr = dbnr.substr(0, 45) + "...";
         std::cout << sanitize(dbnr) << RESET << "\n";
 
+        PortEntry pe;
+        pe.port = pr.port;
+        pe.protocol = cfg_.udp_scan ? "udp" : "tcp";
+        pe.service = pr.service;
+        pe.banner = pr.banner_raw.size() > 200 ? pr.banner_raw.substr(0, 200) + "..." : pr.banner_raw;
+        pe.version = pr.version;
+        pe.risk = pr.risk;
+        pe.latency_ms = pr.latency_ms;
+        pe.tls = pr.tls_port;
+        pe.tls_version = pr.tls.tls_version;
+        pe.tls_cn = pr.tls.cn;
+        pe.tls_expired = pr.tls.expired;
+
         for (const auto& v : pr.vulns) {
             all_vulns.push_back(v);
+            pe.vulns.push_back(v.cve + ":" + v.severity + ":" + v.desc);
             if      (v.severity == "CRIT") vuln_crit++;
             else if (v.severity == "HIGH") vuln_high++;
             else if (v.severity == "MED")  vuln_med++;
@@ -870,7 +884,8 @@ void PortScanEngine::print_results(const ScanResults& r) {
         }
 
         std::lock_guard<std::mutex> lk(g_result_mtx);
-        g_result.open_ports.push_back({pr.port, pr.service});
+        g_result.ports.push_back(pe);
+        g_result.open_ports.push_back({pr.port, pr.service}); // legacy
     }
 
     g_result.os_guess = r.os_hint;

@@ -3,7 +3,7 @@
 
 void ip_intel(const std::string& ip) {
     print_header("IP INTELLIGENCE // " + ip);
-    g_result.target=ip; g_result.timestamp=now_str();
+    g_result.target=ip; g_result.start_time=now_str();
 
     print_section("GEOLOCATION");
     std::cout<<BLOOD_RED<<"  fetching...\n"<<RESET;
@@ -34,9 +34,14 @@ void ip_intel(const std::string& ip) {
             std::cout<<BLOOD_RED<<"  [proxy/vpn]    "<<WHITE<<(proxy=="true"?"YES  detected":"no")<<"\n";
             std::cout<<BLOOD_RED<<"  [hosting/dc]   "<<WHITE<<(hosting=="true"?"yes - datacenter":"no - residential")<<"\n";
             std::cout<<BLOOD_RED<<"  [mobile]       "<<WHITE<<(mobile=="true"?"yes":"no")<<"\n";
-            g_result.geo_country=g("country"); g_result.geo_city=g("city");
-            g_result.geo_isp=g("isp"); g_result.geo_as=g("as");
-            g_result.proxy=proxy=="true"; g_result.hosting=hosting=="true";
+
+            {
+                std::lock_guard<std::mutex> lk(g_result_mtx);
+                g_result.geo_country=g("country"); g_result.geo_city=g("city");
+                g_result.geo_isp=g("isp"); g_result.geo_as=g("as");
+                g_result.proxy=(proxy=="true"); g_result.hosting=(hosting=="true");
+            }
+
             auto lat=g("lat"), lon=g("lon");
             if(!lat.empty()) std::cout<<"\n"<<BLOOD_RED<<"  map: "<<WHITE<<"https://maps.google.com/?q="<<lat<<","<<lon<<"\n"<<RESET;
         }
