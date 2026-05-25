@@ -209,16 +209,16 @@ int main(int argc, char** argv) {
         int choice=-1; try{choice=std::stoi(cs);}catch(...){}
         if(choice==0) break;
 
-        g_result.start_time = now_str();
-
         if(choice==12){
-            g_result.end_time = now_str();
             std::string fn="dark_nexus_"+g_result.target+".json";
             std::replace(fn.begin(),fn.end(),':','_');
             export_json(fn);
             print_sep(); std::cout<<"  press enter..."; std::cin.ignore(); std::cin.get();
             print_banner(); continue;
         }
+
+        g_result = ScanResult();
+        g_result.start_time = now_str();
 
         if(choice==2){
             g_result.scan_type = "osint";
@@ -228,8 +228,14 @@ int main(int argc, char** argv) {
             std::getline(std::cin, u);
             while(!u.empty()&&(u.front()==' '||u.front()=='\t')) u.erase(u.begin());
             while(!u.empty()&&(u.back()==' '||u.back()=='\t'))   u.pop_back();
+
             if(u.empty()){std::cout<<BLOOD_RED<<"  empty input\n"<<RESET;}
-            else osint_scan(u);
+            else {
+                g_result.target = u;
+                osint_scan(u);
+            }
+        }
+
         } else if(choice==11){
             g_result.scan_type = "site";
             std::string s; std::cout<<BLOOD_RED<<"\n  site: "<<RESET; std::cin>>s;
@@ -241,6 +247,7 @@ int main(int argc, char** argv) {
             if(!valid_target(d)){
                 std::cout<<BLOOD_RED<<"  invalid domain\n"<<RESET;
             } else {
+                g_result.target = d;
                 std::string wl = auto_find_wordlist();
 
                 std::cout<<"\n"<<BLOOD_RED<<"  +----------------------------------------------------------+----------+\n"<<RESET;
