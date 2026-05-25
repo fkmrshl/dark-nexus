@@ -2,6 +2,7 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/security.hpp"
 #include <ares.h>
+#include <curl/curl.h>
 #include <poll.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -347,6 +348,30 @@ DnsEngine::run_ares_batch(const std::vector<std::string>& hosts,
     return results;
 }
 
+static std::string doh_http_get(const std::string& url) {
+    std::string body;
+    CURL* c = curl_easy_init();
+    if (!c) return "";
+    struct curl_slist* hdrs = curl_slist_append(nullptr, "Accept: application/dns-json");
+    hdrs = curl_slist_append(hdrs, "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    auto cb = +[](char* p, size_t s, size_t n, void* u) -> size_t {
+        auto* b = static_cast<std::string*>(u);
+        if (b->size() < 32768) b->append(p, std::min(s*n, 32768-b->size()));
+        return s*n;
+    };
+    curl_easy_setopt(c, CURLOPT_URL,           url.c_str());
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER,    hdrs);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA,     &body);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT,       4L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,0L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL,      1L);
+    curl_easy_perform(c);
+    curl_slist_free_all(hdrs);
+    curl_easy_cleanup(c);
+    return body;
+}
+
 static std::vector<std::string> doh_resolve_single(const std::string& host) {
     if (!InputGuard::is_valid_host(host)) return {};
     const std::vector<std::pair<std::string,std::string>> providers = {
@@ -354,8 +379,7 @@ static std::vector<std::string> doh_resolve_single(const std::string& host) {
         {"https://dns.google/resolve?name="+host+"&type=A",           "google"},
     };
     for (auto& [url, name] : providers) {
-        auto resp = safe_exec({"curl","-s","--max-time","4",
-                               "-H","Accept: application/dns-json","--",url}, 6);
+        auto resp = doh_http_get(url);
         if (resp.empty()) { continue; }
         std::vector<std::string> addrs;
         std::regex re("\"data\"\\s*:\\s*\"([0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3})\"");
@@ -481,7 +505,7 @@ std::string DnsEngine::resolve_ptr(const std::string& ip) {
 }
 
 std::unordered_map<std::string, std::vector<std::string>>
-DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrency*/)
+DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrency*/, const std::unordered_set<std::string>* doh_allow)
 {
     std::vector<std::string> uncached;
     std::unordered_map<std::string, std::vector<std::string>> out;
@@ -513,12 +537,13 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int /*concurrenc
             cache_put(h, ips);
             out[h] = std::move(ips);
         } else {
+            if (doh_allow && doh_allow->count(h) == 0) continue;
             doh_queue.push_back(h);
         }
     }
 
     if (!doh_queue.empty()) {
-        constexpr int DOH_CAP = 2000;
+        constexpr int DOH_CAP = 500;
         if ((int)doh_queue.size() > DOH_CAP) {
             std::lock_guard<std::mutex> lk(g_print_mtx);
             std::cout << BLOOD_RED << "  [*] DoH cascade: " << doh_queue.size()

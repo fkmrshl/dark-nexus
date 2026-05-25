@@ -5,6 +5,7 @@
 #include <random>
 #include <unordered_map>
 #include "../include/security.hpp"
+#include "../include/user_agents.hpp"
 
 static RateLimiter subdomain_rl(50000.0);
 static std::atomic<int>        g_http_slots{15};
@@ -39,28 +40,6 @@ static void http_jitter() {
     std::this_thread::sleep_for(std::chrono::milliseconds(d(tl_rng)));
 }
 
-static const std::string& random_ua() {
-    static const std::vector<std::string> pool = {
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 OPR/108.0.0.0",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
-        "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-        "curl/8.7.1",
-        "python-requests/2.31.0",
-    };
-    std::uniform_int_distribution<size_t> d(0, pool.size()-1);
-    return pool[d(tl_rng)];
-}
-
 struct CurlResponse {
     std::string headers;
     std::string body;
@@ -85,7 +64,8 @@ static size_t curl_body_cb(char* buf, size_t sz, size_t n, void* ud) {
 static CurlResponse libcurl_get(const std::string& url,
                                 const std::string& host_hdr,
                                 const std::string& ua,
-                                int timeout_s = 6)
+                                int timeout_s = 6,
+                                const std::vector<std::string>& extra_headers = {})
 {
     CurlResponse resp;
     CURL* c = curl_easy_init();
@@ -93,6 +73,9 @@ static CurlResponse libcurl_get(const std::string& url,
     struct curl_slist* hdrs = nullptr;
     if (!host_hdr.empty()) {
         hdrs = curl_slist_append(hdrs, ("Host: "+host_hdr).c_str());
+    }
+    for (auto& h : extra_headers) {
+        hdrs = curl_slist_append(hdrs, h.c_str());
     }
     curl_easy_setopt(c, CURLOPT_URL,           url.c_str());
     curl_easy_setopt(c, CURLOPT_USERAGENT,      ua.c_str());
@@ -157,13 +140,16 @@ std::string auto_find_wordlist() {
     std::string h = h_env ? h_env : "/root";
     for (auto& p : std::vector<std::string>{
         "./best-dns-wordlist.txt",
-         h+"/best-dns-wordlist.txt",
-         h+"/wordlists/best-dns-wordlist.txt",
-         "/usr/share/wordlists/best-dns-wordlist.txt",
-         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
-         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
-         "/opt/SecLists/Discovery/DNS/subdomains-top1million-110000.txt",
-         "/opt/wordlists/best-dns-wordlist.txt",
+        "../best-dns-wordlist.txt",
+        h+"/best-dns-wordlist.txt",
+        h+"/wordlists/best-dns-wordlist.txt",
+        "/usr/share/wordlists/best-dns-wordlist.txt",
+        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-500000.txt",
+        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
+        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
+        "/opt/SecLists/Discovery/DNS/subdomains-top1million-500000.txt",
+        "/opt/SecLists/Discovery/DNS/subdomains-top1million-110000.txt",
+        "/opt/wordlists/best-dns-wordlist.txt",
     }) {
         if (access(p.c_str(), F_OK) == 0) { return p; }
     }
@@ -286,54 +272,114 @@ static void passive_rapiddns(const std::string& d, std::set<std::string>& out)  
 static void passive_threatcrowd(const std::string& d, std::set<std::string>& out)  { auto b=safe_curl("https://www.threatcrowd.org/searchApi/v2/domain/report/?domain="+d,15); if(!b.empty()){extract_subs(b,d,out);} }
 
 static void passive_dnsdumpster(const std::string& domain, std::set<std::string>& out) {
-    auto cr = safe_exec({"curl","-s","--max-time","10","-c","/tmp/dnsdump_cookies.txt","https://dnsdumpster.com/"}, 12);
+    CURL* c = curl_easy_init();
+    if (!c) return;
+
+    std::string get_body, post_body;
+
+    auto cb = +[](char* p, size_t s, size_t n, void* u) -> size_t {
+        static_cast<std::string*>(u)->append(p, s * n);
+        return s * n;
+    };
+
+    curl_easy_setopt(c, CURLOPT_URL, "https://dnsdumpster.com/");
+    curl_easy_setopt(c, CURLOPT_USERAGENT, random_ua().c_str());
+    curl_easy_setopt(c, CURLOPT_COOKIEFILE, "");
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &get_body);
+
+    CURLcode res = curl_easy_perform(c);
+    if (res != CURLE_OK) {
+        curl_easy_cleanup(c);
+        return;
+    }
+
     std::regex re_c("csrfmiddlewaretoken.*?value=['\"]([^'\"]+)['\"]", std::regex::icase);
     std::smatch m;
-    if (!std::regex_search(cr, m, re_c)) { return; }
-    auto b = safe_exec({"curl","-s","--max-time","20",
-        "-b","/tmp/dnsdump_cookies.txt","-c","/tmp/dnsdump_cookies.txt",
-        "-H","Referer: https://dnsdumpster.com/",
-        "-d","csrfmiddlewaretoken="+m[1].str()+"&targetip="+domain+"&user=free",
-                       "https://dnsdumpster.com/"}, 22);
-    if (!b.empty()) { extract_subs(b, domain, out); }
+    if (!std::regex_search(get_body, m, re_c)) {
+        curl_easy_cleanup(c);
+        return;
+    }
+
+    std::string post_data = "csrfmiddlewaretoken=" + m[1].str() + "&targetip=" + domain + "&user=free";
+
+    struct curl_slist* hdrs = curl_slist_append(nullptr, "Referer: https://dnsdumpster.com/");
+
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_setopt(c, CURLOPT_POSTFIELDS, post_data.c_str());
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 20L);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &post_body);
+
+    res = curl_easy_perform(c);
+
+    curl_slist_free_all(hdrs);
+    curl_easy_cleanup(c);
+
+    if (res == CURLE_OK && !post_body.empty()) {
+        extract_subs(post_body, domain, out);
+    }
 }
 
 static void passive_virustotal(const std::string& d, std::set<std::string>& out) {
     const char* k = getenv("VT_API_KEY"); if (!k||!*k) { return; }
-    auto b = safe_exec({"curl","-s","--max-time","15","-H",std::string("x-apikey: ")+k,
-        "https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40"}, 18);
-    if (b.empty()) { return; }
-    extract_subs(b, d, out);
+    auto resp = libcurl_get("https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40", "", random_ua(), 15, {"x-apikey: "+std::string(k)});
+    if (resp.body.empty()) { return; }
+    extract_subs(resp.body, d, out);
     std::regex re_c("\"cursor\"\\s*:\\s*\"([^\"]+)\""); std::smatch mc;
-    if (std::regex_search(b, mc, re_c)) {
-        auto b2 = safe_exec({"curl","-s","--max-time","15","-H",std::string("x-apikey: ")+k,
-            "https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40&cursor="+mc[1].str()}, 18);
-        if (!b2.empty()) { extract_subs(b2, d, out); }
+    if (std::regex_search(resp.body, mc, re_c)) {
+        auto resp2 = libcurl_get("https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40&cursor="+mc[1].str(), "", random_ua(), 15, {"x-apikey: "+std::string(k)});
+        if (!resp2.body.empty()) { extract_subs(resp2.body, d, out); }
     }
 }
 
 static void passive_securitytrails(const std::string& d, std::set<std::string>& out) {
     const char* k = getenv("ST_API_KEY"); if (!k||!*k) { return; }
-    auto b = safe_exec({"curl","-s","--max-time","15","-H",std::string("apikey: ")+k,
-        "-H","Accept: application/json",
-        "https://api.securitytrails.com/v1/domain/"+d+"/subdomains?children_only=false&include_inactive=true"}, 18);
-    if (!b.empty()) { extract_subs(b, d, out); }
+    auto resp = libcurl_get("https://api.securitytrails.com/v1/domain/"+d+"/subdomains?children_only=false&include_inactive=true", "", random_ua(), 15, {"apikey: "+std::string(k), "Accept: application/json"});
+    if (!resp.body.empty()) { extract_subs(resp.body, d, out); }
 }
 
 static void passive_shodan(const std::string& d, std::set<std::string>& out) {
     const char* k = getenv("SHODAN_API_KEY"); if (!k||!*k) { return; }
-    auto b = safe_exec({"curl","-s","--max-time","15","https://api.shodan.io/dns/domain/"+d+"?key="+std::string(k)}, 18);
-    if (!b.empty()) { extract_subs(b, d, out); }
+    auto resp = libcurl_get("https://api.shodan.io/dns/domain/"+d+"?key="+std::string(k), "", random_ua(), 15);
+    if (!resp.body.empty()) { extract_subs(resp.body, d, out); }
 }
 
 static void passive_censys(const std::string& d, std::set<std::string>& out) {
     const char* ai = getenv("CENSYS_API_ID"); const char* as = getenv("CENSYS_API_SECRET");
     if (!ai||!*ai||!as||!*as) { return; }
-    auto b = safe_exec({"curl","-s","--max-time","15","-u",std::string(ai)+":"+std::string(as),
-        "-H","Content-Type: application/json",
-        "-d","{\"q\":\""+d+"\",\"fields\":[\"parsed.names\"],\"flatten\":true}",
-        "https://search.censys.io/api/v1/search/certificates"}, 18);
-    if (!b.empty()) { extract_subs(b, d, out); }
+
+    CURL* c = curl_easy_init();
+    if (!c) return;
+
+    std::string body;
+    auto cb = +[](char* p, size_t s, size_t n, void* u) -> size_t {
+        static_cast<std::string*>(u)->append(p, s * n);
+        return s * n;
+    };
+
+    struct curl_slist* hdrs = curl_slist_append(nullptr, "Content-Type: application/json");
+    std::string auth = std::string(ai) + ":" + std::string(as);
+    std::string post_data = "{\"q\":\"" + d + "\",\"fields\":[\"parsed.names\"],\"flatten\":true}";
+
+    curl_easy_setopt(c, CURLOPT_URL, "https://search.censys.io/api/v1/search/certificates");
+    curl_easy_setopt(c, CURLOPT_USERAGENT, random_ua().c_str());
+    curl_easy_setopt(c, CURLOPT_USERPWD, auth.c_str());
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_setopt(c, CURLOPT_POSTFIELDS, post_data.c_str());
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
+
+    CURLcode res = curl_easy_perform(c);
+    curl_slist_free_all(hdrs);
+    curl_easy_cleanup(c);
+
+    if (res == CURLE_OK && !body.empty()) {
+        extract_subs(body, d, out);
+    }
 }
 
 static void dns_extra_records(const std::string& domain, std::set<std::string>& out) {
@@ -386,26 +432,24 @@ static std::vector<std::string> doh_query(const std::string& hostname,
                                           const std::string& type = "A",
                                           std::string* prov = nullptr)
 {
+    if (!InputGuard::is_valid_host(hostname)) return {};
     const std::vector<std::pair<std::string,std::string>> providers = {
-        {"cloudflare","https://cloudflare-dns.com/dns-query?name="+hostname+"&type="+type},
-        {"google",    "https://dns.google/resolve?name="+hostname+"&type="+type},
+        {"cloudflare", "https://cloudflare-dns.com/dns-query?name="+hostname+"&type="+type},
+        {"google",     "https://dns.google/resolve?name="+hostname+"&type="+type},
     };
-    for (auto& [name,url] : providers) {
-        auto resp = safe_exec({"curl","-s","--max-time","6","-H","Accept: application/dns-json",url}, 8);
-        if (resp.empty()) { continue; }
+    for (auto& [name, url] : providers) {
+        auto resp = libcurl_get(url, "", random_ua(), 6,
+                                {"Accept: application/dns-json"});
+        if (resp.body.empty()) continue;
         std::vector<std::string> addrs;
         std::regex re("\"data\"\\s*:\\s*\"([0-9a-fA-F.:]+)\"");
-        std::sregex_iterator it(resp.begin(), resp.end(), re), end;
+        std::sregex_iterator it(resp.body.begin(), resp.body.end(), re), end;
         for (; it != end; ++it) {
             std::string a = (*it)[1].str();
-            if (a.find('.') != std::string::npos || a.find(':') != std::string::npos) {
+            if (a.find('.') != std::string::npos || a.find(':') != std::string::npos)
                 addrs.push_back(a);
-            }
         }
-        if (!addrs.empty()) {
-            if (prov) { *prov = name; }
-            return addrs;
-        }
+        if (!addrs.empty()) { if (prov) *prov = name; return addrs; }
     }
     return {};
 }
@@ -791,7 +835,6 @@ void subdomain_scan(const std::string& domain,
     << " via DnsEngine + DoH fallback...\n\n" << RESET;
 
     const int DNS_BATCH = 5000;
-    const int DOH_MAX   = 5000;
 
     std::mutex mtx;
     std::vector<SubResult> results;
@@ -800,6 +843,8 @@ void subdomain_scan(const std::string& domain,
     std::atomic<int> found_count{0}, dns_checked{0}, doh_used{0}, ip_dedup_hits{0};
 
     ThreadPool pool(std::min(max_threads, total_hosts > 0 ? total_hosts : 1));
+
+    std::unordered_set<std::string> wordlist_set(wordlist.begin(), wordlist.end());
 
     auto process_resolved = [&](const std::string& sub,
                                 std::vector<std::string> ips,
@@ -890,7 +935,7 @@ void subdomain_scan(const std::string& domain,
 
         bool fp = passive_subs.count(sub) > 0;
         std::string prefix = sub.substr(0, sub.size()-domain.size()-1);
-        bool fw = std::find(wordlist.begin(), wordlist.end(), prefix) != wordlist.end();
+        bool fw = wordlist_set.count(prefix) > 0;
         std::string source = (fp&&fw) ? "both" : fp ? "passive" : "brute";
 
         SubResult sr;
@@ -920,6 +965,8 @@ void subdomain_scan(const std::string& domain,
         }
     };
 
+    std::unordered_set<std::string> passive_set(passive_subs.begin(), passive_subs.end());
+
     for (int bs = 0; bs < total_hosts; bs += DNS_BATCH) {
         if (g_cancel_token.cancelled) break;
         int be = std::min(bs+DNS_BATCH, total_hosts);
@@ -929,7 +976,7 @@ void subdomain_scan(const std::string& domain,
         << WHITE << ((total_hosts+DNS_BATCH-1)/DNS_BATCH)
         << BLOOD_RED << " (" << WHITE << batch.size() << BLOOD_RED << " hosts) via DnsEngine...    " << RESET << std::flush;
 
-        auto dns_res = dns.resolve_batch(batch, 1500);
+        auto dns_res = dns.resolve_batch(batch, 1500, &passive_set);
         std::vector<std::future<void>> futs;
         std::vector<std::string> doh_queue;
 
@@ -938,18 +985,15 @@ void subdomain_scan(const std::string& domain,
                 futs.push_back(pool.submit([&,h=host,i=ips]() mutable {
                     process_resolved(h, i, "");
                 }));
-            } else {
+            } else if (passive_set.count(host)) {
                 doh_queue.push_back(host);
+            } else {
+                dns_checked++;
             }
         }
         for (auto& f : futs) { f.get(); }
 
         if (!doh_queue.empty()) {
-            if ((int)doh_queue.size() > DOH_MAX) {
-                std::cout << BLOOD_RED << "  [!] DoH queue: " << WHITE << doh_queue.size()
-                << BLOOD_RED << ", capping at " << WHITE << DOH_MAX << "\n" << RESET;
-                doh_queue.resize(DOH_MAX);
-            }
             std::vector<std::future<void>> dfuts;
             for (auto& host : doh_queue) {
                 dfuts.push_back(pool.submit([&,h=host]() {

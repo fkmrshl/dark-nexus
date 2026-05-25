@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <atomic>
 #include <chrono>
@@ -22,7 +23,7 @@ public:
     std::string              resolve_ptr(const std::string& ip);
 
     std::unordered_map<std::string, std::vector<std::string>>
-    resolve_batch(const std::vector<std::string>& hosts, int concurrency = 800);
+    resolve_batch(const std::vector<std::string>& hosts, int concurrency = 800, const std::unordered_set<std::string>* doh_allow = nullptr);
 
     void set_concurrency(int c);
     void clear_cache();
