@@ -34,6 +34,9 @@ set(HTTP_ONLY ON CACHE BOOL "" FORCE)
 set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(curl)
 
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(URING REQUIRED liburing)
 
@@ -57,6 +60,7 @@ target_link_libraries(dark_nexus
     ${URING_LIBRARIES}
     ${LIBCAP_LIB}
     pthread
+    nlohmann_json::nlohmann_json
 )
 target_include_directories(dark_nexus PRIVATE ${URING_INCLUDE_DIRS})
 

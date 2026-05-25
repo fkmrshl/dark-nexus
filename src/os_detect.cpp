@@ -156,6 +156,9 @@ void os_detect(const std::string& ip) {
     for(int i=0;i<4;i++) std::cout<<os_names[i]<<":"<<score[i]<<" ";
     std::cout<<"\n"<<RESET;
 
-    g_result.os_guess=verdict;
+    {
+        std::lock_guard<std::mutex> lk(g_result_mtx);
+        g_result.os_guess=verdict;
+    }
     LOG_INFO("os_detect","target="+ip+" verdict="+verdict);
 }

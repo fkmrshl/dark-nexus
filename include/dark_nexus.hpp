@@ -59,12 +59,77 @@ struct FdGuard {
     int get() const { return fd; }
 };
 
+struct PortEntry {
+    int port = 0;
+    std::string protocol;
+    std::string service;
+    std::string banner;
+    std::string version;
+    std::string risk;
+    int latency_ms = 0;
+    bool tls = false;
+    std::string tls_version;
+    std::string tls_cn;
+    bool tls_expired = false;
+    std::vector<std::string> vulns;
+};
+
+struct SubEntry {
+    std::string sub;
+    std::vector<std::string> ips;
+    std::string cname;
+    std::string http_code;
+    std::string server;
+    std::string waf;
+    std::string language;
+    std::string cms;
+    std::string source;
+    std::string title;
+    bool takeover_possible = false;
+};
+
+struct OsintEntry {
+    std::string platform;
+    std::string url;
+    std::string category;
+    std::string certainty;
+};
+
+struct TraceHop {
+    int ttl = 0;
+    std::string addr;
+    std::string hostname;
+    double avg_rtt_ms = -1.0;
+    double loss_pct = 0.0;
+    std::string asn;
+};
+
 struct ScanResult {
-    std::string target, timestamp;
-    std::vector<std::pair<int,std::string>> open_ports;
-    std::vector<std::string> subdomains, osint_hits;
-    std::string geo_country, geo_city, geo_isp, geo_as, os_guess;
-    bool proxy = false, hosting = false;
+    std::string schema_version = "2.0";
+    std::string tool_version = "dark-nexus/2.0";
+    std::string scan_type;
+    std::string target;
+    std::string resolved_ip;
+    std::string start_time;
+    std::string end_time;
+    int duration_ms = 0;
+
+    std::string geo_country;
+    std::string geo_city;
+    std::string geo_isp;
+    std::string geo_as;
+    bool proxy = false;
+    bool hosting = false;
+
+    std::string os_guess;
+    std::vector<PortEntry> ports;
+    std::vector<SubEntry> subdomains;
+    std::vector<OsintEntry> osint;
+    std::vector<TraceHop> trace;
+    std::vector<std::string> dns_records;
+
+    std::vector<std::pair<int,std::string>> open_ports; // legacy
+    std::vector<std::string> osint_hits; // legacy
 };
 
 struct CancellationToken {

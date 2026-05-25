@@ -472,6 +472,19 @@ static double bayes_score(bool ok, bool dead_absent,
                                   }
                               }
 
+                              {
+                                  std::lock_guard<std::mutex> rlk(g_result_mtx);
+                                  for (auto& o : g_result.osint) {
+                                      for (auto& h : hits) {
+                                          if (o.url == h.url) {
+                                              o.certainty = (h.certainty == HitConfidence::CONFIRMED) ? "CONFIRMED" :
+                                                            (h.certainty == HitConfidence::PROBABLE) ? "PROBABLE" : "POSSIBLE";
+                                              break;
+                                          }
+                                      }
+                                  }
+                              }
+
                               for (auto& tr : tools) {
                                   for (auto& th : tr.hits) {
                                       if (th.url.empty() && th.platform.empty()) continue;
@@ -495,6 +508,14 @@ static double bayes_score(bool ok, bool dead_absent,
                                           h.certainty = HitConfidence::CONFIRMED;
                                           h.evidence  = tr.tool;
                                           hits.push_back(h);
+                                          OsintEntry oe;
+                                          oe.platform = h.name;
+                                          oe.url = h.url;
+                                          oe.category = h.cat;
+                                          oe.certainty = "CONFIRMED";
+                                          std::lock_guard<std::mutex> rlk(g_result_mtx);
+                                          g_result.osint.push_back(oe);
+                                          g_result.osint_hits.push_back(h.url);
                                       }
                                   }
                               }
@@ -543,6 +564,13 @@ static double bayes_score(bool ok, bool dead_absent,
                                       if (conf >= 0.45) {
                                           std::lock_guard<std::mutex> lk(hits_mtx);
                                           hits.push_back({s.name, url, s.cat, evidence, conf, HitConfidence::POSSIBLE});
+                                          OsintEntry oe;
+                                          oe.platform = s.name;
+                                          oe.url = url;
+                                          oe.category = s.cat;
+                                          oe.certainty = "POSSIBLE";
+                                          std::lock_guard<std::mutex> rlk(g_result_mtx);
+                                          g_result.osint.push_back(oe);
                                           g_result.osint_hits.push_back(url);
                                       }
                                       if (cur % 10 == 0) {

@@ -947,7 +947,20 @@ void subdomain_scan(const std::string& domain,
         {
             std::lock_guard<std::mutex> lk(mtx);
             results.push_back(sr);
-            g_result.subdomains.push_back(sub);
+            SubEntry se;
+            se.sub = sr.sub;
+            se.ips = sr.ips;
+            se.cname = sr.cname;
+            se.http_code = sr.http_code;
+            se.server = sr.server;
+            se.waf = sr.waf.name;
+            se.language = sr.tech.language;
+            se.cms = sr.tech.cms;
+            se.source = sr.source;
+            se.title = sr.title;
+
+            std::lock_guard<std::mutex> rlk(g_result_mtx);
+            g_result.subdomains.push_back(se);
         }
         {
             std::lock_guard<std::mutex> lk(g_print_mtx);
