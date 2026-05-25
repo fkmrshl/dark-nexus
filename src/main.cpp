@@ -1,7 +1,6 @@
 #include "../include/dark_nexus.hpp"
 #include "../include/security.hpp"
 #include "../include/output.hpp"
-
 static void print_banner() {
     if (write(STDOUT_FILENO, "\033[2J\033[H", 7)) {}
     std::cout<<"\n"<<BLOOD_RED<<BOLD;
@@ -214,33 +213,31 @@ int main(int argc, char** argv) {
             std::replace(fn.begin(),fn.end(),':','_');
             export_json(fn);
             print_sep(); std::cout<<"  press enter..."; std::cin.ignore(); std::cin.get();
-            print_banner(); continue;
+            print_banner(); 
+            continue;
         }
 
         g_result = ScanResult();
         g_result.start_time = now_str();
 
-        if(choice==2){
+     if(choice==2){
             g_result.scan_type = "osint";
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
             std::string u;
-            std::cout<<WHITE<<"\n  osint target "<<RESET<<WHITE<<"(username / email / +phone): "<<RESET;
+            std::cout<<WHITE<<"\n  osint target: "<<RESET;
             std::getline(std::cin, u);
             while(!u.empty()&&(u.front()==' '||u.front()=='\t')) u.erase(u.begin());
             while(!u.empty()&&(u.back()==' '||u.back()=='\t'))   u.pop_back();
-
             if(u.empty()){std::cout<<BLOOD_RED<<"  empty input\n"<<RESET;}
-            else {
-                g_result.target = u;
-                osint_scan(u);
-            }
+            else { g_result.target = u; osint_scan(u); }
         }
-
-        } else if(choice==11){
+        else if(choice==11){
             g_result.scan_type = "site";
             std::string s; std::cout<<BLOOD_RED<<"\n  site: "<<RESET; std::cin>>s;
+            g_result.target = s;
             site_lookup(s);
-        } else if(choice==1){
+        }
+        else if(choice==1){
             g_result.scan_type = "subdomain";
             std::string d;
             std::cout<<WHITE<<"\n  domain: "<<RESET; std::cin>>d;
