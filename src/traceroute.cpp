@@ -843,6 +843,19 @@ void traceroute(const std::string& target) {
     auto hops = all_results[0].second;
 
     for (auto& hs : hops) {
+        TraceHop th;
+        th.ttl = hs.ttl;
+        th.addr = hs.addr;
+        th.hostname = hs.hostname;
+        th.avg_rtt_ms = hs.avg_rtt;
+        th.loss_pct = hs.loss_pct;
+        th.asn = hs.asn_info;
+
+        {
+            std::lock_guard<std::mutex> lk(g_result_mtx);
+            g_result.trace.push_back(th);
+        }
+
         std::cout << BLOOD_RED << "  " << WHITE << std::setw(3) << hs.ttl << "  ";
 
         if (hs.received == 0) {
