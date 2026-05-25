@@ -353,6 +353,7 @@ static std::string doh_http_get(const std::string& url) {
     CURL* c = curl_easy_init();
     if (!c) return "";
     struct curl_slist* hdrs = curl_slist_append(nullptr, "Accept: application/dns-json");
+    hdrs = curl_slist_append(hdrs, "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
     auto cb = +[](char* p, size_t s, size_t n, void* u) -> size_t {
         auto* b = static_cast<std::string*>(u);
         if (b->size() < 32768) b->append(p, std::min(s*n, 32768-b->size()));
