@@ -113,9 +113,6 @@ The author is not responsible for any misuse or damage caused by this tool.
 ---
 
 ## Author
-
-Structure & code architecture by - Marshal
-
-Designed with AI
+By - Marshal with Jules❤️
 
 Bugs & feedback welcome - [t.me/fuckmarshal](https://t.me/fuckmarshal) 
