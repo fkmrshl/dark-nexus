@@ -413,14 +413,16 @@ std::string auto_find_wordlist() {
     const char* h_env = getenv("HOME");
     std::string h = h_env ? h_env : "/root";
     for (auto& p : std::vector<std::string>{
-        "./best-dns-wordlist.txt","../best-dns-wordlist.txt",
-        h+"/best-dns-wordlist.txt",h+"/wordlists/best-dns-wordlist.txt",
-        "/usr/share/wordlists/best-dns-wordlist.txt",
+        "./best-dns-wordlist.txt",
+        h+"/best-dns-wordlist.txt",
+        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000000.txt",
         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-500000.txt",
         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
+        "/usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-500000.txt",
         "/opt/SecLists/Discovery/DNS/subdomains-top1million-500000.txt",
         "/opt/wordlists/best-dns-wordlist.txt",
+        h+"/wordlists/subdomains-top1million-500000.txt",
     }) { if (access(p.c_str(), F_OK)==0) return p; }
     return "";
 }
