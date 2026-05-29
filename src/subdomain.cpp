@@ -414,6 +414,7 @@ std::string auto_find_wordlist() {
     std::string h = h_env ? h_env : "/root";
     for (auto& p : std::vector<std::string>{
         "./best-dns-wordlist.txt",
+        "/usr/share/wordlists/dark-nexus/best-dns-wordlist.txt",
         h+"/best-dns-wordlist.txt",
         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000000.txt",
         "/usr/share/seclists/Discovery/DNS/subdomains-top1million-500000.txt",
