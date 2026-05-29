@@ -27,6 +27,7 @@ public:
 
     void set_concurrency(int c);
     void clear_cache();
+    void load_resolvers(const std::string& path);
 
 private:
     DnsEngine();
