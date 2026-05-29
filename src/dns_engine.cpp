@@ -30,9 +30,12 @@ static const std::vector<std::string> ALL_RESOLVERS = {
 };
 
 static constexpr int N_SHARDS    = 64;
-static constexpr int N_CHANNELS  = 4;
+static constexpr int N_CHANNELS  = 16;   
 static constexpr int RESOLVERS_PER_CHANNEL = 4;
-static constexpr int CONCURRENCY_PER_CHANNEL = 500;
+static constexpr int CONCURRENCY_PER_CHANNEL = 1000; 
+
+static std::vector<std::string> g_custom_resolvers;
+static std::mutex                g_custom_resolvers_mtx;
 
 struct AresCtx {
     std::vector<std::string>* out;
@@ -246,13 +249,37 @@ void DnsEngine::clear_cache() {
 }
 
 static std::string make_shard_csv(int channel_idx) {
-    int start = (channel_idx * RESOLVERS_PER_CHANNEL) % (int)ALL_RESOLVERS.size();
+    std::lock_guard<std::mutex> lk(g_custom_resolvers_mtx);
+    const auto& resolvers = g_custom_resolvers.empty() ? ALL_RESOLVERS : g_custom_resolvers;
+    int rpc = std::min(RESOLVERS_PER_CHANNEL, (int)resolvers.size());
+    int start = (channel_idx * rpc) % (int)resolvers.size();
     std::string csv;
-    for (int i = 0; i < RESOLVERS_PER_CHANNEL; i++) {
-        if (i) { csv += ","; }
-        csv += ALL_RESOLVERS[(start + i) % ALL_RESOLVERS.size()];
+    for (int i = 0; i < rpc; i++) {
+        if (i) csv += ",";
+        csv += resolvers[(start + i) % resolvers.size()];
     }
     return csv;
+}
+
+void DnsEngine::load_resolvers(const std::string& path) {
+    if (path.empty()) return;
+    std::ifstream f(path);
+    if (!f.is_open()) return;
+    std::vector<std::string> loaded;
+    loaded.reserve(100000);
+    std::string line;
+    while (std::getline(f, line)) {
+        while (!line.empty() && (line.back()=='\r'||line.back()=='\n'||line.back()==' '))
+            line.pop_back();
+        if (line.empty() || line[0]=='#') continue;
+        if (InputGuard::is_valid_ipv4(line)) loaded.push_back(line);
+    }
+    if (!loaded.empty()) {
+        std::lock_guard<std::mutex> lk(g_custom_resolvers_mtx);
+        g_custom_resolvers = std::move(loaded);
+        std::cout << BLOOD_RED << "  [+] " << WHITE << g_custom_resolvers.size()
+                  << BLOOD_RED << " custom resolvers loaded\n" << RESET;
+    }
 }
 
 std::unordered_map<std::string, std::vector<std::string>>
