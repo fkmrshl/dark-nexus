@@ -48,7 +48,7 @@ cmake -B build -G Ninja
 cmake --build build
 
 echo -e "${WHITE}[*] Installing binary to system...${RESET}"
-
+rm -f /usr/local/bin/dark-nexus
 cp build/dark_nexus /usr/local/bin/dark-nexus
 chmod 755 /usr/local/bin/dark-nexus
 
