@@ -1,4 +1,4 @@
-  <div align="center">
+   <div align="center">
     <img src="assets/dark_nexus.svg" width="100%" alt="Dark Nexus Terminal">
   </div>
  
