@@ -1,13 +1,18 @@
-   <div align="center">
-    <img src="assets/dark_nexus.svg" width="100%" alt="Dark Nexus Terminal">
-  </div>
- 
 <div align="center">
 
+![Dark Nexus Banner](https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/assets/dark_nexus_banner.svg)
 
+**Tested & Highly Optimized for:**
 
-<div align="center">
+![Kali Linux](https://img.shields.io/badge/Kali_Linux-268BEE?style=for-the-badge&logo=kali-linux&logoColor=white)
+× 
+![BlackArch](https://img.shields.io/badge/BlackArch-000000?style=for-the-badge&logo=arch-linux&logoColor=white)
 
+</div>
+
+<br>
+
+**Dark Nexus** — ultimate multi-threaded reconnaissance & pentesting framework written in **C++17**.
   
 
   ![Language](https://img.shields.io/badge/language-C%2B%2B17-dc143c?style=flat-square)
