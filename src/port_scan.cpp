@@ -1,3 +1,5 @@
+#include <unordered_set>
+#include <set>
 #include "../include/dark_nexus.hpp"
 #include "../include/security.hpp"
 #include "../include/port_scan_engine.hpp"
@@ -28,6 +30,15 @@ static const std::vector<int> TOP1000 = {
     3389,3690,4444,4445,4899,5000,5432,5900,5901,6000,6001,6379,6443,7001,
     7443,8000,8008,8080,8081,8443,8888,9000,9090,9200,9300,10000,11211,
     27017,50070
+};
+
+static const std::unordered_set<int> HTTP_PORTS = {
+    80, 443, 8080, 8443, 8008, 8888, 3000, 5000, 9000, 9090, 10000,
+    2052, 2053, 2082, 2083, 2086, 2087, 2095, 2096,
+    8880, 4443, 7443, 8081, 8181, 8888, 3001, 4000, 6001, 7000
+};
+static const std::unordered_set<int> TLS_PORTS = {
+    443, 8443, 465, 993, 995, 636, 5671, 6443, 4443, 7443, 2083, 2087, 2053, 2096
 };
 
 static const std::vector<int> TOP100 = {
@@ -745,7 +756,7 @@ ScanResults PortScanEngine::run() {
                     std::lock_guard<std::mutex> plk(g_print_mtx);
                     std::cout << BLOOD_RED << "  [+] " << WHITE
                               << std::left << std::setw(6) << p
-                              << "/tcp  open  " << std::setw(16) << svc(p)
+                              << "/" << (cfg_.udp_scan ? "udp" : "tcp") << "  " << "open" << "  " << std::setw(16) << svc(p)
                               << "(" << lat << "ms)" << RESET << "\n";
 
                 } else if (filtered) {
@@ -755,8 +766,11 @@ ScanResults PortScanEngine::run() {
                 }
             }));
         }
+        auto per_task_timeout = std::chrono::milliseconds(
+            (cfg_.connect_ms + cfg_.banner_ms) * (cfg_.retry_count + 1) + 500
+        );
         for (auto& f : futs) {
-            if (f.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {}
+            f.wait_for(per_task_timeout);
         }
     }
 
@@ -791,7 +805,7 @@ ScanResults PortScanEngine::run() {
                 results.open_ports[i].version = extract_version(results.open_ports[i].banner_raw, p);
                 results.open_ports[i].vulns = check_vulns(p, results.open_ports[i].version, results.open_ports[i].banner_raw);
 
-                if (cfg_.tls_inspect && (p==443||p==8443||p==465||p==993||p==995||p==636||p==5671||p==6443)) {
+                if (cfg_.tls_inspect && TLS_PORTS.count(p)) {
                     results.open_ports[i].tls = inspect_tls(p);
                     results.open_ports[i].tls_port = true;
                     if (results.open_ports[i].tls.expired) {
@@ -802,7 +816,7 @@ ScanResults PortScanEngine::run() {
                     }
                 }
 
-                if (cfg_.http_probe && (p==80||p==8080||p==8008||p==3000||p==8888||p==443||p==8443)) {
+                if (cfg_.http_probe && HTTP_PORTS.count(p)) {
                     results.open_ports[i].http = probe_http(p);
                     results.open_ports[i].http_port = true;
                     if ((p==443||p==8443) && !results.open_ports[i].http.hsts && results.open_ports[i].http.status_code > 0)
@@ -820,8 +834,9 @@ ScanResults PortScanEngine::run() {
                 }
             }));
         }
+        auto deep_timeout = std::chrono::milliseconds(cfg_.banner_ms * 3 + 1000);
         for (auto& f : dfuts) {
-            if (f.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {}
+            f.wait_for(deep_timeout);
         }
         std::cout << "\n";
     }
@@ -901,6 +916,31 @@ void PortScanEngine::print_results(const ScanResults& r) {
     std::cout << BLOOD_RED << "  [speed]         " << WHITE << r.ports_per_sec << " ports/sec\n";
 
     if (!all_vulns.empty()) {
+    // Deduplicate by (cve + desc) key
+    {
+        std::set<std::string> seen_vulns;
+        std::vector<VulnHint> deduped;
+        deduped.reserve(all_vulns.size());
+        for (auto& v : all_vulns) {
+            std::string key = v.cve + "|" + v.desc;
+            if (seen_vulns.insert(key).second) {
+                deduped.push_back(v);
+            }
+        }
+        all_vulns = std::move(deduped);
+    }
+    // Re-sort by severity: CRIT > HIGH > MED > INFO
+    std::sort(all_vulns.begin(), all_vulns.end(), [](const VulnHint& a, const VulnHint& b){
+        return sev_rank(a.severity) < sev_rank(b.severity);
+    });
+    // Recount after dedup
+    vuln_crit = vuln_high = vuln_med = vuln_info = 0;
+    for (auto& v : all_vulns) {
+        if      (v.severity=="CRIT") vuln_crit++;
+        else if (v.severity=="HIGH") vuln_high++;
+        else if (v.severity=="MED")  vuln_med++;
+        else                         vuln_info++;
+    }
         print_section("VULNERABILITY HINTS");
         std::cout << BLOOD_RED << "  " << WHITE << vuln_crit << BLOOD_RED << " CRIT  " << WHITE << vuln_high << BLOOD_RED << " HIGH  " << WHITE << vuln_med << BLOOD_RED << " MED\n\n" << RESET;
 
@@ -919,6 +959,17 @@ void PortScanEngine::print_results(const ScanResults& r) {
         " time=" + std::to_string((int)r.total_time_s) + "s");
 }
 
+// Calling conventions:
+//   start=0, end_port=0          → top-1000 TCP ports
+//   start=0, end_port=-1         → top-100 TCP ports
+//   start=N, end_port=0          → single port N (TCP or UDP)
+//   start=N, end_port=M (M>=N)   → range N..M
+//   scan_udp=true                → use UDP probes instead of TCP SYN/connect
+//
+// For UDP single port: caller should pass start=N, end_port=0, scan_udp=true
+// For UDP range 1-1024: caller passes start=1, end_port=1024, scan_udp=true
+//   The caller (menu) should default UDP end_port to 1024 if user skips it.
+
 void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     print_header("PORT SCAN // " + ip);
 
@@ -931,17 +982,31 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     cfg.aggressive = true;
 
     if (start == 0 && end_port == 0) {
+        // no range given → top-1000
         cfg.ports = TOP1000;
         std::cout << BLOOD_RED << "  mode: " << WHITE << "top-1000 ports\n" << RESET;
+    } else if (start > 0 && end_port == 0) {
+        // single port check (e.g. start=8080, end=0 means "just check port 8080")
+        cfg.ports = {start};
+        std::cout << BLOOD_RED << "  mode: " << WHITE << "single port → " << start << "\n" << RESET;
+    } else if (start == 0 && end_port > 0) {
+        // top-100 shortcut kept for backward compat (caller can send start=0,end=-1 for top-100)
+        cfg.ports = TOP100;
+        std::cout << BLOOD_RED << "  mode: " << WHITE << "top-100 ports\n" << RESET;
     } else {
-        if (end_port == 0 && start == 0) {
-            cfg.ports = TOP100;
-            std::cout << BLOOD_RED << "  mode: " << WHITE << "top-100 ports\n" << RESET;
-        } else {
-            for (int p = std::max(1, start); p <= std::min(65535, end_port); p++) cfg.ports.push_back(p);
-            std::cout << BLOOD_RED << "  range: " << WHITE << start << "-" << end_port
-                      << BLOOD_RED << " (" << WHITE << cfg.ports.size() << BLOOD_RED << " ports)\n" << RESET;
-        }
+        // explicit range
+        int lo = std::max(1, start);
+        int hi = std::min(65535, end_port);
+        cfg.ports.reserve(hi - lo + 1);
+        for (int p = lo; p <= hi; p++) cfg.ports.push_back(p);
+        std::cout << BLOOD_RED << "  range: " << WHITE << lo << "-" << hi
+                  << BLOOD_RED << " (" << WHITE << cfg.ports.size() << BLOOD_RED << " ports)\n" << RESET;
+    }
+
+    if (cfg.udp_scan) {
+        std::cout << BLOOD_RED << "\n  [*] UDP SCAN SELECTED — sending protocol-aware probes\n"
+                  << "      note: open|filtered = no ICMP unreachable received (normal for UDP)\n"
+                  << RESET;
     }
 
     print_section("PHASE 0 // CALIBRATION");
@@ -952,6 +1017,27 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     cfg.banner_ms = acfg.banner_ms;
     cfg.retry_count = acfg.retry_count;
     cfg.pool_size = acfg.pool_size;
+
+    // For large ranges: reduce retries, tighten timeouts to avoid stalling
+    int port_count = (int)cfg.ports.size();
+    if (port_count > 5000) {
+        cfg.retry_count = 1;
+        // clamp connect timeout tighter for large sweeps
+        cfg.connect_ms = std::max(150, std::min(cfg.connect_ms, 800));
+        // scale pool up to handle volume but cap at system limits
+        cfg.pool_size  = std::min(500, cfg.pool_size * 2);
+        std::cout << BLOOD_RED << "  [large-range] " << WHITE
+                  << "adjusted: timeout=" << cfg.connect_ms << "ms"
+                  << " retries=1 threads=" << cfg.pool_size << "\n" << RESET;
+    } else if (port_count > 1000) {
+        cfg.retry_count = std::min(cfg.retry_count, 1);
+        cfg.pool_size   = std::min(300, cfg.pool_size + 50);
+    }
+    // UDP needs longer timeout per-port (single attempt, ICMP wait)
+    if (cfg.udp_scan) {
+        cfg.connect_ms = std::max(cfg.connect_ms, 1500);
+        cfg.pool_size  = std::min(cfg.pool_size, 100); // UDP is I/O bound, fewer threads
+    }
     cfg.median_rtt = acfg.median_rtt;
 
     std::cout << BLOOD_RED << "  rtt: " << WHITE
