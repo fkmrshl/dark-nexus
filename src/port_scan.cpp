@@ -1,3 +1,5 @@
+#include <atomic>
+#include <sys/resource.h>
 #include <unordered_set>
 #include <set>
 #include "../include/dark_nexus.hpp"
@@ -720,6 +722,7 @@ ScanResults PortScanEngine::run() {
     std::cout << BLOOD_RED << "  sweeping " << WHITE << total << BLOOD_RED << " ports...\n" << RESET;
 
     auto scan_start = std::chrono::steady_clock::now();
+    std::atomic<int> phase1_done{0};
     {
         int psz = std::min(cfg_.pool_size, (int)sorted_ports.size());
         ThreadPool pool(psz);
@@ -731,7 +734,9 @@ ScanResults PortScanEngine::run() {
                 if (token_.cancelled) return;
 
                 int p = sorted_ports[i];
-                port_rl.acquire();
+                if (!cfg_.skip_rate_limiting) {
+                    port_rl.acquire();
+                }
 
                 std::pair<int,bool> res;
                 if (cfg_.udp_scan) {
@@ -744,6 +749,16 @@ ScanResults PortScanEngine::run() {
 
                 auto [lat, filtered] = res;
                 done_c++;
+
+                {
+                    int prog = ++phase1_done;
+                    if (prog % 200 == 0 || prog == total) {
+                        std::lock_guard<std::mutex> lk(g_print_mtx);
+                        draw_progress(prog, total,
+                            std::to_string(open_c.load()) + " open, " +
+                            std::to_string(filt_c.load()) + " filtered");
+                    }
+                }
 
                 if (lat > 0) {
                     PortResult pr{};
@@ -767,10 +782,21 @@ ScanResults PortScanEngine::run() {
             }));
         }
         auto per_task_timeout = std::chrono::milliseconds(
-            (cfg_.connect_ms + cfg_.banner_ms) * (cfg_.retry_count + 1) + 500
+            cfg_.udp_scan
+                ? cfg_.connect_ms + 300   // UDP: probe_udp_smart() waits at most connect_ms
+                : (cfg_.connect_ms + cfg_.banner_ms) * (cfg_.retry_count + 1) + 500
         );
+        int failed_futures = 0;
         for (auto& f : futs) {
-            f.wait_for(per_task_timeout);
+            auto status = f.wait_for(per_task_timeout);
+            if (status == std::future_status::timeout) {
+                failed_futures++;
+                f.wait_for(per_task_timeout * 2); // one extra chance
+            }
+        }
+        if (failed_futures > 0) {
+            std::lock_guard<std::mutex> lk(g_print_mtx);
+            std::cout << BLOOD_RED << "  [!] " << failed_futures << " port futures exceeded timeout\n" << RESET;
         }
     }
 
@@ -959,6 +985,22 @@ void PortScanEngine::print_results(const ScanResults& r) {
         " time=" + std::to_string((int)r.total_time_s) + "s");
 }
 
+// TIMEOUT STRATEGY:
+//
+// TCP:  timeout = time to receive RST/SYN-ACK (fast; closed port resets immediately)
+//   < 1000 ports  -> calibrated (2-3s), 2 retries
+//   1000-5000     -> 1 retry, pool+50
+//   > 5000        -> max 800ms, 1 retry, pool*2 (capped at 500)
+//
+// UDP:  timeout = wait for ICMP unreachable OR silence (slow; no fast reset)
+//   < 1000 ports  -> max 1200ms, 0 retries  (enough time for ICMP)
+//   1000-5000     -> max 1000ms, 0 retries
+//   5001-10000    -> max 600ms,  0 retries
+//   > 10000       -> max 400ms,  0 retries  (aggressive - avoids multi-hour scan)
+//
+// Key: UDP timeout must DECREASE for large ranges.
+//      Increasing it (old code) causes exponential blowup.
+
 // Calling conventions:
 //   start=0, end_port=0          → top-1000 TCP ports
 //   start=0, end_port=-1         → top-100 TCP ports
@@ -1013,6 +1055,23 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     std::cout << BLOOD_RED << "  measuring target latency...\n" << RESET;
 
     auto acfg = calibrate_target(ip);
+
+    // Check FD limits before creating large thread pools.
+    // probe_syn() uses up to 3 FDs per thread; with 500 threads = 1500 FDs > typical ulimit.
+    {
+        struct rlimit rl;
+        getrlimit(RLIMIT_NOFILE, &rl);
+        int available_fds = (int)rl.rlim_cur - 50;       // reserve 50 for other use
+        int needed_fds    = acfg.pool_size * 3;          // probe_syn worst case: 3 FDs/thread
+        if (needed_fds > available_fds) {
+            int safe_pool = available_fds / 3;
+            std::cout << BLOOD_RED << "  [!] FD limit " << available_fds
+                      << " < needed " << needed_fds
+                      << " - reducing pool to " << safe_pool << "\n" << RESET;
+            acfg.pool_size = std::max(10, safe_pool);
+        }
+    }
+
     cfg.connect_ms = acfg.connect_ms;
     cfg.banner_ms = acfg.banner_ms;
     cfg.retry_count = acfg.retry_count;
@@ -1033,11 +1092,31 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
         cfg.retry_count = std::min(cfg.retry_count, 1);
         cfg.pool_size   = std::min(300, cfg.pool_size + 50);
     }
-    // UDP needs longer timeout per-port (single attempt, ICMP wait)
+    // UDP timeout must DECREASE for large ranges - opposite of TCP.
+    // TCP timeout = wait for RST (fast). UDP timeout = wait for ICMP or silence (slow).
+    // Forcing 1500ms minimum on 10000-port UDP scan = 150s minimum -> hangs.
     if (cfg.udp_scan) {
-        cfg.connect_ms = std::max(cfg.connect_ms, 1500);
-        cfg.pool_size  = std::min(cfg.pool_size, 100); // UDP is I/O bound, fewer threads
+        if (port_count > 10000) {
+            cfg.connect_ms = std::min(cfg.connect_ms, 400);
+            cfg.pool_size  = std::min(cfg.pool_size, 50);
+        } else if (port_count > 5000) {
+            cfg.connect_ms = std::min(cfg.connect_ms, 600);
+            cfg.pool_size  = std::min(cfg.pool_size, 75);
+        } else if (port_count > 1000) {
+            cfg.connect_ms = std::min(cfg.connect_ms, 1000);
+            cfg.pool_size  = std::min(cfg.pool_size, 100);
+        } else {
+            // Small UDP range: keep generous timeout for ICMP
+            cfg.connect_ms = std::max(cfg.connect_ms, 1200);
+            cfg.pool_size  = std::min(cfg.pool_size, 100);
+        }
     }
+
+    if (cfg.udp_scan && port_count > 1000) {
+        cfg.retry_count = 0;  // probe_udp_smart() never retries; retry_count=1 only inflates timeouts
+        std::cout << BLOOD_RED << "  [udp] retry_count forced to 0 (UDP has no retries)\n" << RESET;
+    }
+
     cfg.median_rtt = acfg.median_rtt;
 
     std::cout << BLOOD_RED << "  rtt: " << WHITE
@@ -1049,6 +1128,11 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     std::string hostname = ptr_lookup(ip);
     if (!hostname.empty() && hostname != ip)
         std::cout << BLOOD_RED << "  ptr: " << WHITE << hostname << "\n" << RESET;
+
+    if (port_count > 5000) {
+        cfg.skip_rate_limiting = true;
+        std::cout << BLOOD_RED << "  [opt] rate limiter disabled for large scan\n" << RESET;
+    }
 
     PortScanEngine engine(cfg, g_cancel_token);
     ScanResults res = engine.run();
