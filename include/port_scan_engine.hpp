@@ -19,6 +19,7 @@ struct PortScanConfig {
     bool tls_inspect;
     bool http_probe;
     bool aggressive;
+    bool skip_rate_limiting = false;
 };
 
 struct VulnHint {
