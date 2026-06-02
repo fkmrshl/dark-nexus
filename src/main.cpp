@@ -332,20 +332,33 @@ int main(int argc, char** argv) {
             switch(choice){
                 case 3: {
                     g_result.scan_type = "port_scan";
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
                     std::string s_in;
-                    std::cout<<BLOOD_RED<<"  start port (0=top1000) [add U for UDP, e.g. 0U]: "<<RESET; std::cin>>s_in;
+                    std::cout<<BLOOD_RED<<"  start port (0=top1000) [add U for UDP, e.g. 0U]: "<<RESET;
+                    std::getline(std::cin, s_in);
                     bool udp = false;
                     if (!s_in.empty() && (s_in.back() == 'U' || s_in.back() == 'u')) {
                         udp = true; s_in.pop_back();
+                        std::cout<<BLOOD_RED<<"  [*] UDP mode selected\n"<<RESET;
                     }
                     int s = 0;
                     try { s = std::stoi(s_in); } catch (...) {}
                     if (s == 0) { port_scan(ip_res, 0, 0, udp); }
                     else {
-                        int e=0;
-                        std::cout<<BLOOD_RED<<"  end port: "<<RESET; std::cin>>e;
-                        if (!valid_port(s) || !valid_port(e) || s>e) { std::cout<<BLOOD_RED<<"  invalid range\n"<<RESET; break; }
+                        std::string e_in;
+                        std::cout<<BLOOD_RED<<"  end port [empty for single port, or 1024 for UDP default]: "<<RESET;
+                        std::getline(std::cin, e_in);
+                        int e = 0;
+                        if (!e_in.empty()) {
+                            try { e = std::stoi(e_in); } catch (...) {}
+                        } else if (udp) {
+                            e = 1024; // Default to 1024 for UDP if end port is empty
+                        }
 
+                        // if e is 0 (either typed as 0 or empty and not UDP default), it's single port mode
+                        if (e != 0 && (s > e || !valid_port(s) || !valid_port(e))) {
+                            std::cout<<BLOOD_RED<<"  invalid range\n"<<RESET; break;
+                        }
                         port_scan(ip_res, s, e, udp);
                     }
                     break;
