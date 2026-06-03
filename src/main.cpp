@@ -349,6 +349,7 @@ int main(int argc, char** argv) {
                 case 3: {
                     g_result.scan_type = "port_scan";
                     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    
                     std::string s_in;
                     std::cout<<BLOOD_RED<<"  start port (0=top1000) [add U for UDP, e.g. 0U]: "<<RESET;
                     std::getline(std::cin, s_in);
@@ -359,26 +360,49 @@ int main(int argc, char** argv) {
                     }
                     int s = 0;
                     try { s = std::stoi(s_in); } catch (...) {}
-                    if (s == 0) { port_scan(ip_res, 0, 0, udp, 3, {}); }
-                    else {
+                    
+                    int e = 0;
+                    if (s != 0) {
                         std::string e_in;
                         std::cout<<BLOOD_RED<<"  end port [empty for single port, or 1024 for UDP default]: "<<RESET;
                         std::getline(std::cin, e_in);
-                        int e = 0;
                         if (!e_in.empty()) {
                             try { e = std::stoi(e_in); } catch (...) {}
                         } else if (udp) {
-                            e = 1024; // Default to 1024 for UDP if end port is empty
+                            e = 1024; 
                         }
 
-                        // if e is 0 (either typed as 0 or empty and not UDP default), it's single port mode
                         if (e != 0 && (s > e || !valid_port(s) || !valid_port(e))) {
                             std::cout<<BLOOD_RED<<"  invalid range\n"<<RESET; break;
                         }
-                        port_scan(ip_res, s, e, udp, 3, {});
                     }
+
+                    
+                    std::string t_in;
+                    std::cout<<BLOOD_RED<<"  timing profile (0-5) [empty = default 3]: "<<RESET;
+                    std::getline(std::cin, t_in);
+                    int timing = 3;
+                    if (!t_in.empty()) {
+                        try { timing = std::stoi(t_in); } catch(...) {}
+                    }
+    
+                    std::string excl_in;
+                    std::cout<<BLOOD_RED<<"  exclude ports (comma separated) [empty = none]: "<<RESET;
+                    std::getline(std::cin, excl_in);
+                    std::set<int> exclude_ports;
+                    if (!excl_in.empty()) {
+                        std::stringstream ss(excl_in);
+                        std::string item;
+                        while (std::getline(ss, item, ',')) {
+                            try { exclude_ports.insert(std::stoi(item)); } catch (...) {}
+                        }
+                    }
+
+                    
+                    port_scan(ip_res, s, e, udp, timing, exclude_ports);
                     break;
                 }
+                
                 case 6:  g_result.scan_type = "netscan"; net_scan(ip_res.substr(0,ip_res.rfind('.'))); break;
                 case 5:  g_result.scan_type = "os_detect"; os_detect(ip_res);    break;
                 case 9:  g_result.scan_type = "ip_intel"; ip_intel(ip_res);     break;
