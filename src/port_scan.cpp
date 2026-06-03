@@ -734,6 +734,8 @@ ScanResults PortScanEngine::run() {
                 if (token_.cancelled) return;
 
                 int p = sorted_ports[i];
+                if (cfg_.exclude_ports.count(p)) return;
+
                 if (!cfg_.skip_rate_limiting) {
                     port_rl.acquire();
                 }
@@ -1012,7 +1014,7 @@ void PortScanEngine::print_results(const ScanResults& r) {
 // For UDP range 1-1024: caller passes start=1, end_port=1024, scan_udp=true
 //   The caller (menu) should default UDP end_port to 1024 if user skips it.
 
-void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
+void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, int timing_profile, const std::set<int>& exclude_ports) {
     print_header("PORT SCAN // " + ip);
 
     PortScanConfig cfg{};
@@ -1022,6 +1024,13 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     cfg.tls_inspect = true;
     cfg.http_probe = true;
     cfg.aggressive = true;
+
+    if (timing_profile >= 0 && timing_profile <= 5) {
+        cfg.timing = static_cast<PortScanConfig::TimingProfile>(timing_profile);
+    } else {
+        cfg.timing = PortScanConfig::TimingProfile::T3;
+    }
+    cfg.exclude_ports = exclude_ports;
 
     if (start == 0 && end_port == 0) {
         // no range given → top-1000
@@ -1115,6 +1124,35 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp) {
     if (cfg.udp_scan && port_count > 1000) {
         cfg.retry_count = 0;  // probe_udp_smart() never retries; retry_count=1 only inflates timeouts
         std::cout << BLOOD_RED << "  [udp] retry_count forced to 0 (UDP has no retries)\n" << RESET;
+    }
+
+    switch (cfg.timing) {
+        case PortScanConfig::TimingProfile::T0: // Paranoid
+            cfg.connect_ms = 5000; cfg.banner_ms = 10000;
+            cfg.retry_count = 3;  cfg.pool_size = 5;
+            break;
+        case PortScanConfig::TimingProfile::T1: // Sneaky
+            cfg.connect_ms = 2000; cfg.banner_ms = 5000;
+            cfg.retry_count = 2;  cfg.pool_size = 10;
+            break;
+        case PortScanConfig::TimingProfile::T2: // Polite
+            cfg.connect_ms = 1500; cfg.banner_ms = 3000;
+            cfg.retry_count = 2;  cfg.pool_size = 30;
+            break;
+        case PortScanConfig::TimingProfile::T3: // Normal — keep calibrated values
+            break;
+        case PortScanConfig::TimingProfile::T4: // Aggressive
+            cfg.connect_ms  = std::max(100, cfg.connect_ms / 2);
+            cfg.banner_ms   = std::max(500, cfg.banner_ms  / 2);
+            cfg.retry_count = 1;
+            cfg.pool_size   = cfg.pool_size * 2;
+            break;
+        case PortScanConfig::TimingProfile::T5: // Insane
+            cfg.connect_ms  = 50;
+            cfg.banner_ms   = 300;
+            cfg.retry_count = 0;
+            cfg.pool_size   = std::min(1000, cfg.pool_size * 4);
+            break;
     }
 
     cfg.median_rtt = acfg.median_rtt;

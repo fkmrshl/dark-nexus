@@ -137,9 +137,22 @@ int main(int argc, char** argv) {
 
         std::string mode, target, extra, output_path;
         char sub_mode = 'F';
+        int timing_profile = 3;
+        std::set<int> exclude_ports;
 
         for (size_t i = 0; i < args.size(); i++) {
             if (args[i] == "-h" || args[i] == "--help") { print_help(); return 0; }
+            else if (args[i].size() == 3 && args[i][0] == '-' && args[i][1] == 'T') {
+                try { timing_profile = std::stoi(args[i].substr(2)); } catch (...) {}
+            }
+            else if (args[i] == "--exclude" && i + 1 < args.size()) {
+                std::string excl_str = args[++i];
+                std::stringstream ss(excl_str);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    try { exclude_ports.insert(std::stoi(item)); } catch (...) {}
+                }
+            }
             else if ((args[i] == "--json" || args[i] == "--output") && i + 1 < args.size()) { output_path = args[++i]; }
             else if (args[i] == "--mode" && i + 1 < args.size()) {
                 sub_mode = toupper(args[++i][0]);
@@ -203,7 +216,7 @@ int main(int argc, char** argv) {
                         if (s == 0) e = 0;
                     }
                 }
-                port_scan(ip_res, s, e, udp);
+                port_scan(ip_res, s, e, udp, timing_profile, exclude_ports);
             }
             else if (mode == "netscan") { g_result.scan_type = "netscan"; net_scan(ip_res.substr(0,ip_res.rfind('.'))); }
             else if (mode == "os-detect") { g_result.scan_type = "os_detect"; os_detect(ip_res); }
@@ -343,7 +356,7 @@ int main(int argc, char** argv) {
                     }
                     int s = 0;
                     try { s = std::stoi(s_in); } catch (...) {}
-                    if (s == 0) { port_scan(ip_res, 0, 0, udp); }
+                    if (s == 0) { port_scan(ip_res, 0, 0, udp, 3, {}); }
                     else {
                         std::string e_in;
                         std::cout<<BLOOD_RED<<"  end port [empty for single port, or 1024 for UDP default]: "<<RESET;
@@ -359,7 +372,7 @@ int main(int argc, char** argv) {
                         if (e != 0 && (s > e || !valid_port(s) || !valid_port(e))) {
                             std::cout<<BLOOD_RED<<"  invalid range\n"<<RESET; break;
                         }
-                        port_scan(ip_res, s, e, udp);
+                        port_scan(ip_res, s, e, udp, 3, {});
                     }
                     break;
                 }

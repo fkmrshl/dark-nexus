@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <set>
 #include "dark_nexus.hpp"
 
 struct ScanMode { enum Type { SYN, CONNECT, UDP, ALL } type; };
@@ -20,6 +21,9 @@ struct PortScanConfig {
     bool http_probe;
     bool aggressive;
     bool skip_rate_limiting = false;
+    enum class TimingProfile { T0=0, T1=1, T2=2, T3=3, T4=4, T5=5 };
+    TimingProfile timing = TimingProfile::T3;
+    std::set<int> exclude_ports;
 };
 
 struct VulnHint {
