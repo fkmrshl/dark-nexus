@@ -5,6 +5,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <set>
 #include <atomic>
 #include <future>
 #include <queue>
@@ -174,7 +175,7 @@ std::vector<std::string> split_lines(const std::string& s);
 std::string dig_short(const std::string& domain, const std::string& type, int t = 6);
 std::string dig_full(const std::string& domain, const std::string& type, int t = 6);
 
-void        port_scan(const std::string& ip, int start, int end_port, bool scan_udp = false);
+void        port_scan(const std::string& ip, int start, int end_port, bool scan_udp = false, int timing_profile = 3, const std::set<int>& exclude_ports = {});
 void        net_scan(const std::string& subnet);
 std::string guess_os_from_ports(const std::vector<int>& open);
 
