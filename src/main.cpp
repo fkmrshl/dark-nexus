@@ -52,6 +52,8 @@ static void print_help() {
     std::cout << BLOOD_RED << "    dark-nexus [options] <target>\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  OPTIONS:\n"<<RESET;
     std::cout << BLOOD_RED << "    --portscan <ip> [ports] " << WHITE << "Run port scan (e.g. 0 for top1000, 0U for UDP, or 80-443)\n"<<RESET;
+    std::cout << BLOOD_RED << "    -T<0-5>                 " << WHITE << "Timing profile (0=Paranoid, 3=Normal, 5=Insane)\n"<<RESET;
+    std::cout << BLOOD_RED << "    --exclude <ports>       " << WHITE << "Comma-separated list of ports to skip\n"<<RESET;
     std::cout << BLOOD_RED << "    --netscan <subnet>      " << WHITE << "Run network scan (e.g. 192.168.1.1)\n"<<RESET;
     std::cout << BLOOD_RED << "    --os-detect <ip>        " << WHITE << "Run OS detection\n"<<RESET;
     std::cout << BLOOD_RED << "    --ip-intel <ip>         " << WHITE << "Run full IP intelligence\n"<<RESET;
@@ -68,6 +70,7 @@ static void print_help() {
     std::cout << BLOOD_RED << "    -h, --help              " << WHITE << "Show this help menu\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  EXAMPLES:\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --output result.json\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0 -T4 --exclude 80,443\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0U\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --osint user@mail.com\n\n"<<RESET;
 
