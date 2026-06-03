@@ -111,7 +111,10 @@ void ip_intel(const std::string& ip) {
         std::string risk_color = WHITE;
         if (r_lbl == "HIGH") risk_color = BLOOD_RED;
         std::cout<<WHITE<<"  "<<std::left<<std::setw(12)<<p<<std::setw(16)<<s<<risk_color<<std::setw(10)<<r_lbl<<WHITE<<sanitize(b.size()>40?b.substr(0,40):b)<<"\n";
-        g_result.open_ports.push_back({p,s});
+        {
+            std::lock_guard<std::mutex> lk(g_result_mtx);
+            g_result.open_ports.push_back({p,s});
+        }
     }
     if(!any) std::cout<<BLOOD_RED<<"  top ports closed\n"<<RESET;
 

@@ -27,9 +27,15 @@ public:
                         tasks_.pop();
                     }
                     active_++;
+                    struct ActiveGuard {
+                        std::atomic<int>& active;
+                        std::condition_variable& cv;
+                        ~ActiveGuard() {
+                            active--;
+                            cv.notify_all();
+                        }
+                    } guard{active_, done_cv_};
                     task();
-                    active_--;
-                    done_cv_.notify_all();
                 }
             });
         }

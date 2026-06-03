@@ -181,18 +181,17 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
 
     for (int p : cal_ports) {
         auto t0=std::chrono::high_resolution_clock::now();
-        int fd=socket(AF_INET,SOCK_STREAM,0);
-        if (fd<0) continue;
+        FdGuard fd(socket(AF_INET,SOCK_STREAM,0));
+        if (fd.get()<0) continue;
         sockaddr_in sa{};
         sa.sin_family=AF_INET; sa.sin_port=htons(p);
         inet_pton(AF_INET,ip.c_str(),&sa.sin_addr);
-        fcntl(fd,F_SETFL,O_NONBLOCK);
-        connect(fd,(sockaddr*)&sa,sizeof(sa));
+        fcntl(fd.get(),F_SETFL,O_NONBLOCK);
+        connect(fd.get(),(sockaddr*)&sa,sizeof(sa));
         struct pollfd pfd{};
-        pfd.fd=fd; pfd.events=POLLOUT;
+        pfd.fd=fd.get(); pfd.events=POLLOUT;
         int r=poll(&pfd, 1, 800);
         auto t1=std::chrono::high_resolution_clock::now();
-        close(fd);
         if (r>0) {
             int ms=std::chrono::duration_cast<std::chrono::milliseconds>(t1-t0).count();
             rtts.push_back(ms);
@@ -358,10 +357,11 @@ static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeou
 
             if (res > 0) {
                 ssize_t n = recvfrom(sock_recv.get(), buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
-                if (n > 0) {
+                if (n >= 20) {
                     struct iphdr* iph = (struct iphdr*)buf;
-                    int iph_len = iph->ihl * 4;
-                    if (n >= iph_len + (int)sizeof(struct tcphdr)) {
+                    if (iph->ihl >= 5 && iph->version == 4) {
+                        int iph_len = iph->ihl * 4;
+                        if (n >= iph_len + (int)sizeof(struct tcphdr)) {
                         struct tcphdr* rtcph = (struct tcphdr*)(buf + iph_len);
                         if (ntohs(rtcph->source) == port && ntohs(rtcph->dest) == src_port) {
                             if (rtcph->syn && rtcph->ack) {
@@ -374,6 +374,7 @@ static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeou
                             } else if (rtcph->rst) {
                                 return {-1, false};
                             }
+                        }
                         }
                     }
                 }
@@ -638,7 +639,8 @@ static std::pair<int,bool> probe_udp_smart(const std::string& ip, int port, int 
     }
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    sendto(sock.get(), payload.data(), payload.size(), 0, (sockaddr*)&sa, sizeof(sa));
+    connect(sock.get(), (sockaddr*)&sa, sizeof(sa));
+    send(sock.get(), payload.data(), payload.size(), 0);
 
     char buf[1024];
     struct pollfd pfd{};
@@ -646,13 +648,17 @@ static std::pair<int,bool> probe_udp_smart(const std::string& ip, int port, int 
     pfd.events = POLLIN;
 
     if (poll(&pfd, 1, timeout_ms) > 0) {
-        socklen_t len = sizeof(sa);
-        ssize_t n = recvfrom(sock.get(), buf, sizeof(buf), 0, (sockaddr*)&sa, &len);
+        ssize_t n;
+        do {
+            n = recv(sock.get(), buf, sizeof(buf), 0);
+        } while (n < 0 && errno == EINTR);
+
         if (n > 0) {
             int ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - t0).count();
             return {std::max(1, ms), false}; // Response received -> open
         }
         if (n < 0 && errno == ECONNREFUSED) return {-1, false}; // Port unreach -> closed
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return {-1, true};
     }
 
     // Timeout -> open|filtered (user explicitly requested returning filtered for timeout to avoid 100% false positives)
@@ -731,7 +737,7 @@ ScanResults PortScanEngine::run() {
 
         for (int i = 0; i < total; i++) {
             futs.push_back(pool.submit([&, i] {
-                if (token_.cancelled) return;
+                if (g_cancel_token.cancelled) return;
 
                 int p = sorted_ports[i];
                 if (cfg_.exclude_ports.count(p)) return;
@@ -771,7 +777,7 @@ ScanResults PortScanEngine::run() {
                     open_c++;
 
                     std::lock_guard<std::mutex> plk(g_print_mtx);
-                    std::cout << BLOOD_RED << "  [+] " << WHITE
+                    std::cout << "\x1B[2K\r" << BLOOD_RED << "  [+] " << WHITE
                               << std::left << std::setw(6) << p
                               << "/" << (cfg_.udp_scan ? "udp" : "tcp") << "  " << "open" << "  " << std::setw(16) << svc(p)
                               << "(" << lat << "ms)" << RESET << "\n";
@@ -783,26 +789,10 @@ ScanResults PortScanEngine::run() {
                 }
             }));
         }
-        auto per_task_timeout = std::chrono::milliseconds(
-            cfg_.udp_scan
-                ? cfg_.connect_ms + 300   // UDP: probe_udp_smart() waits at most connect_ms
-                : (cfg_.connect_ms + cfg_.banner_ms) * (cfg_.retry_count + 1) + 500
-        );
-        int failed_futures = 0;
-        for (auto& f : futs) {
-            auto status = f.wait_for(per_task_timeout);
-            if (status == std::future_status::timeout) {
-                failed_futures++;
-                f.wait_for(per_task_timeout * 2); // one extra chance
-            }
-        }
-        if (failed_futures > 0) {
-            std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << BLOOD_RED << "  [!] " << failed_futures << " port futures exceeded timeout\n" << RESET;
-        }
+        pool.wait();
     }
 
-    if (token_.cancelled) {
+    if (g_cancel_token.cancelled) {
         std::cout << BLOOD_RED << "\n  [!] scan interrupted - partial results\n" << RESET;
     }
 
@@ -819,40 +809,63 @@ ScanResults PortScanEngine::run() {
 
         std::atomic<int> deep_done{0};
         int deep_total = results.open_ports.size();
+        std::mutex results_mtx;
 
         ThreadPool dpool(std::min(20, deep_total));
         std::vector<std::future<void>> dfuts;
         for (int i = 0; i < deep_total; i++) {
             dfuts.push_back(dpool.submit([&, i] {
-                if (token_.cancelled) return;
+                if (g_cancel_token.cancelled) return;
 
-                int p = results.open_ports[i].port;
-                results.open_ports[i].service = svc(p);
-                results.open_ports[i].risk = risk_label(p);
-                results.open_ports[i].banner_raw = smart_banner(p);
-                results.open_ports[i].version = extract_version(results.open_ports[i].banner_raw, p);
-                results.open_ports[i].vulns = check_vulns(p, results.open_ports[i].version, results.open_ports[i].banner_raw);
-
-                if (cfg_.tls_inspect && TLS_PORTS.count(p)) {
-                    results.open_ports[i].tls = inspect_tls(p);
-                    results.open_ports[i].tls_port = true;
-                    if (results.open_ports[i].tls.expired) {
-                        results.open_ports[i].vulns.push_back({"N/A", "TLS Certificate Expired", "HIGH"});
-                    }
-                    if (results.open_ports[i].tls.self_signed) {
-                        results.open_ports[i].vulns.push_back({"N/A", "TLS Self-Signed Certificate", "MED"});
-                    }
+                int p;
+                {
+                    std::lock_guard<std::mutex> lk(results_mtx);
+                    p = results.open_ports[i].port;
                 }
 
+                std::string svc_name = svc(p);
+                std::string r_label = risk_label(p);
+                std::string b_raw = smart_banner(p);
+                std::string ver = extract_version(b_raw, p);
+                auto vulns = check_vulns(p, ver, b_raw);
+
+                TLSInfo tls;
+                bool is_tls = false;
+                if (cfg_.tls_inspect && TLS_PORTS.count(p)) {
+                    tls = inspect_tls(p);
+                    is_tls = true;
+                    if (tls.expired) vulns.push_back({"N/A", "TLS Certificate Expired", "HIGH"});
+                    if (tls.self_signed) vulns.push_back({"N/A", "TLS Self-Signed Certificate", "MED"});
+                }
+
+                HttpInfo http;
+                bool is_http = false;
                 if (cfg_.http_probe && HTTP_PORTS.count(p)) {
-                    results.open_ports[i].http = probe_http(p);
-                    results.open_ports[i].http_port = true;
-                    if ((p==443||p==8443) && !results.open_ports[i].http.hsts && results.open_ports[i].http.status_code > 0)
-                        results.open_ports[i].vulns.push_back({"INFO", "missing HSTS header", "INFO"});
-                    if (!results.open_ports[i].http.x_frame && results.open_ports[i].http.status_code > 0)
-                        results.open_ports[i].vulns.push_back({"INFO", "clickjacking risk (missing X-Frame-Options)", "INFO"});
-                    if (!results.open_ports[i].http.csp && results.open_ports[i].http.status_code > 0)
-                        results.open_ports[i].vulns.push_back({"INFO", "no Content-Security-Policy", "INFO"});
+                    http = probe_http(p);
+                    is_http = true;
+                    if ((p==443||p==8443) && !http.hsts && http.status_code > 0)
+                        vulns.push_back({"INFO", "missing HSTS header", "INFO"});
+                    if (!http.x_frame && http.status_code > 0)
+                        vulns.push_back({"INFO", "clickjacking risk (missing X-Frame-Options)", "INFO"});
+                    if (!http.csp && http.status_code > 0)
+                        vulns.push_back({"INFO", "no Content-Security-Policy", "INFO"});
+                }
+
+                {
+                    std::lock_guard<std::mutex> lk(results_mtx);
+                    results.open_ports[i].service = svc_name;
+                    results.open_ports[i].risk = r_label;
+                    results.open_ports[i].banner_raw = b_raw;
+                    results.open_ports[i].version = ver;
+                    results.open_ports[i].vulns = vulns;
+                    if (is_tls) {
+                        results.open_ports[i].tls = tls;
+                        results.open_ports[i].tls_port = true;
+                    }
+                    if (is_http) {
+                        results.open_ports[i].http = http;
+                        results.open_ports[i].http_port = true;
+                    }
                 }
 
                 deep_done++;
@@ -862,10 +875,7 @@ ScanResults PortScanEngine::run() {
                 }
             }));
         }
-        auto deep_timeout = std::chrono::milliseconds(cfg_.banner_ms * 3 + 1000);
-        for (auto& f : dfuts) {
-            f.wait_for(deep_timeout);
-        }
+        dpool.wait();
         std::cout << "\n";
     }
 
@@ -1219,16 +1229,12 @@ void net_scan(const std::string& subnet) {
             h.hostname=strlen(hbuf)?sanitize(hbuf):"";
 
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout<<BLOOD_RED<<"  [+] "<<WHITE<<std::left<<std::setw(16)<<ip;
+            std::cout<<"\x1B[2K\r"<<BLOOD_RED<<"  [+] "<<WHITE<<std::left<<std::setw(16)<<ip;
             if(!h.hostname.empty()) std::cout<<BLOOD_RED<<" ("<<WHITE<<h.hostname<<BLOOD_RED<<")";
             std::cout<<RESET<<"\n";
         }));
     }
-    for (auto& f:futs) {
-        if (f.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
-            // Abandon task
-        }
-    }
+    pool.wait();
 
     std::cout<<BLOOD_RED<<"\n  found "<<WHITE<<alive_c<<BLOOD_RED<<" hosts -- phase 2: port scan...\n\n"<<RESET;
 
@@ -1238,6 +1244,7 @@ void net_scan(const std::string& subnet) {
     std::atomic<int> task(0);
     int ntasks=alive_hosts.size()*PROBE_PORTS.size();
     std::vector<std::future<void>> futs2; futs2.reserve(ntasks);
+    std::mutex hosts_mtx;
 
     for (int i=0;i<(int)alive_hosts.size();i++) {
         for (int p:PROBE_PORTS) {
@@ -1245,12 +1252,12 @@ void net_scan(const std::string& subnet) {
                 auto [lat, filtered] = probe_connect(alive_hosts[i]->ip, p, 400, 1);
                 if(lat <= 0) return;
                 std::string b=banner(alive_hosts[i]->ip,p,1000);
-                std::lock_guard<std::mutex> lk(g_print_mtx);
+                std::lock_guard<std::mutex> lk(hosts_mtx);
                 alive_hosts[i]->ports.emplace_back(p,b);
             }));
         }
     }
-    for (auto& f:futs2) f.get();
+    pool.wait();
 
     std::cout<<BLOOD_RED<<"  results:\n\n"<<RESET;
     int total_open=0;
