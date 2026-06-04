@@ -1,7 +1,5 @@
 ![Dark Nexus](assets/banner.svg)
 
-
-
 </div>
 
 <br>
