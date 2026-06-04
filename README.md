@@ -1,12 +1,5 @@
-   <div align="center">
-    <img src="assets/dark_nexus.svg" width="100%" alt="Dark Nexus Terminal">
-  </div>
- 
-<div align="center">
+![Dark Nexus](assets/banner.svg)
 
-
-
-<div align="center">
 
 
 </div>
