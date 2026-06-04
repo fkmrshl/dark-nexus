@@ -1,10 +1,5 @@
 <p align="center">
-  <img 
-    src="assets/dark_nexus.svg" 
-    width="100%" 
-    style="max-width: 920px; height: auto; display: block; margin: 0 auto;" 
-    alt="Dark Nexus"
-  >
+  <img src="assets/dark_nexus.svg" width="100%" style="max-width: 960px; height: auto; display: block; margin: 0 auto;" alt="Dark Nexus">
 </p>
  
 </div>
