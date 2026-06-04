@@ -1,4 +1,5 @@
-![Dark Nexus](assets/dark_nexus.svg)
+<img src="assets/dark_nexus.svg" width="100%" alt="Dark Nexus">
+
 
 </div>
 
