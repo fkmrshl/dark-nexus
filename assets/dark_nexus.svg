@@ -26,7 +26,7 @@
   <text x="512" y="46"
         text-anchor="middle"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="10" fill="#4a4a4a" letter-spacing="4">network intelligence framework</text>
+        font-size="10.5" fill="#5a5a5a" letter-spacing="4">network intelligence framework</text>
 
   <!-- DARK -->
   <text x="512" y="126"
@@ -45,11 +45,11 @@
   <!-- Underline -->
   <rect x="280" y="208" width="464" height="1.5" fill="url(#ul)"/>
 
-  <!-- Description (сделал читабельнее) -->
-  <text x="512" y="250"
+  <!-- Description (более читаемая) -->
+  <text x="512" y="252"
         text-anchor="middle"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="14" fill="#4a4a4a" letter-spacing="0.3">
-    <tspan fill="#5a5a5a">Modular C++ framework</tspan> for network reconnaissance and infrastructure analysis.
+        font-size="14.5" fill="#555555" letter-spacing="0.3">
+    <tspan fill="#5f5f5f">Modular C++ framework</tspan> for network reconnaissance and infrastructure analysis.
   </text>
 </svg>
