@@ -1,4 +1,4 @@
-![Dark Nexus](assets/banner.svg)
+![Dark Nexus](assets/dark_nexus.svg)
 
 </div>
 
