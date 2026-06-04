@@ -184,7 +184,9 @@ public:
             auto t_end = std::chrono::high_resolution_clock::now();
             double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
+            if (n < 20) continue;
             struct iphdr* ip_hdr = (struct iphdr*)buf;
+            if (ip_hdr->ihl < 5 || ip_hdr->version != 4) continue;
             int ip_hdr_len = ip_hdr->ihl * 4;
             if (n < ip_hdr_len + (int)sizeof(struct icmphdr)) continue;
 
@@ -292,7 +294,9 @@ public:
             auto t_end = std::chrono::high_resolution_clock::now();
             double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
+            if (n < 20) continue;
             struct iphdr* ip_hdr = (struct iphdr*)buf;
+            if (ip_hdr->ihl < 5 || ip_hdr->version != 4) continue;
             int ip_hdr_len = ip_hdr->ihl * 4;
             if (n < ip_hdr_len + (int)sizeof(struct icmphdr)) continue;
 
@@ -468,13 +472,14 @@ public:
             if (pfds[0].revents & POLLIN) {
                 ssize_t n = recvfrom(sock_recv, buf, sizeof(buf), 0,
                                      (struct sockaddr*)&from, &fromlen);
-                if (n > 0) {
+                if (n >= 20) {
                     auto t_end = std::chrono::high_resolution_clock::now();
                     double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
                     struct iphdr* ip_hdr = (struct iphdr*)buf;
-                    int ip_hdr_len = ip_hdr->ihl * 4;
-                    if (n >= ip_hdr_len + (int)sizeof(struct icmphdr)) {
+                    if (ip_hdr->ihl >= 5 && ip_hdr->version == 4) {
+                        int ip_hdr_len = ip_hdr->ihl * 4;
+                        if (n >= ip_hdr_len + (int)sizeof(struct icmphdr)) {
                         struct icmphdr* icmp_reply = (struct icmphdr*)(buf + ip_hdr_len);
                         char addr_str[INET_ADDRSTRLEN];
                         inet_ntop(AF_INET, &from.sin_addr, addr_str, sizeof(addr_str));
@@ -495,16 +500,18 @@ public:
                             }
                         }
                     }
+                    }
                 }
             }
 
             if (pfds[1].revents & (POLLIN | POLLERR)) {
                 // If the raw TCP socket becomes readable, it means we might have received a SYN-ACK or RST.
                 ssize_t n = recvfrom(sock_send, buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
-                if (n > 0) {
+                if (n >= 20) {
                     struct iphdr* ip_hdr = (struct iphdr*)buf;
-                    int ip_hdr_len = ip_hdr->ihl * 4;
-                    if (n >= ip_hdr_len + (int)sizeof(struct tcphdr)) {
+                    if (ip_hdr->ihl >= 5 && ip_hdr->version == 4) {
+                        int ip_hdr_len = ip_hdr->ihl * 4;
+                        if (n >= ip_hdr_len + (int)sizeof(struct tcphdr)) {
                         struct tcphdr* tcph = (struct tcphdr*)(buf + ip_hdr_len);
                         if (ntohs(tcph->dest) == src_port) {
                             auto t_end = std::chrono::high_resolution_clock::now();
@@ -517,6 +524,7 @@ public:
                             pr.reached_target = true;
                             response_received = true;
                             break;
+                        }
                         }
                     }
                 }
@@ -589,14 +597,15 @@ public:
             if (pfds[0].revents & POLLIN) {
                 ssize_t n = recvfrom(sock_recv, buf, sizeof(buf), 0,
                                      (struct sockaddr*)&from, &fromlen);
-                if (n > 0) {
+                if (n >= 20) {
                     auto t_end = std::chrono::high_resolution_clock::now();
                     double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
                     struct iphdr* ip_hdr = (struct iphdr*)buf;
-                    int ip_hdr_len = ip_hdr->ihl * 4;
-                    if (n >= ip_hdr_len + (int)sizeof(struct icmphdr)) {
-                        struct icmphdr* icmp_reply = (struct icmphdr*)(buf + ip_hdr_len);
+                    if (ip_hdr->ihl >= 5 && ip_hdr->version == 4) {
+                        int ip_hdr_len = ip_hdr->ihl * 4;
+                        if (n >= ip_hdr_len + (int)sizeof(struct icmphdr)) {
+                            struct icmphdr* icmp_reply = (struct icmphdr*)(buf + ip_hdr_len);
                         char addr_str[INET_ADDRSTRLEN];
                         inet_ntop(AF_INET, &from.sin_addr, addr_str, sizeof(addr_str));
 
@@ -607,6 +616,7 @@ public:
 
                         if (pr.addr == target_ip) pr.reached_target = true;
                         break;
+                        }
                     }
                 }
             }
