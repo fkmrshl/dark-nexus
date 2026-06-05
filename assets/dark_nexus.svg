@@ -22,11 +22,11 @@
   <rect width="1024" height="300" fill="url(#bg2)"/>
   <rect width="1024" height="300" fill="#888" filter="url(#noise)" opacity="0.012"/>
 
-  <!-- Eyebrow (сделал заметнее) -->
+  <!-- Eyebrow -->
   <text x="512" y="46"
         text-anchor="middle"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="10.5" fill="#5a5a5a" letter-spacing="4">network intelligence framework</text>
+        font-size="12" fill="#5a5a5a" letter-spacing="6">network intelligence framework</text>
 
   <!-- DARK -->
   <text x="512" y="126"
@@ -45,7 +45,7 @@
   <!-- Underline -->
   <rect x="280" y="208" width="464" height="1.5" fill="url(#ul)"/>
 
-  <!-- Description (более читаемая) -->
+  <!-- Description -->
   <text x="512" y="252"
         text-anchor="middle"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
