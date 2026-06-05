@@ -26,7 +26,7 @@
   <text x="512" y="46"
         text-anchor="middle"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="15" fill="#5a5a5a" letter-spacing="8">network intelligence framework</text>
+        font-size="20" fill="#5a5a5a" letter-spacing="8">network intelligence framework</text>
 
   <!-- DARK -->
   <text x="512" y="126"
