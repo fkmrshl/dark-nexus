@@ -56,6 +56,15 @@ struct FdGuard {
     ~FdGuard() { if (fd >= 0) close(fd); }
     FdGuard(const FdGuard&) = delete;
     FdGuard& operator=(const FdGuard&) = delete;
+    FdGuard(FdGuard&& o) noexcept : fd(o.fd) { o.fd = -1; }
+    FdGuard& operator=(FdGuard&& o) noexcept {
+        if (this != &o) {
+            if (fd >= 0) close(fd);
+            fd = o.fd;
+            o.fd = -1;
+        }
+        return *this;
+    }
     int release() { int f = fd; fd = -1; return f; }
     int get() const { return fd; }
 };
@@ -160,7 +169,7 @@ std::string ptr_lookup(const std::string& ip);
 std::string svc(int port);
 std::string risk_label(int port);
 std::string banner(const std::string& ip, int port, int ms = 1500);
-std::string smart_banner(const std::string& ip, int port, int ms = 2000);
+std::string smart_banner(const std::string& ip, int port, int ms = 2000, bool skip_http_on_tls = false);
 
 std::string now_str();
 void        export_json(const std::string& fname);
