@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <memory>
 #include <sys/resource.h>
@@ -75,10 +76,15 @@ static int service_priority(int port) {
 
 static std::string extract_version(const std::string& banner_raw, int port) {
     if (banner_raw.empty()) return "";
+    if (port == 22 && banner_raw.find("SSH-") == 0) {
+        size_t end = banner_raw.find_first_of("\r\n");
+        size_t len = (end == std::string::npos) ? banner_raw.size() : end;
+        len = std::min(len, size_t{80});
+        return banner_raw.substr(0, len);
+    }
     std::regex re(R"(([A-Za-z0-9_\-]+[/\-][\d\.]+))");
     std::smatch m;
     if (std::regex_search(banner_raw, m, re)) return m[1].str();
-    if (port==22 && banner_raw.find("SSH-")==0) return banner_raw;
     return "";
 }
 
@@ -105,6 +111,50 @@ static void add_vuln_hint(std::vector<VulnHint>& out, std::set<std::string>& see
 static std::string lower_copy(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return s;
+}
+
+static bool banner_usable(const std::string& s) {
+    if (s.size() < 5) return false;
+    size_t non_ws = 0;
+    size_t printable = 0;
+    for (unsigned char c : s) {
+        if (!std::isspace(static_cast<unsigned char>(c))) {
+            non_ws++;
+            if (c >= 32 && c < 127) printable++;
+        }
+    }
+    if (non_ws == 0) return false;
+    return printable * 2 >= non_ws;
+}
+
+static bool scan_is_v6(const std::string& ip) {
+    return InputGuard::is_valid_ipv6(ip);
+}
+
+static int scan_sock_af(const std::string& ip) {
+    return scan_is_v6(ip) ? AF_INET6 : AF_INET;
+}
+
+static bool scan_fill_endpoint(const std::string& ip, int port, sockaddr_storage& ss, socklen_t& slen) {
+    memset(&ss, 0, sizeof(ss));
+    if (scan_is_v6(ip)) {
+        auto* sa = reinterpret_cast<sockaddr_in6*>(&ss);
+        sa->sin6_family = AF_INET6;
+        sa->sin6_port = htons(static_cast<uint16_t>(port));
+        if (inet_pton(AF_INET6, ip.c_str(), &sa->sin6_addr) != 1) return false;
+        slen = sizeof(sockaddr_in6);
+        return true;
+    }
+    auto* sa = reinterpret_cast<sockaddr_in*>(&ss);
+    sa->sin_family = AF_INET;
+    sa->sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, ip.c_str(), &sa->sin_addr) != 1) return false;
+    slen = sizeof(sockaddr_in);
+    return true;
+}
+
+static FdGuard scan_tcp_socket(const std::string& ip) {
+    return FdGuard(socket(scan_sock_af(ip), SOCK_STREAM, 0));
 }
 
 static std::string fingerprint_text(const std::string& banner, const std::string& version,
@@ -248,10 +298,10 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
     std::string hay = fingerprint_text(bnr, version_str, http);
     const bool has_banner = !bnr.empty();
 
-    if (port == 22 && vl.find("openssh") != std::string::npos) {
+    if (port == 22) {
         std::regex re_ver(R"(openssh[_\s]([0-9]+)\.([0-9]+))");
         std::smatch m;
-        if (std::regex_search(vl, m, re_ver)) {
+        if (std::regex_search(hay, m, re_ver)) {
             int maj = std::stoi(m[1].str()), mn = std::stoi(m[2].str());
             if (maj < 9 || (maj == 9 && mn < 8))
                 add_vuln_hint(vulns, seen, "CVE-2024-6387", "OpenSSH regreSSHion (signal handler race)", "CRIT");
@@ -350,13 +400,13 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
 
     for (int p : cal_ports) {
         auto t0=std::chrono::high_resolution_clock::now();
-        FdGuard fd(socket(AF_INET,SOCK_STREAM,0));
+        FdGuard fd(scan_tcp_socket(ip));
         if (fd.get()<0) continue;
-        sockaddr_in sa{};
-        sa.sin_family=AF_INET; sa.sin_port=htons(p);
-        inet_pton(AF_INET,ip.c_str(),&sa.sin_addr);
+        sockaddr_storage ss{};
+        socklen_t slen = 0;
+        if (!scan_fill_endpoint(ip, p, ss, slen)) continue;
         fcntl(fd.get(),F_SETFL,O_NONBLOCK);
-        connect(fd.get(),(sockaddr*)&sa,sizeof(sa));
+        connect(fd.get(),reinterpret_cast<sockaddr*>(&ss),slen);
         struct pollfd pfd{};
         pfd.fd=fd.get(); pfd.events=POLLOUT;
         int r=poll(&pfd, 1, 800);
@@ -389,17 +439,16 @@ static AdaptiveConfig calibrate_target(const std::string& ip) {
 
 static std::pair<int,bool> probe_connect(const std::string& ip, int port, int timeout_ms, int retries) {
     for (int attempt=0; attempt<=retries; attempt++) {
-        FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+        FdGuard sock(scan_tcp_socket(ip));
         if (sock.get() < 0) return {-1, false};
 
-        sockaddr_in sa{};
-        sa.sin_family = AF_INET;
-        sa.sin_port = htons(port);
-        inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
+        sockaddr_storage ss{};
+        socklen_t slen = 0;
+        if (!scan_fill_endpoint(ip, port, ss, slen)) return {-1, false};
         fcntl(sock.get(), F_SETFL, O_NONBLOCK);
 
         auto t0 = std::chrono::high_resolution_clock::now();
-        int cr = connect(sock.get(), (sockaddr*)&sa, sizeof(sa));
+        int cr = connect(sock.get(), reinterpret_cast<sockaddr*>(&ss), slen);
 
         if (cr == 0) {
             int ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - t0).count();
@@ -452,7 +501,7 @@ static uint16_t tcp_csum(const struct pseudo_header* ph, const struct tcphdr* tc
 }
 
 static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeout_ms, int retries) {
-    if (!has_cap_net_raw()) return probe_connect(ip, port, timeout_ms, retries);
+    if (scan_is_v6(ip) || !has_cap_net_raw()) return probe_connect(ip, port, timeout_ms, retries);
 
     for (int attempt = 0; attempt <= retries; attempt++) {
         FdGuard sock_send(socket(AF_INET, SOCK_RAW, IPPROTO_TCP));
@@ -474,7 +523,7 @@ static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeou
             getsockname(dgram_sock.get(), (struct sockaddr*)&local_addr, &local_len);
         }
 
-        uint16_t src_port = 33434 + (port % 10000) + attempt;
+        uint16_t src_port = static_cast<uint16_t>(32768 + ((port * 31337 + attempt * 7919) % 30000));
 
         struct tcphdr tcph{};
         tcph.source = htons(src_port);
@@ -542,8 +591,14 @@ static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeou
                 break;
             }
         }
-        if (attempt == retries) return {-1, true};
+        if (attempt == retries) {
+            auto verify = probe_connect(ip, port, std::max(timeout_ms, 400), 0);
+            if (verify.first > 0) return verify;
+            return {-1, true};
+        }
     }
+    auto verify = probe_connect(ip, port, std::max(timeout_ms, 400), 0);
+    if (verify.first > 0) return verify;
     return {-1, true};
 }
 
@@ -573,13 +628,12 @@ static bool tcp_connect_wait(int fd, int timeout_ms) {
 }
 
 static bool tcp_connect_to(const std::string& ip, int port, int timeout_ms, int fd) {
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(static_cast<uint16_t>(port));
-    if (inet_pton(AF_INET, ip.c_str(), &sa.sin_addr) != 1) return false;
+    sockaddr_storage ss{};
+    socklen_t slen = 0;
+    if (!scan_fill_endpoint(ip, port, ss, slen)) return false;
 
     fcntl(fd, F_SETFL, O_NONBLOCK);
-    int cr = connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    int cr = connect(fd, reinterpret_cast<sockaddr*>(&ss), slen);
     if (cr == 0) {
         int sockerr = 0;
         socklen_t errlen = sizeof(sockerr);
@@ -592,7 +646,7 @@ static bool tcp_connect_to(const std::string& ip, int port, int timeout_ms, int 
 
 static std::string probe_redis_ping(const std::string& ip, int port, int timeout_ms) {
     if (g_cancel_token.cancelled) return {};
-    FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+    FdGuard sock(scan_tcp_socket(ip));
     if (sock.get() < 0) return {};
     if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
 
@@ -622,7 +676,7 @@ static std::string probe_mongo_ping(const std::string& ip, int port, int timeout
         0x61,0x73,0x74,0x65,0x72,0x00, 0x01,0x00,0x00,0x00, 0x00
     };
 
-    FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+    FdGuard sock(scan_tcp_socket(ip));
     if (sock.get() < 0) return {};
     if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
 
@@ -649,6 +703,96 @@ static std::string probe_mongo_ping(const std::string& ip, int port, int timeout
     if (low.find("ismaster") != std::string::npos)
         return resp;
     return "mongodb-open";
+}
+
+static std::string probe_ssh_banner(const std::string& ip, int port, int timeout_ms) {
+    if (g_cancel_token.cancelled) return {};
+    FdGuard sock(scan_tcp_socket(ip));
+    if (sock.get() < 0) return {};
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
+
+    struct pollfd pfd{};
+    pfd.fd = sock.get();
+    pfd.events = POLLIN;
+    if (poll(&pfd, 1, timeout_ms) <= 0 || !(pfd.revents & POLLIN)) return {};
+
+    char buf[256];
+    ssize_t n = recv(sock.get(), buf, sizeof(buf) - 1, 0);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    std::string resp(buf, static_cast<size_t>(n));
+    if (resp.find("SSH-") == std::string::npos) return {};
+    return InputGuard::sanitize_output(resp.substr(0, static_cast<size_t>(std::min(n, ssize_t{100}))));
+}
+
+static std::string probe_ftp_banner(const std::string& ip, int port, int timeout_ms) {
+    if (g_cancel_token.cancelled) return {};
+    FdGuard sock(scan_tcp_socket(ip));
+    if (sock.get() < 0) return {};
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
+
+    struct pollfd pfd{};
+    pfd.fd = sock.get();
+    pfd.events = POLLIN;
+    if (poll(&pfd, 1, timeout_ms) <= 0 || !(pfd.revents & POLLIN)) return {};
+
+    char buf[256];
+    ssize_t n = recv(sock.get(), buf, sizeof(buf) - 1, 0);
+    if (n <= 0 || n >= 256) return {};
+    buf[n] = '\0';
+    std::string resp(buf, static_cast<size_t>(n));
+    if (resp.find("220") == std::string::npos) return {};
+    return InputGuard::sanitize_output(resp.substr(0, static_cast<size_t>(std::min(n, ssize_t{80}))));
+}
+
+static std::string probe_smtp_banner(const std::string& ip, int port, int timeout_ms) {
+    return probe_ftp_banner(ip, port, timeout_ms);
+}
+
+static std::string probe_mysql_banner(const std::string& ip, int port, int timeout_ms) {
+    if (g_cancel_token.cancelled) return {};
+    FdGuard sock(scan_tcp_socket(ip));
+    if (sock.get() < 0) return {};
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
+
+    struct pollfd pfd{};
+    pfd.fd = sock.get();
+    pfd.events = POLLIN;
+    if (poll(&pfd, 1, timeout_ms) <= 0 || !(pfd.revents & POLLIN)) return {};
+
+    char buf[256];
+    ssize_t n = recv(sock.get(), buf, sizeof(buf) - 1, 0);
+    if (n <= 10 || static_cast<unsigned char>(buf[0]) >= 128) return {};
+    size_t cap = static_cast<size_t>(std::min(n, ssize_t{100}));
+    std::string resp(buf, cap);
+    std::string low = lower_copy(resp);
+    if (low.find("mysql") == std::string::npos && low.find("mariadb") == std::string::npos) return {};
+    return InputGuard::sanitize_output(resp.substr(0, static_cast<size_t>(std::min(n, ssize_t{80}))));
+}
+
+static std::string probe_postgres_banner(const std::string& ip, int port, int timeout_ms) {
+    if (g_cancel_token.cancelled) return {};
+    static const unsigned char kPgStartup[] = {
+        0x58, 0x00, 0x00, 0x00, 0x04, 0x03, 0x00, 0x00, 0x00, 0x00
+    };
+    FdGuard sock(scan_tcp_socket(ip));
+    if (sock.get() < 0) return {};
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
+
+    if (send(sock.get(), kPgStartup, sizeof(kPgStartup), MSG_NOSIGNAL) < 0) return {};
+
+    struct pollfd pfd{};
+    pfd.fd = sock.get();
+    pfd.events = POLLIN;
+    if (poll(&pfd, 1, timeout_ms) <= 0 || !(pfd.revents & POLLIN)) return {};
+
+    char buf[256];
+    ssize_t n = recv(sock.get(), buf, sizeof(buf) - 1, 0);
+    if (n <= 0) return {};
+    size_t cap = static_cast<size_t>(std::min(n, ssize_t{100}));
+    std::string resp(buf, cap);
+    if (resp.find("FATAL") == std::string::npos) return {};
+    return InputGuard::sanitize_output(resp.substr(0, static_cast<size_t>(std::min(n, ssize_t{80}))));
 }
 
 #ifdef HAVE_OPENSSL
@@ -1028,11 +1172,43 @@ static void print_http_enrichment(const HttpInfo& http) {
         std::cout << " | Title: " << http.title;
     std::cout << RESET << "\n";
 
+    if (!http.interesting_paths.empty()) {
+        std::cout << BLOOD_RED << "            Paths: " << WHITE;
+        size_t limit = std::min(http.interesting_paths.size(), size_t{5});
+        for (size_t i = 0; i < limit; ++i) {
+            if (i > 0) std::cout << ", ";
+            std::cout << http.interesting_paths[i];
+        }
+        if (http.interesting_paths.size() > limit) std::cout << ", ...";
+        std::cout << RESET << "\n";
+    }
+
     std::cout << BLOOD_RED << "            Sec: " << WHITE
               << "HSTS=" << (http.hsts ? "yes" : "no")
               << " CSP=" << (http.csp ? "yes" : "no")
               << " X-Frame=" << (http.x_frame ? "yes" : "no")
               << RESET << "\n";
+}
+
+static void print_powered_by_line(const HttpInfo& http) {
+    if (http.powered_by.empty()) return;
+    std::cout << BLOOD_RED << "            Stack: " << WHITE
+              << sanitize(http.powered_by) << RESET << "\n";
+}
+
+static void print_stack_disclosures(const ScanResults& r) {
+    std::vector<std::pair<int, std::string>> rows;
+    for (const auto& pr : r.open_ports) {
+        if (!pr.http_port || pr.http.powered_by.empty()) continue;
+        rows.push_back({pr.port, pr.http.powered_by});
+    }
+    if (rows.empty()) return;
+
+    print_section("STACK DISCLOSURES");
+    for (const auto& row : rows) {
+        std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(8) << row.first
+                  << sanitize(row.second) << RESET << "\n";
+    }
 }
 
 static void print_tls_enrichment(const TLSInfo& tls) {
@@ -1073,7 +1249,7 @@ static void print_tls_enrichment(const TLSInfo& tls) {
 static TLSInfo inspect_tls(const std::string& ip, int port, int timeout_ms, const std::string& sni_host) {
     TLSInfo tls{};
 #ifdef HAVE_OPENSSL
-    FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+    FdGuard sock(scan_tcp_socket(ip));
     if (sock.get() < 0) return tls;
     if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return tls;
 
@@ -1105,7 +1281,7 @@ static TlsHttpResult probe_tls_http(const std::string& ip, int port, int timeout
         int budget = ms_remaining();
         if (budget <= 0) break;
 
-        FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+        FdGuard sock(scan_tcp_socket(ip));
         if (sock.get() < 0) break;
         if (!tcp_connect_to(ip, connect_port, budget, sock.get())) break;
 
@@ -1156,27 +1332,12 @@ static HttpInfo probe_http(const std::string& ip, int port, int timeout_ms, bool
     HttpInfo info{};
     if (TLS_PORTS.count(port)) return info;
 
-    FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+    FdGuard sock(scan_tcp_socket(ip));
     if (sock.get() < 0) return info;
-
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(static_cast<uint16_t>(port));
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-
-    fcntl(sock.get(), F_SETFL, O_NONBLOCK);
-    connect(sock.get(), (sockaddr*)&sa, sizeof(sa));
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return info;
 
     struct pollfd pfd{};
     pfd.fd = sock.get();
-    pfd.events = POLLOUT;
-
-    if (poll(&pfd, 1, timeout_ms) <= 0) return info;
-
-    int sockerr = 0;
-    socklen_t errlen = sizeof(sockerr);
-    getsockopt(sock.get(), SOL_SOCKET, SO_ERROR, &sockerr, &errlen);
-    if (sockerr != 0) return info;
 
     const std::string& host = host_header.empty() ? ip : host_header;
     std::string req = build_http_get_request("/", host);
@@ -1209,14 +1370,11 @@ static HttpInfo probe_http(const std::string& ip, int port, int timeout_ms, bool
     if (aggressive && (info.status_code == 200 || info.status_code == 403 || info.status_code == 401)) {
         std::vector<std::string> paths = {"/.git/HEAD", "/admin", "/.env", "/api/v1", "/swagger-ui.html"};
         for (const auto& path : paths) {
-            FdGuard psock(socket(AF_INET, SOCK_STREAM, 0));
+            FdGuard psock(scan_tcp_socket(ip));
             if (psock.get() < 0) continue;
-            fcntl(psock.get(), F_SETFL, O_NONBLOCK);
-            connect(psock.get(), (sockaddr*)&sa, sizeof(sa));
+            if (!tcp_connect_to(ip, port, 1000, psock.get())) continue;
 
             pfd.fd = psock.get();
-            pfd.events = POLLOUT;
-            if (poll(&pfd, 1, 1000) <= 0) continue;
 
             std::string preq = build_http_get_request(path, host);
             send(psock.get(), preq.c_str(), preq.size(), MSG_NOSIGNAL);
@@ -1498,7 +1656,27 @@ ScanResults PortScanEngine::run() {
                 } else {
                     if (!is_tls_http_port(p))
                         b_raw = smart_banner(p);
+                    if (!banner_usable(b_raw))
+                        b_raw.clear();
                     ver = extract_version(b_raw, p);
+
+                    if (!is_tls_http_port(p) && b_raw.empty()) {
+                        std::string probed;
+                        if (p == 22)
+                            probed = probe_ssh_banner(cfg_.ip, p, cfg_.connect_ms);
+                        else if (p == 21)
+                            probed = probe_ftp_banner(cfg_.ip, p, cfg_.connect_ms);
+                        else if (p == 25 || p == 587 || p == 465)
+                            probed = probe_smtp_banner(cfg_.ip, p, cfg_.connect_ms);
+                        else if (p == 3306)
+                            probed = probe_mysql_banner(cfg_.ip, p, cfg_.connect_ms);
+                        else if (p == 5432)
+                            probed = probe_postgres_banner(cfg_.ip, p, cfg_.connect_ms);
+                        if (banner_usable(probed))
+                            b_raw = probed;
+                    }
+                    if (!b_raw.empty() && ver.empty())
+                        ver = extract_version(b_raw, p);
 
                     if (cfg_.tls_inspect && TLS_PORTS.count(p)) {
                         tls = inspect_tls(p);
@@ -1508,6 +1686,15 @@ ScanResults PortScanEngine::run() {
                     if (cfg_.http_probe && HTTP_PORTS.count(p) && !TLS_PORTS.count(p)) {
                         http = probe_http(p);
                         is_http = http.status_code > 0;
+                        if (is_http) {
+                            if (http.status_code > 0)
+                                b_raw = "HTTP/" + std::to_string(http.status_code) +
+                                        (http.server.empty() ? "" : " " + http.server);
+                            if (!http.server.empty())
+                                ver = http.server;
+                            else if (ver.empty())
+                                ver = extract_version(b_raw, p);
+                        }
                     }
                 }
 
@@ -1519,6 +1706,9 @@ ScanResults PortScanEngine::run() {
                     std::string mongo_resp = probe_mongo_ping(cfg_.ip, p, cfg_.connect_ms);
                     if (!mongo_resp.empty()) b_raw = mongo_resp;
                 }
+
+                if (!banner_usable(b_raw))
+                    b_raw.clear();
 
                 const TLSInfo* tls_ptr = is_tls ? &tls : nullptr;
                 const HttpInfo* http_ptr = is_http ? &http : nullptr;
@@ -1579,9 +1769,12 @@ void PortScanEngine::print_results(const ScanResults& r) {
         std::string risk_color = WHITE;
         if (pr.risk == "HIGH") risk_color = BLOOD_RED;
 
+        std::string ver_disp = pr.version.empty() ? "-" : pr.version;
+        if (ver_disp.size() > 24) ver_disp = ver_disp.substr(0, 21) + "...";
+
         std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(10) << pr.port
                   << std::setw(16) << pr.service
-                  << std::setw(25) << (pr.version.empty() ? "-" : pr.version)
+                  << std::setw(25) << ver_disp
                   << std::setw(10) << (std::to_string(pr.latency_ms) + "ms")
                   << risk_color << std::setw(10) << pr.risk << WHITE;
 
@@ -1591,8 +1784,21 @@ void PortScanEngine::print_results(const ScanResults& r) {
 
         if (pr.tls_port && (!pr.tls.tls_version.empty() || !pr.tls.cn.empty() || !pr.tls.cipher.empty()))
             print_tls_enrichment(pr.tls);
-        if (pr.http_port && pr.http.status_code > 0)
+        if (pr.http_port && pr.http.status_code > 0) {
             print_http_enrichment(pr.http);
+            print_powered_by_line(pr.http);
+        }
+
+        int hint_shown = 0;
+        for (const auto& v : pr.vulns) {
+            if (!is_significant_severity(v.severity)) continue;
+            std::string c_col = WHITE;
+            if (v.severity == "CRIT") c_col = BLOOD_RED;
+            else if (v.severity == "HIGH") c_col = YELLOW;
+            std::cout << BLOOD_RED << "            hint " << WHITE << "[" << c_col << v.severity << WHITE << "] "
+                      << v.cve << " " << sanitize(v.desc) << RESET << "\n";
+            if (++hint_shown >= 3) break;
+        }
 
         PortEntry pe;
         pe.port = pr.port;
@@ -1626,6 +1832,8 @@ void PortScanEngine::print_results(const ScanResults& r) {
     std::cout << BLOOD_RED << "  [filtered]      " << WHITE << r.filtered_ports.size() << "\n";
     std::cout << BLOOD_RED << "  [scan time]     " << WHITE << std::fixed << std::setprecision(2) << r.total_time_s << "s\n";
     std::cout << BLOOD_RED << "  [speed]         " << WHITE << r.ports_per_sec << " ports/sec\n";
+
+    print_stack_disclosures(r);
 
     print_section("SECURITY HINTS");
     all_vulns = dedupe_and_sort_vulns(std::move(all_vulns));
@@ -1661,16 +1869,32 @@ void PortScanEngine::print_results(const ScanResults& r) {
         " time=" + std::to_string((int)r.total_time_s) + "s");
 }
 
-void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, int timing_profile, const std::set<int>& exclude_ports) {
-    print_header("PORT SCAN // " + ip);
+void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, int timing_profile,
+               const std::set<int>& exclude_ports, ScanAddrFamily addr_family) {
+    std::string scan_ip = resolve_for_scan(ip, addr_family);
+    if (scan_ip.empty()) scan_ip = ip;
+
+    print_header("PORT SCAN // " + scan_ip);
 
     PortScanConfig cfg{};
-    cfg.ip = ip;
+    cfg.ip = scan_ip;
     cfg.udp_scan = scan_udp;
     cfg.syn_scan = true;
     cfg.tls_inspect = true;
     cfg.http_probe = true;
     cfg.aggressive = true;
+
+    if (addr_family == ScanAddrFamily::IPv4)
+        std::cout << BLOOD_RED << "  address: " << WHITE << "IPv4 only\n" << RESET;
+    else if (addr_family == ScanAddrFamily::IPv6)
+        std::cout << BLOOD_RED << "  address: " << WHITE << "IPv6 only\n" << RESET;
+    else
+        std::cout << BLOOD_RED << "  address: " << WHITE << "auto (IPv4 preferred, else IPv6)\n" << RESET;
+
+    if (scan_is_v6(cfg.ip)) {
+        cfg.syn_scan = false;
+        std::cout << BLOOD_RED << "  stack: " << WHITE << "IPv6 target (TCP connect scan)\n" << RESET;
+    }
 
     if (timing_profile >= 0 && timing_profile <= 5) {
         cfg.timing = static_cast<PortScanConfig::TimingProfile>(timing_profile);
@@ -1800,12 +2024,16 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     switch (cfg.timing) {
         case PortScanConfig::TimingProfile::T4:
             cfg.connect_ms  = std::max(100, cfg.connect_ms / 2);
+            if (cfg.median_rtt > 0)
+                cfg.connect_ms = std::max(cfg.connect_ms, std::min(1500, cfg.median_rtt * 5));
             cfg.banner_ms   = std::max(500, cfg.banner_ms  / 2);
-            cfg.retry_count = 1;
+            cfg.retry_count = std::max(cfg.retry_count, 1);
             cfg.pool_size   = cfg.pool_size * 2;
             break;
         case PortScanConfig::TimingProfile::T5:
             cfg.connect_ms  = 50;
+            if (cfg.median_rtt > 0)
+                cfg.connect_ms = std::max(cfg.connect_ms, std::min(800, cfg.median_rtt * 3));
             cfg.banner_ms   = 300;
             cfg.retry_count = 0;
             cfg.pool_size   = std::min(1000, cfg.pool_size * 4);
