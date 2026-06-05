@@ -51,9 +51,11 @@ static void print_help() {
     std::cout << WHITE << BOLD << "  USAGE:\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus [options] <target>\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  OPTIONS:\n"<<RESET;
-    std::cout << BLOOD_RED << "    --portscan <ip> [ports] " << WHITE << "Run port scan (e.g. 0 for top1000, 0U for UDP, or 80-443)\n"<<RESET;
-    std::cout << BLOOD_RED << "    -T<0-5>                 " << WHITE << "Timing profile (0=Paranoid, 3=Normal, 5=Insane)\n"<<RESET;
-    std::cout << BLOOD_RED << "    --exclude <ports>       " << WHITE << "Comma-separated list of ports to skip\n"<<RESET;
+    std::cout << BLOOD_RED << "    --portscan <target> [ports] " << WHITE << "Port scan (0=top1000, 0-1=top100, 80-443, 0U=UDP)\n"<<RESET;
+    std::cout << BLOOD_RED << "    -T<0-5>                     " << WHITE << "Timing (0=Paranoid .. 5=Insane, default 3)\n"<<RESET;
+    std::cout << BLOOD_RED << "    --ipv4                      " << WHITE << "Resolve/scan IPv4 only (A records)\n"<<RESET;
+    std::cout << BLOOD_RED << "    --ipv6                      " << WHITE << "Resolve/scan IPv6 only (AAAA records)\n"<<RESET;
+    std::cout << BLOOD_RED << "    --exclude <ports>           " << WHITE << "Comma-separated ports to skip\n"<<RESET;
     std::cout << BLOOD_RED << "    --netscan <subnet>      " << WHITE << "Run network scan (e.g. 192.168.1.1)\n"<<RESET;
     std::cout << BLOOD_RED << "    --os-detect <ip>        " << WHITE << "Run OS detection\n"<<RESET;
     std::cout << BLOOD_RED << "    --ip-intel <ip>         " << WHITE << "Run full IP intelligence\n"<<RESET;
@@ -71,6 +73,8 @@ static void print_help() {
     std::cout << WHITE << BOLD << "  EXAMPLES:\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --output result.json\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0 -T4 --exclude 80,443\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --portscan scanme.nmap.org 22,80 --ipv4\n"<<RESET;
+    std::cout << BLOOD_RED << "    dark-nexus --portscan example.com 443 --ipv6\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0U\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus --osint user@mail.com\n\n"<<RESET;
 
@@ -142,9 +146,12 @@ int main(int argc, char** argv) {
         char sub_mode = 'F';
         int timing_profile = 3;
         std::set<int> exclude_ports;
+        ScanAddrFamily addr_family = ScanAddrFamily::Auto;
 
         for (size_t i = 0; i < args.size(); i++) {
             if (args[i] == "-h" || args[i] == "--help") { print_help(); return 0; }
+            else if (args[i] == "--ipv4") { addr_family = ScanAddrFamily::IPv4; }
+            else if (args[i] == "--ipv6") { addr_family = ScanAddrFamily::IPv6; }
             else if (args[i].size() == 3 && args[i][0] == '-' && args[i][1] == 'T') {
                 try { timing_profile = std::stoi(args[i].substr(2)); } catch (...) {}
             }
@@ -197,9 +204,10 @@ int main(int argc, char** argv) {
             else subdomain_scan(target, wl, 200, true, true, true);
         } else {
             if(!valid_target(target)){std::cout<<WHITE<<"  invalid input\n"<<RESET;return 1;}
-            std::string ip_res=resolve(target);
-            if(ip_res.empty()) ip_res=target;
-            else if(ip_res!=target) std::cout<<BLOOD_RED<<"  resolved: "<<target<<" -> "<<ip_res<<"\n"<<RESET;
+            ScanAddrFamily resolve_family = (mode == "portscan") ? addr_family : ScanAddrFamily::Auto;
+            std::string ip_res = resolve_for_scan(target, resolve_family);
+            if (ip_res.empty()) ip_res = target;
+            else if (ip_res != target) std::cout << BLOOD_RED << "  resolved: " << target << " -> " << ip_res << "\n" << RESET;
 
             g_result.resolved_ip = ip_res;
 
@@ -219,7 +227,7 @@ int main(int argc, char** argv) {
                         if (s == 0) e = 0;
                     }
                 }
-                port_scan(ip_res, s, e, udp, timing_profile, exclude_ports);
+                port_scan(ip_res, s, e, udp, timing_profile, exclude_ports, addr_family);
             }
             else if (mode == "netscan") { g_result.scan_type = "netscan"; net_scan(ip_res.substr(0,ip_res.rfind('.'))); }
             else if (mode == "os-detect") { g_result.scan_type = "os_detect"; os_detect(ip_res); }
@@ -399,7 +407,14 @@ int main(int argc, char** argv) {
                     }
 
                     
-                    port_scan(ip_res, s, e, udp, timing, exclude_ports);
+                    ScanAddrFamily menu_af = ScanAddrFamily::Auto;
+                    std::string af_in;
+                    std::cout << BLOOD_RED << "  address family (4/6/empty=auto): " << RESET;
+                    std::getline(std::cin, af_in);
+                    if (af_in == "4") menu_af = ScanAddrFamily::IPv4;
+                    else if (af_in == "6") menu_af = ScanAddrFamily::IPv6;
+
+                    port_scan(target, s, e, udp, timing, exclude_ports, menu_af);
                     break;
                 }
                 
