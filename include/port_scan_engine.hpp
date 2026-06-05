@@ -9,6 +9,7 @@ struct ScanMode { enum Type { SYN, CONNECT, UDP, ALL } type; };
 
 struct PortScanConfig {
     std::string ip;
+    std::string sni_host;
     std::vector<int> ports;
     int connect_ms;
     int banner_ms;
@@ -37,20 +38,29 @@ struct TLSInfo {
     std::vector<std::string> sans;
     std::string issuer;
     std::string expiry;
-    bool self_signed;
-    bool expired;
+    std::string cipher;
+    bool self_signed = false;
+    bool expired = false;
     std::string tls_version;
 };
 
 struct HttpInfo {
-    int status_code;
+    int status_code = 0;
     std::string server;
     std::string powered_by;
     std::string title;
-    bool hsts;
-    bool csp;
-    bool x_frame;
+    std::string redirect_location;
+    bool hsts = false;
+    bool csp = false;
+    bool x_frame = false;
     std::vector<std::string> interesting_paths;
+};
+
+struct TlsHttpResult {
+    TLSInfo tls;
+    HttpInfo http;
+    bool tls_ok = false;
+    bool http_ok = false;
 };
 
 struct PortResult {
@@ -87,6 +97,7 @@ private:
     std::pair<int,bool> probe_syn(int port);
     bool               probe_udp_smart(int port);
     TLSInfo            inspect_tls(int port);
+    TlsHttpResult      probe_tls_http(int port);
     HttpInfo           probe_http(int port);
     std::string        smart_banner(int port);
 };
