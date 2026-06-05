@@ -1,4 +1,5 @@
 #include <atomic>
+#include <memory>
 #include <sys/resource.h>
 #include <unordered_set>
 #include <set>
@@ -11,6 +12,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+#include <openssl/bio.h>
 #endif
 
 static RateLimiter port_rl(10000.0);
@@ -42,6 +44,10 @@ static const std::unordered_set<int> HTTP_PORTS = {
 static const std::unordered_set<int> TLS_PORTS = {
     443, 8443, 465, 993, 995, 636, 5671, 6443, 4443, 7443, 2083, 2087, 2053, 2096
 };
+
+static bool is_tls_http_port(int port) {
+    return TLS_PORTS.count(port) && HTTP_PORTS.count(port);
+}
 
 static const std::vector<int> TOP100 = {
     21,22,23,25,53,80,110,111,135,139,143,443,445,
@@ -75,103 +81,213 @@ static std::string extract_version(const std::string& banner_raw, int port) {
     return "";
 }
 
+static int sev_rank(const std::string& s) {
+    if (s == "CRIT") return 0;
+    if (s == "HIGH") return 1;
+    if (s == "MED")  return 2;
+    return 3;
+}
+
+static bool is_significant_severity(const std::string& sev) {
+    return sev == "CRIT" || sev == "HIGH" || sev == "MED";
+}
+
+static void add_vuln_hint(std::vector<VulnHint>& out, std::set<std::string>& seen,
+                          const std::string& cve, const std::string& desc,
+                          const std::string& sev) {
+    if (!is_significant_severity(sev)) return;
+    std::string key = cve + "|" + desc;
+    if (seen.insert(key).second)
+        out.push_back({cve, desc, sev});
+}
+
+static std::string lower_copy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return s;
+}
+
+static std::string fingerprint_text(const std::string& banner, const std::string& version,
+                                    const HttpInfo* http) {
+    std::string hay = lower_copy(banner) + " " + lower_copy(version);
+    if (http && !http->server.empty())
+        hay += " " + lower_copy(http->server);
+    if (http && !http->powered_by.empty())
+        hay += " " + lower_copy(http->powered_by);
+    return hay;
+}
+
+static void check_web_version_cves(const std::string& hay, std::vector<VulnHint>& out,
+                                   std::set<std::string>& seen) {
+    if (hay.find("apache/2.4.49") != std::string::npos)
+        add_vuln_hint(out, seen, "CVE-2021-41773", "Apache 2.4.49 path traversal/RCE", "CRIT");
+    if (hay.find("apache/2.4.50") != std::string::npos)
+        add_vuln_hint(out, seen, "CVE-2021-42013", "Apache 2.4.50 RCE", "CRIT");
+
+    std::regex re_apache(R"(apache/2\.4\.(\d+))");
+    std::smatch m_ap;
+    if (std::regex_search(hay, m_ap, re_apache)) {
+        int patch = std::stoi(m_ap[1].str());
+        if (patch < 54)
+            add_vuln_hint(out, seen, "CVE-2022-26377", "Apache 2.4." + m_ap[1].str() + " SSRF", "HIGH");
+    }
+
+    std::regex re_ngx(R"(nginx/1\.(\d+)\.(\d+))");
+    std::smatch m_ng;
+    if (std::regex_search(hay, m_ng, re_ngx)) {
+        int minor = std::stoi(m_ng[1].str());
+        int patch = std::stoi(m_ng[2].str());
+        if (minor < 20 || (minor == 20 && patch < 1))
+            add_vuln_hint(out, seen, "CVE-2021-23017", "nginx resolver overflow (1." + m_ng[1].str() + "." + m_ng[2].str() + ")", "HIGH");
+    }
+}
+
+static void check_tls_hints(int port, const TLSInfo* tls, std::vector<VulnHint>& out,
+                            std::set<std::string>& seen) {
+    if (!tls || !TLS_PORTS.count(port)) return;
+
+    if (tls->expired)
+        add_vuln_hint(out, seen, "N/A", "TLS certificate expired", "HIGH");
+    if (tls->self_signed)
+        add_vuln_hint(out, seen, "N/A", "TLS certificate is self-signed", "MED");
+
+    const std::string& ver = tls->tls_version;
+    if (ver.find("TLSv1.0") != std::string::npos || ver.find("TLSv1.1") != std::string::npos)
+        add_vuln_hint(out, seen, "N/A", "Deprecated TLS version negotiated (" + ver + ")", "HIGH");
+
+    if (!tls->cipher.empty()) {
+        std::string c = lower_copy(tls->cipher);
+        if (c.find("null") != std::string::npos || c.find("export") != std::string::npos ||
+            c.find("des") != std::string::npos || c.find("rc4") != std::string::npos)
+            add_vuln_hint(out, seen, "N/A", "Weak TLS cipher negotiated: " + tls->cipher, "HIGH");
+    }
+}
+
+static void check_http_security_hints(int port, const HttpInfo* http, std::vector<VulnHint>& out,
+                                      std::set<std::string>& seen) {
+    if (!http || http->status_code <= 0) return;
+
+    const bool https = is_tls_http_port(port) || port == 443 || port == 8443;
+
+    if (https && !http->hsts)
+        add_vuln_hint(out, seen, "N/A", "HTTPS response missing Strict-Transport-Security", "MED");
+
+    if (https && http->status_code == 200 && !http->csp)
+        add_vuln_hint(out, seen, "N/A", "HTTPS response missing Content-Security-Policy", "MED");
+
+    if (http->status_code == 200 && !http->x_frame)
+        add_vuln_hint(out, seen, "N/A", "HTTP 200 response missing X-Frame-Options", "MED");
+
+    if (!http->powered_by.empty()) {
+        std::string pb = lower_copy(http->powered_by);
+        if (pb.find("php/") != std::string::npos) {
+            std::regex re_php(R"(php/(\d+)\.(\d+))");
+            std::smatch m;
+            if (std::regex_search(pb, m, re_php)) {
+                int maj = std::stoi(m[1].str()), min = std::stoi(m[2].str());
+                if (maj < 7 || (maj == 7 && min < 4) || maj == 8)
+                    add_vuln_hint(out, seen, "N/A", "End-of-life or outdated PHP disclosed (" + http->powered_by + ")", "HIGH");
+            }
+        }
+    }
+}
+
+static void check_redirect_hints(int port, const HttpInfo* http, std::vector<VulnHint>& out,
+                                 std::set<std::string>& seen) {
+    if (!http || http->status_code < 300 || http->status_code >= 400) return;
+    if (http->redirect_location.empty()) return;
+
+    std::string loc = lower_copy(http->redirect_location);
+    const bool https_port = is_tls_http_port(port) || port == 443 || port == 8443;
+
+    if (https_port && loc.rfind("http://", 0) == 0)
+        add_vuln_hint(out, seen, "N/A", "HTTPS redirects to cleartext HTTP: " + http->redirect_location, "HIGH");
+
+    if ((port == 80 || port == 8080) && loc.rfind("http://", 0) == 0 && loc.find("https://") == std::string::npos)
+        add_vuln_hint(out, seen, "N/A", "HTTP redirect does not upgrade to HTTPS", "MED");
+}
+
 static std::vector<VulnHint> check_vulns(int port, const std::string& version_str,
-                                          const std::string& bnr)
-{
+                                          const std::string& bnr, const TLSInfo* tls,
+                                          const HttpInfo* http) {
     std::vector<VulnHint> vulns;
-    std::string bl=bnr, vl=version_str;
-    std::transform(bl.begin(),bl.end(),bl.begin(),::tolower);
-    std::transform(vl.begin(),vl.end(),vl.begin(),::tolower);
+    std::set<std::string> seen;
+    std::string bl = lower_copy(bnr);
+    std::string vl = lower_copy(version_str);
+    std::string hay = fingerprint_text(bnr, version_str, http);
+    const bool has_banner = !bnr.empty();
 
-    if (port==22 && vl.find("openssh")!=std::string::npos) {
-        std::regex re_ver("openssh[_\\s]([0-9]+)\\.([0-9]+)");
+    if (port == 22 && vl.find("openssh") != std::string::npos) {
+        std::regex re_ver(R"(openssh[_\s]([0-9]+)\.([0-9]+))");
         std::smatch m;
-        if (std::regex_search(vl,m,re_ver)) {
-            int maj=std::stoi(m[1].str()), mn=std::stoi(m[2].str());
-            if (maj<9||(maj==9&&mn<8))
-                vulns.push_back({"CVE-2024-6387","regreSSHion - signal handler race","CRIT"});
-            if (maj<9||(maj==9&&mn<3))
-                vulns.push_back({"CVE-2023-38408","agent forwarding RCE","HIGH"});
-            if (maj<8||(maj==8&&mn<5))
-                vulns.push_back({"CVE-2021-41617","privilege escalation","MED"});
+        if (std::regex_search(vl, m, re_ver)) {
+            int maj = std::stoi(m[1].str()), mn = std::stoi(m[2].str());
+            if (maj < 9 || (maj == 9 && mn < 8))
+                add_vuln_hint(vulns, seen, "CVE-2024-6387", "OpenSSH regreSSHion (signal handler race)", "CRIT");
+            if (maj < 9 || (maj == 9 && mn < 3))
+                add_vuln_hint(vulns, seen, "CVE-2023-38408", "OpenSSH agent forwarding RCE", "HIGH");
+            if (maj < 8 || (maj == 8 && mn < 5))
+                add_vuln_hint(vulns, seen, "CVE-2021-41617", "OpenSSH privilege escalation", "MED");
         }
     }
 
-    if (port==21) {
-        if (bl.find("anonymous")!=std::string::npos||bl.find("anon")!=std::string::npos)
-            vulns.push_back({"N/A","anonymous FTP possibly allowed","MED"});
-        if (vl.find("vsftpd 2.3.4")!=std::string::npos)
-            vulns.push_back({"CVE-2011-2523","vsFTPd 2.3.4 backdoor","CRIT"});
-        if (vl.find("proftpd 1.3.5")!=std::string::npos)
-            vulns.push_back({"CVE-2015-3306","mod_copy RCE","CRIT"});
+    if (port == 21 && has_banner) {
+        if (bl.find("anonymous") != std::string::npos || bl.find("230 login") != std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A", "FTP banner suggests anonymous login allowed", "MED");
+        if (hay.find("vsftpd 2.3.4") != std::string::npos)
+            add_vuln_hint(vulns, seen, "CVE-2011-2523", "vsFTPd 2.3.4 backdoor", "CRIT");
+        if (hay.find("proftpd 1.3.5") != std::string::npos)
+            add_vuln_hint(vulns, seen, "CVE-2015-3306", "ProFTPD 1.3.5 mod_copy RCE", "CRIT");
     }
 
-    if (port==80 || port==443 || port==8080 || port==8443) {
-        if (bl.find("apache/2.4.49")!=std::string::npos)
-            vulns.push_back({"CVE-2021-41773","Path Traversal/RCE","CRIT"});
-        if (bl.find("apache/2.4.50")!=std::string::npos)
-            vulns.push_back({"CVE-2021-42013","RCE","CRIT"});
+    if (port == 80 || port == 443 || port == 8080 || port == 8443)
+        check_web_version_cves(hay, vulns, seen);
 
-        std::regex re_apache("apache/2\\.4\\.(\\d+)");
-        std::smatch m_ap;
-        if (std::regex_search(bl,m_ap,re_apache) && std::stoi(m_ap[1].str()) < 54)
-            vulns.push_back({"CVE-2022-26377","SSRF","HIGH"});
-
-        std::regex re_ngx("nginx/1\\.(\\d+)\\.(\\d+)");
-        std::smatch m_ng;
-        if (std::regex_search(bl,m_ng,re_ngx)) {
-            int minor = std::stoi(m_ng[1].str());
-            int patch = std::stoi(m_ng[2].str());
-            if (minor < 20 || (minor == 20 && patch < 1))
-                vulns.push_back({"CVE-2021-23017","resolver overflow","HIGH"});
-            if (minor < 24)
-                vulns.push_back({"INFO","outdated nginx version","INFO"});
-        }
-
-        if (!version_str.empty())
-            vulns.push_back({"INFO","server version disclosed: "+version_str,"INFO"});
+    if (port == 3306 && has_banner) {
+        if (bl.find("5.6.") != std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A", "MySQL 5.6 (EOL, no security patches)", "CRIT");
+        if (bl.find("5.7.") != std::string::npos)
+            add_vuln_hint(vulns, seen, "CVE-2022-21417", "MySQL 5.7 reached EOL", "HIGH");
+        if (bl.find("mysql_native_password") == std::string::npos &&
+            bl.find("caching_sha2_password") == std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A", "MySQL handshake without expected auth plugin", "HIGH");
     }
 
-    if (port==3306) {
-        if (bl.find("5.6.")!=std::string::npos)
-            vulns.push_back({"N/A","MySQL 5.6 EOL - no security patches","CRIT"});
-        if (bl.find("5.7.")!=std::string::npos)
-            vulns.push_back({"CVE-2022-21417","MySQL 5.7 EOL","HIGH"});
-        if (bl.find("mysql_native_password")==std::string::npos && bl.find("caching_sha2_password")==std::string::npos && !bl.empty())
-            vulns.push_back({"N/A","MySQL unauthenticated access","CRIT"});
+    if (port == 6379 && has_banner) {
+        if (bl.find("noauth") == std::string::npos && bl.find("denied") == std::string::npos &&
+            bl.find("-err") == std::string::npos && bl.find("-noauth") == std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A", "Redis responded without authentication error", "CRIT");
     }
 
-    if (port==1433 && !bl.empty())
-        vulns.push_back({"CHECK","MSSQL exposed - audit xp_cmdshell, sa account","HIGH"});
+    if (port == 23)
+        add_vuln_hint(vulns, seen, "N/A", "Telnet service exposes cleartext credentials", "HIGH");
 
-    if (port==161 && !bl.empty())
-        vulns.push_back({"CHECK","SNMP open - test community strings: public, private, community","HIGH"});
+    if (port == 2375)
+        add_vuln_hint(vulns, seen, "N/A", "Docker API on unencrypted port 2375", "CRIT");
 
-    if (port==123 && !bl.empty())
-        vulns.push_back({"CHECK","NTP exposed - test monlist: ntpdc -c monlist <ip>","MED"});
+    if (port == 161 && has_banner)
+        add_vuln_hint(vulns, seen, "N/A", "SNMP service responded to probe (verify community strings)", "MED");
 
-    if (port==500 && !bl.empty())
-        vulns.push_back({"CHECK","IKE/VPN exposed - check for aggressive mode","MED"});
-
-    if (port==2376 && !bl.empty())
-        vulns.push_back({"CHECK","Docker TLS API - verify client cert required","HIGH"});
-
-    if (port==445||port==139)
-        vulns.push_back({"CHECK","SMB exposed - EternalBlue/SMBGhost/PrintNightmare","HIGH"});
-    if (port==23)
-        vulns.push_back({"N/A","telnet cleartext - credentials sniffable","HIGH"});
-    if (port==6379) {
-        if (bl.find("noauth")==std::string::npos&&bl.find("denied")==std::string::npos&&!bl.empty())
-            vulns.push_back({"N/A","redis possibly unauthenticated - RCE risk","CRIT"});
-    }
-    if (port==27017) vulns.push_back({"CHECK","MongoDB exposed - check auth","HIGH"});
-    if (port==2375)  vulns.push_back({"N/A","Docker API unencrypted - full host compromise","CRIT"});
-    if (port==9200)  vulns.push_back({"CHECK","Elasticsearch exposed - check auth & data","HIGH"});
-    if (port==3389)  vulns.push_back({"CHECK","RDP exposed - check BlueKeep CVE-2019-0708","HIGH"});
-    if (port==6443)  vulns.push_back({"CHECK","K8s API exposed - check RBAC","HIGH"});
-    if (port==11211) vulns.push_back({"CHECK","Memcached exposed - DDoS amplification","HIGH"});
+    check_tls_hints(port, tls, vulns, seen);
+    check_http_security_hints(port, http, vulns, seen);
+    check_redirect_hints(port, http, vulns, seen);
 
     return vulns;
+}
+
+static std::vector<VulnHint> dedupe_and_sort_vulns(std::vector<VulnHint> vulns) {
+    std::set<std::string> seen;
+    std::vector<VulnHint> deduped;
+    deduped.reserve(vulns.size());
+    for (auto& v : vulns) {
+        if (!is_significant_severity(v.severity)) continue;
+        std::string key = v.cve + "|" + v.desc;
+        if (seen.insert(key).second)
+            deduped.push_back(std::move(v));
+    }
+    std::sort(deduped.begin(), deduped.end(), [](const VulnHint& a, const VulnHint& b) {
+        return sev_rank(a.severity) < sev_rank(b.severity);
+    });
+    return deduped;
 }
 
 static AdaptiveConfig calibrate_target(const std::string& ip) {
@@ -261,16 +377,6 @@ static std::pair<int,bool> probe_connect(const std::string& ip, int port, int ti
         return {-1, false};
     }
     return {-1, true};
-}
-
-static uint16_t csum(const void* data, int len) {
-    auto p = reinterpret_cast<const uint16_t*>(data);
-    uint32_t sum = 0;
-    for (; len > 1; len -= 2) sum += *p++;
-    if (len == 1) sum += *reinterpret_cast<const uint8_t*>(p);
-    sum = (sum >> 16) + (sum & 0xffff);
-    sum += (sum >> 16);
-    return static_cast<uint16_t>(~sum);
 }
 
 struct pseudo_header {
@@ -365,7 +471,6 @@ static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeou
                         struct tcphdr* rtcph = (struct tcphdr*)(buf + iph_len);
                         if (ntohs(rtcph->source) == port && ntohs(rtcph->dest) == src_port) {
                             if (rtcph->syn && rtcph->ack) {
-                                // SEND RST
                                 tcph.syn = 0; tcph.rst = 1; tcph.ack = 0; tcph.seq = rtcph->ack_seq;
                                 tcph.check = 0; tcph.check = tcp_csum(&ph, &tcph);
                                 sendto(sock_send.get(), &tcph, sizeof(tcph), 0, (struct sockaddr*)&dest, sizeof(dest));
@@ -389,117 +494,560 @@ static std::pair<int,bool> probe_syn(const std::string& ip, int port, int timeou
     return {-1, true};
 }
 
-static TLSInfo inspect_tls(const std::string& ip, int port, int timeout_ms) {
+static std::string resolve_sni_host(const std::string& scan_ip) {
+    const std::string& target = g_result.target;
+    if (!target.empty() && target != scan_ip &&
+        !InputGuard::is_valid_ipv4(target) && !InputGuard::is_valid_ipv6(target)) {
+        return target;
+    }
+    std::string ptr = ptr_lookup(scan_ip);
+    if (!ptr.empty() && ptr != scan_ip) return ptr;
+    return scan_ip;
+}
+
+static bool tcp_connect_wait(int fd, int timeout_ms) {
+    if (timeout_ms <= 0) return false;
+    struct pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    int sel = poll(&pfd, 1, timeout_ms);
+    if (sel <= 0) return false;
+    if (!(pfd.revents & POLLOUT)) return false;
+    int sockerr = 0;
+    socklen_t errlen = sizeof(sockerr);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockerr, &errlen) != 0) return false;
+    return sockerr == 0;
+}
+
+static bool tcp_connect_to(const std::string& ip, int port, int timeout_ms, int fd) {
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, ip.c_str(), &sa.sin_addr) != 1) return false;
+
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+    int cr = connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    if (cr == 0) {
+        int sockerr = 0;
+        socklen_t errlen = sizeof(sockerr);
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockerr, &errlen);
+        return sockerr == 0;
+    }
+    if (errno != EINPROGRESS) return false;
+    return tcp_connect_wait(fd, timeout_ms);
+}
+
+#ifdef HAVE_OPENSSL
+namespace {
+
+struct SSL_CTX_Deleter {
+    void operator()(SSL_CTX* ctx) const noexcept {
+        if (ctx) SSL_CTX_free(ctx);
+    }
+};
+struct SSL_Deleter {
+    void operator()(SSL* ssl) const noexcept {
+        if (ssl) SSL_free(ssl);
+    }
+};
+struct X509_Deleter {
+    void operator()(X509* cert) const noexcept {
+        if (cert) X509_free(cert);
+    }
+};
+
+using SSL_CTX_ptr = std::unique_ptr<SSL_CTX, SSL_CTX_Deleter>;
+using SSL_ptr     = std::unique_ptr<SSL, SSL_Deleter>;
+using X509_ptr    = std::unique_ptr<X509, X509_Deleter>;
+
+std::string openssl_err_stack() {
+    std::string msg;
+    unsigned long err = 0;
+    while ((err = ERR_get_error()) != 0) {
+        char buf[256];
+        ERR_error_string_n(err, buf, sizeof(buf));
+        if (!msg.empty()) msg += "; ";
+        msg += buf;
+    }
+    return msg;
+}
+
+const char* ssl_error_label(int ssl_err) {
+    switch (ssl_err) {
+        case SSL_ERROR_NONE: return "NONE";
+        case SSL_ERROR_SSL: return "SSL";
+        case SSL_ERROR_WANT_READ: return "WANT_READ";
+        case SSL_ERROR_WANT_WRITE: return "WANT_WRITE";
+        case SSL_ERROR_WANT_X509_LOOKUP: return "WANT_X509_LOOKUP";
+        case SSL_ERROR_SYSCALL: return "SYSCALL";
+        case SSL_ERROR_ZERO_RETURN: return "ZERO_RETURN";
+        case SSL_ERROR_WANT_CONNECT: return "WANT_CONNECT";
+        case SSL_ERROR_WANT_ACCEPT: return "WANT_ACCEPT";
+        default: return "UNKNOWN";
+    }
+}
+
+void log_tls_handshake_fail(const std::string& context, SSL* ssl, int ssl_connect_ret, int ssl_err) {
+    std::string msg = context + " ssl_err=" + ssl_error_label(ssl_err) +
+                      "(" + std::to_string(ssl_err) + ")";
+    if (ssl_connect_ret != 1)
+        msg += " ret=" + std::to_string(ssl_connect_ret);
+    if (ssl && ssl_err == SSL_ERROR_SYSCALL) {
+        if (errno != 0) msg += " errno=" + std::string(strerror(errno));
+    }
+    std::string stack = openssl_err_stack();
+    if (!stack.empty()) msg += " openssl=[" + stack + "]";
+    LOG_WARN("port_scan_tls", msg);
+}
+
+std::string asn1_time_to_string(const ASN1_TIME* t) {
+    if (!t) return "";
+    BIO* bio = BIO_new(BIO_s_mem());
+    if (!bio) return "";
+    if (ASN1_TIME_print(bio, const_cast<ASN1_TIME*>(t)) != 1) {
+        BIO_free(bio);
+        return "";
+    }
+    BUF_MEM* mem = nullptr;
+    BIO_get_mem_ptr(bio, &mem);
+    std::string out;
+    if (mem && mem->data && mem->length > 0)
+        out.assign(mem->data, mem->length);
+    BIO_free(bio);
+    return InputGuard::sanitize_output(out);
+}
+
+bool ssl_connect_with_timeout(SSL* ssl, int fd, int timeout_ms, const std::string& log_ctx) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    int last_ret = -1;
+    int last_err = SSL_ERROR_NONE;
+
+    while (!g_cancel_token.cancelled) {
+        auto now = std::chrono::steady_clock::now();
+        int remaining = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (remaining <= 0) {
+            log_tls_handshake_fail(log_ctx + " deadline", ssl, last_ret, last_err);
+            return false;
+        }
+
+        int ret = SSL_connect(ssl);
+        last_ret = ret;
+        if (ret == 1) return true;
+
+        int err = SSL_get_error(ssl, ret);
+        last_err = err;
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            struct pollfd pfd{};
+            pfd.fd = fd;
+            pfd.events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            if (poll(&pfd, 1, remaining) <= 0) {
+                log_tls_handshake_fail(log_ctx + " poll", ssl, ret, err);
+                return false;
+            }
+            continue;
+        }
+        log_tls_handshake_fail(log_ctx + " handshake", ssl, ret, err);
+        return false;
+    }
+    log_tls_handshake_fail(log_ctx + " cancelled", ssl, last_ret, last_err);
+    return false;
+}
+
+void populate_tls_cert_fields(TLSInfo& tls, X509* cert) {
+    if (!cert) return;
+
+    char buf[256];
+    X509_NAME* subj = X509_get_subject_name(cert);
+    if (subj) {
+        if (X509_NAME_get_text_by_NID(subj, NID_commonName, buf, sizeof(buf)) > 0)
+            tls.cn = InputGuard::sanitize_output(buf);
+    }
+    X509_NAME* issuer_name = X509_get_issuer_name(cert);
+    if (issuer_name) {
+        if (X509_NAME_get_text_by_NID(issuer_name, NID_commonName, buf, sizeof(buf)) > 0)
+            tls.issuer = InputGuard::sanitize_output(buf);
+    }
+
+    STACK_OF(GENERAL_NAME)* sans = static_cast<STACK_OF(GENERAL_NAME)*>(
+        X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr));
+    if (sans) {
+        int num_sans = sk_GENERAL_NAME_num(sans);
+        for (int i = 0; i < num_sans; i++) {
+            GENERAL_NAME* gen = sk_GENERAL_NAME_value(sans, i);
+            if (gen && gen->type == GEN_DNS) {
+                std::string san(
+                    reinterpret_cast<const char*>(ASN1_STRING_get0_data(gen->d.dNSName)),
+                    static_cast<size_t>(ASN1_STRING_length(gen->d.dNSName)));
+                tls.sans.push_back(InputGuard::sanitize_output(san));
+            }
+        }
+        sk_GENERAL_NAME_pop_free(sans, GENERAL_NAME_free);
+    }
+
+    tls.self_signed = (X509_check_issued(cert, cert) == X509_V_OK);
+
+    const ASN1_TIME* not_after = X509_get0_notAfter(cert);
+    if (not_after) {
+        tls.expiry = asn1_time_to_string(not_after);
+        int day = 0, sec = 0;
+        if (ASN1_TIME_diff(&day, &sec, nullptr, not_after))
+            tls.expired = (day < 0 || sec < 0);
+    }
+}
+
+void populate_tls_from_ssl(SSL* ssl, TLSInfo& tls) {
+    if (!ssl) return;
+    tls.tls_version = SSL_get_version(ssl);
+    const SSL_CIPHER* cipher = SSL_get_current_cipher(ssl);
+    if (cipher) {
+        const char* name = SSL_CIPHER_get_name(cipher);
+        if (name) tls.cipher = InputGuard::sanitize_output(name);
+    }
+    X509_ptr cert(SSL_get_peer_certificate(ssl));
+    populate_tls_cert_fields(tls, cert.get());
+}
+
+bool tls_handshake_on_socket(int fd, SSL_CTX_ptr& ctx, SSL_ptr& ssl, TLSInfo& tls,
+                             const std::string& ip, int port, int timeout_ms,
+                             const std::string& sni_host) {
+    const std::string& host = sni_host.empty() ? ip : sni_host;
+    std::string log_ctx = "port=" + std::to_string(port) + " sni=" + host;
+
+    ctx = SSL_CTX_ptr(SSL_CTX_new(TLS_client_method()));
+    if (!ctx) {
+        LOG_WARN("port_scan_tls", log_ctx + " SSL_CTX_new failed " + openssl_err_stack());
+        return false;
+    }
+    SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
+
+    ssl = SSL_ptr(SSL_new(ctx.get()));
+    if (!ssl) {
+        LOG_WARN("port_scan_tls", log_ctx + " SSL_new failed " + openssl_err_stack());
+        return false;
+    }
+
+    SSL_set_fd(ssl.get(), fd);
+    if (SSL_set_tlsext_host_name(ssl.get(), host.c_str()) != 1) {
+        LOG_WARN("port_scan_tls", log_ctx + " SNI set failed " + openssl_err_stack());
+        return false;
+    }
+
+    if (!ssl_connect_with_timeout(ssl.get(), fd, timeout_ms, log_ctx))
+        return false;
+
+    populate_tls_from_ssl(ssl.get(), tls);
+    return true;
+}
+
+bool ssl_write_all(SSL* ssl, int fd, const std::string& data, int timeout_ms,
+                   const std::string& log_ctx) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    size_t sent = 0;
+    while (sent < data.size() && !g_cancel_token.cancelled) {
+        auto now = std::chrono::steady_clock::now();
+        int remaining = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (remaining <= 0) return false;
+
+        int ret = SSL_write(ssl, data.data() + sent, static_cast<int>(data.size() - sent));
+        if (ret > 0) {
+            sent += static_cast<size_t>(ret);
+            continue;
+        }
+        int err = SSL_get_error(ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            struct pollfd pfd{};
+            pfd.fd = fd;
+            pfd.events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            if (poll(&pfd, 1, remaining) <= 0) return false;
+            continue;
+        }
+        log_tls_handshake_fail(log_ctx + " write", ssl, ret, err);
+        return false;
+    }
+    return sent == data.size();
+}
+
+bool ssl_read_http_response(SSL* ssl, int fd, std::string& out, int timeout_ms, size_t max_bytes) {
+    out.clear();
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    std::vector<char> buf(4096);
+
+    while (out.size() < max_bytes && !g_cancel_token.cancelled) {
+        auto now = std::chrono::steady_clock::now();
+        int remaining = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (remaining <= 0) break;
+
+        int ret = SSL_read(ssl, buf.data(), static_cast<int>(buf.size()));
+        if (ret > 0) {
+            out.append(buf.data(), static_cast<size_t>(ret));
+            if (out.find("\r\n\r\n") != std::string::npos) {
+                size_t hdr_end = out.find("\r\n\r\n") + 4;
+                if (out.size() >= hdr_end + 512 || out.size() >= max_bytes) break;
+                if (out.find("<title>", hdr_end) != std::string::npos) break;
+            }
+            continue;
+        }
+        if (ret == 0) break;
+        int err = SSL_get_error(ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            struct pollfd pfd{};
+            pfd.fd = fd;
+            pfd.events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            if (poll(&pfd, 1, remaining) <= 0) break;
+            continue;
+        }
+        break;
+    }
+    return !out.empty();
+}
+
+} // namespace
+#endif
+
+static std::string build_http_get_request(const std::string& path, const std::string& host_header) {
+    return "GET " + path + " HTTP/1.1\r\n"
+           "Host: " + host_header + "\r\n"
+           "User-Agent: " + random_ua() + "\r\n"
+           "Accept: */*\r\n"
+           "Connection: close\r\n\r\n";
+}
+
+static bool is_redirect_status(int code) {
+    return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+}
+
+static void parse_http_response(const std::string& raw, HttpInfo& info) {
+    if (raw.empty()) return;
+
+    std::istringstream stream(raw);
+    std::string line;
+    if (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        static const std::regex status_re(R"(HTTP/\d(?:\.\d)?\s+(\d{3}))");
+        std::smatch m;
+        if (std::regex_search(line, m, status_re)) {
+            try { info.status_code = std::stoi(m[1].str()); } catch (...) {}
+        }
+    }
+
+    while (std::getline(stream, line)) {
+        if (line == "\r" || line.empty()) break;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::string l = line;
+        std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+
+        if (l.find("server: ") == 0)
+            info.server = InputGuard::sanitize_output(line.substr(8));
+        else if (l.find("x-powered-by: ") == 0)
+            info.powered_by = InputGuard::sanitize_output(line.substr(14));
+        else if (l.find("strict-transport-security: ") == 0)
+            info.hsts = true;
+        else if (l.find("content-security-policy: ") == 0)
+            info.csp = true;
+        else if (l.find("x-frame-options: ") == 0)
+            info.x_frame = true;
+        else if (l.find("location: ") == 0)
+            info.redirect_location = InputGuard::sanitize_output(line.substr(10));
+    }
+
+    auto title_start = raw.find("<title>");
+    if (title_start != std::string::npos) {
+        title_start += 7;
+        auto title_end = raw.find("</title>", title_start);
+        if (title_end != std::string::npos) {
+            std::string title = raw.substr(title_start, title_end - title_start);
+            if (title.size() > 80) title = title.substr(0, 80) + "...";
+            info.title = InputGuard::sanitize_output(title);
+        }
+    }
+}
+
+static bool resolve_redirect_target(const std::string& location, const std::string& base_host,
+                                    int base_port, std::string& path_out, std::string& host_out,
+                                    int& port_out) {
+    if (location.empty()) return false;
+    std::string loc = location;
+    while (!loc.empty() && (loc.back() == ' ' || loc.back() == '\t')) loc.pop_back();
+
+    if (loc.rfind("https://", 0) == 0 || loc.rfind("http://", 0) == 0) {
+        bool https = loc.rfind("https://", 0) == 0;
+        size_t start = loc.find("://") + 3;
+        size_t slash = loc.find('/', start);
+        std::string authority = slash == std::string::npos ? loc.substr(start) : loc.substr(start, slash - start);
+        path_out = slash == std::string::npos ? "/" : loc.substr(slash);
+        size_t colon = authority.find(':');
+        if (colon == std::string::npos) {
+            host_out = authority;
+            port_out = https ? 443 : 80;
+        } else {
+            host_out = authority.substr(0, colon);
+            try { port_out = std::stoi(authority.substr(colon + 1)); } catch (...) { port_out = base_port; }
+        }
+        return true;
+    }
+
+    if (loc[0] == '/') {
+        path_out = loc;
+        host_out = base_host;
+        port_out = base_port;
+        return true;
+    }
+
+    path_out = "/" + loc;
+    host_out = base_host;
+    port_out = base_port;
+    return true;
+}
+
+static void print_http_enrichment(const HttpInfo& http) {
+    if (http.status_code <= 0) return;
+
+    std::cout << BLOOD_RED << "            HTTP: " << WHITE << http.status_code;
+    if (!http.redirect_location.empty())
+        std::cout << " -> " << http.redirect_location;
+    if (!http.server.empty())
+        std::cout << " | Server: " << http.server;
+    if (!http.title.empty())
+        std::cout << " | Title: " << http.title;
+    std::cout << RESET << "\n";
+
+    std::cout << BLOOD_RED << "            Sec: " << WHITE
+              << "HSTS=" << (http.hsts ? "yes" : "no")
+              << " CSP=" << (http.csp ? "yes" : "no")
+              << " X-Frame=" << (http.x_frame ? "yes" : "no")
+              << RESET << "\n";
+}
+
+static void print_tls_enrichment(const TLSInfo& tls) {
+    if (tls.tls_version.empty() && tls.cn.empty() && tls.cipher.empty()) return;
+
+    if (!tls.tls_version.empty() || !tls.cipher.empty()) {
+        std::cout << BLOOD_RED << "            TLS: " << WHITE;
+        if (!tls.tls_version.empty()) std::cout << tls.tls_version;
+        if (!tls.cipher.empty()) {
+            if (!tls.tls_version.empty()) std::cout << " / ";
+            std::cout << tls.cipher;
+        }
+        std::cout << RESET << "\n";
+    }
+
+    if (!tls.cn.empty() || !tls.issuer.empty() || !tls.expiry.empty() || tls.expired || tls.self_signed) {
+        std::cout << BLOOD_RED << "            Cert: " << WHITE;
+        if (!tls.cn.empty()) std::cout << "CN=" << tls.cn;
+        if (!tls.issuer.empty()) std::cout << " | Issuer: " << tls.issuer;
+        if (!tls.expiry.empty()) std::cout << " | exp: " << tls.expiry;
+        if (tls.expired) std::cout << " (expired)";
+        if (tls.self_signed) std::cout << " (self-signed)";
+        std::cout << RESET << "\n";
+    }
+
+    if (!tls.sans.empty()) {
+        std::cout << BLOOD_RED << "                  SANs: " << WHITE;
+        size_t limit = std::min(tls.sans.size(), size_t{8});
+        for (size_t i = 0; i < limit; ++i) {
+            if (i) std::cout << ", ";
+            std::cout << tls.sans[i];
+        }
+        if (tls.sans.size() > 8) std::cout << ", ...";
+        std::cout << RESET << "\n";
+    }
+}
+
+static TLSInfo inspect_tls(const std::string& ip, int port, int timeout_ms, const std::string& sni_host) {
     TLSInfo tls{};
 #ifdef HAVE_OPENSSL
     FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
     if (sock.get() < 0) return tls;
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return tls;
 
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-
-    fcntl(sock.get(), F_SETFL, O_NONBLOCK);
-    connect(sock.get(), (sockaddr*)&sa, sizeof(sa));
-
-    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) return tls;
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
-
-    SSL* ssl = SSL_new(ctx);
-    if (!ssl) { SSL_CTX_free(ctx); return tls; }
-
-    SSL_set_fd(ssl, sock.get());
-    SSL_set_tlsext_host_name(ssl, ip.c_str());
-
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(timeout_ms);
-    bool connected = false;
-
-    while (!g_cancel_token.cancelled) {
-        auto now = std::chrono::high_resolution_clock::now();
-        int remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-        if (remaining <= 0) break;
-
-        int ret = SSL_connect(ssl);
-        if (ret == 1) {
-            connected = true;
-            break;
-        }
-
-        int err = SSL_get_error(ssl, ret);
-        struct pollfd pfd{};
-        pfd.fd = sock.get();
-
-        if (err == SSL_ERROR_WANT_READ) {
-            pfd.events = POLLIN;
-        } else if (err == SSL_ERROR_WANT_WRITE) {
-            pfd.events = POLLOUT;
-        } else {
-            break;
-        }
-
-        int r = poll(&pfd, 1, remaining);
-        if (r <= 0) break;
-    }
-
-    if (connected) {
-        tls.tls_version = SSL_get_version(ssl);
-        X509* cert = SSL_get_peer_certificate(ssl);
-        if (cert) {
-            char buf[256];
-            X509_NAME* subj = X509_get_subject_name(cert);
-            if (subj) {
-                X509_NAME_get_text_by_NID(subj, NID_commonName, buf, sizeof(buf));
-                tls.cn = InputGuard::sanitize_output(buf);
-            }
-            X509_NAME* issuer = X509_get_issuer_name(cert);
-            if (issuer) {
-                X509_NAME_get_text_by_NID(issuer, NID_commonName, buf, sizeof(buf));
-                tls.issuer = InputGuard::sanitize_output(buf);
-            }
-
-            STACK_OF(GENERAL_NAME)* sans = (STACK_OF(GENERAL_NAME)*)X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr);
-            if (sans) {
-                int num_sans = sk_GENERAL_NAME_num(sans);
-                for (int i = 0; i < num_sans; i++) {
-                    GENERAL_NAME* gen = sk_GENERAL_NAME_value(sans, i);
-                    if (gen->type == GEN_DNS) {
-                        std::string san((char*)ASN1_STRING_get0_data(gen->d.dNSName), ASN1_STRING_length(gen->d.dNSName));
-                        tls.sans.push_back(InputGuard::sanitize_output(san));
-                    }
-                }
-                sk_GENERAL_NAME_pop_free(sans, GENERAL_NAME_free);
-            }
-
-            tls.self_signed = (tls.cn == tls.issuer && !tls.cn.empty());
-
-            const ASN1_TIME* notAfter = X509_get0_notAfter(cert);
-            int day, sec;
-            if (ASN1_TIME_diff(&day, &sec, nullptr, notAfter)) {
-                if (day < 0 || sec < 0) tls.expired = true;
-                else tls.expired = false;
-            }
-
-            X509_free(cert);
-        }
-        SSL_shutdown(ssl);
-    }
-
-    SSL_free(ssl);
-    SSL_CTX_free(ctx);
+    SSL_CTX_ptr ctx;
+    SSL_ptr ssl;
+    if (!tls_handshake_on_socket(sock.get(), ctx, ssl, tls, ip, port, timeout_ms, sni_host))
+        return tls;
+    SSL_shutdown(ssl.get());
 #endif
     return tls;
 }
 
-static HttpInfo probe_http(const std::string& ip, int port, int timeout_ms, bool aggressive) {
+static TlsHttpResult probe_tls_http(const std::string& ip, int port, int timeout_ms,
+                                    const std::string& sni_host, int max_redirects) {
+    TlsHttpResult result{};
+#ifdef HAVE_OPENSSL
+    auto t0 = std::chrono::steady_clock::now();
+    auto ms_remaining = [&]() {
+        int elapsed = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count());
+        return std::max(0, timeout_ms - elapsed);
+    };
+
+    std::string connect_host = sni_host.empty() ? ip : sni_host;
+    int connect_port = port;
+    std::string path = "/";
+
+    for (int hop = 0; hop <= max_redirects; ++hop) {
+        int budget = ms_remaining();
+        if (budget <= 0) break;
+
+        FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+        if (sock.get() < 0) break;
+        if (!tcp_connect_to(ip, connect_port, budget, sock.get())) break;
+
+        SSL_CTX_ptr ctx;
+        SSL_ptr ssl;
+        TLSInfo hop_tls;
+        if (!tls_handshake_on_socket(sock.get(), ctx, ssl, hop_tls, ip, connect_port, budget, connect_host))
+            break;
+
+        result.tls = hop_tls;
+        result.tls_ok = !hop_tls.tls_version.empty() || !hop_tls.cn.empty();
+
+        std::string log_ctx = "port=" + std::to_string(connect_port) + " sni=" + connect_host;
+        std::string req = build_http_get_request(path, connect_host);
+        if (!ssl_write_all(ssl.get(), sock.get(), req, budget, log_ctx))
+            break;
+
+        std::string raw;
+        if (!ssl_read_http_response(ssl.get(), sock.get(), raw, ms_remaining(), 65536))
+            break;
+
+        HttpInfo hop_http;
+        parse_http_response(raw, hop_http);
+        result.http = hop_http;
+        result.http_ok = hop_http.status_code > 0;
+
+        SSL_shutdown(ssl.get());
+
+        if (!is_redirect_status(hop_http.status_code) || hop >= max_redirects)
+            break;
+
+        std::string next_path, next_host;
+        int next_port = connect_port;
+        if (!resolve_redirect_target(hop_http.redirect_location, connect_host, connect_port,
+                                     next_path, next_host, next_port))
+            break;
+
+        path = next_path;
+        connect_host = next_host;
+        connect_port = next_port;
+    }
+#endif
+    return result;
+}
+
+static HttpInfo probe_http(const std::string& ip, int port, int timeout_ms, bool aggressive,
+                           const std::string& host_header) {
     HttpInfo info{};
+    if (TLS_PORTS.count(port)) return info;
+
     FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
     if (sock.get() < 0) return info;
 
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
-    sa.sin_port = htons(port);
+    sa.sin_port = htons(static_cast<uint16_t>(port));
     inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
 
     fcntl(sock.get(), F_SETFL, O_NONBLOCK);
@@ -511,50 +1059,38 @@ static HttpInfo probe_http(const std::string& ip, int port, int timeout_ms, bool
 
     if (poll(&pfd, 1, timeout_ms) <= 0) return info;
 
-    std::string ua = random_ua();
-    std::string req = "GET / HTTP/1.1\r\nHost: " + ip + "\r\nUser-Agent: " + ua + "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
+    int sockerr = 0;
+    socklen_t errlen = sizeof(sockerr);
+    getsockopt(sock.get(), SOL_SOCKET, SO_ERROR, &sockerr, &errlen);
+    if (sockerr != 0) return info;
+
+    const std::string& host = host_header.empty() ? ip : host_header;
+    std::string req = build_http_get_request("/", host);
     send(sock.get(), req.c_str(), req.size(), MSG_NOSIGNAL);
 
     pfd.events = POLLIN;
     std::string res;
-    if (poll(&pfd, 1, timeout_ms) > 0) {
-        std::vector<char> buf(4096, 0);
-        ssize_t n = recv(sock.get(), buf.data(), buf.size()-1, 0);
-        if (n > 0) res = std::string(buf.data(), n);
-    }
-
-    if (res.empty()) return info;
-
-    std::istringstream stream(res);
-    std::string line;
-    if (std::getline(stream, line)) {
-        if (line.size() > 9 && line.substr(0, 4) == "HTTP") {
-            try { info.status_code = std::stoi(line.substr(9, 3)); } catch (...) {}
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    std::vector<char> buf(4096);
+    while (res.size() < 65536) {
+        auto now = std::chrono::steady_clock::now();
+        int remaining = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (remaining <= 0) break;
+        pfd.revents = 0;
+        if (poll(&pfd, 1, remaining) <= 0) break;
+        ssize_t n = recv(sock.get(), buf.data(), buf.size(), 0);
+        if (n > 0) {
+            res.append(buf.data(), static_cast<size_t>(n));
+            if (res.find("\r\n\r\n") != std::string::npos) break;
+        } else if (n == 0) {
+            break;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            break;
         }
     }
 
-    while (std::getline(stream, line) && line != "\r" && !line.empty()) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        std::string l = line;
-        std::transform(l.begin(), l.end(), l.begin(), ::tolower);
-
-        if (l.find("server: ") == 0) info.server = InputGuard::sanitize_output(line.substr(8));
-        else if (l.find("x-powered-by: ") == 0) info.powered_by = InputGuard::sanitize_output(line.substr(14));
-        else if (l.find("strict-transport-security: ") == 0) info.hsts = true;
-        else if (l.find("content-security-policy: ") == 0) info.csp = true;
-        else if (l.find("x-frame-options: ") == 0) info.x_frame = true;
-    }
-
-    auto title_start = res.find("<title>");
-    if (title_start != std::string::npos) {
-        title_start += 7;
-        auto title_end = res.find("</title>", title_start);
-        if (title_end != std::string::npos) {
-            std::string title = res.substr(title_start, title_end - title_start);
-            if (title.size() > 80) title = title.substr(0, 80) + "...";
-            info.title = InputGuard::sanitize_output(title);
-        }
-    }
+    parse_http_response(res, info);
 
     if (aggressive && (info.status_code == 200 || info.status_code == 403 || info.status_code == 401)) {
         std::vector<std::string> paths = {"/.git/HEAD", "/admin", "/.env", "/api/v1", "/swagger-ui.html"};
@@ -568,7 +1104,7 @@ static HttpInfo probe_http(const std::string& ip, int port, int timeout_ms, bool
             pfd.events = POLLOUT;
             if (poll(&pfd, 1, 1000) <= 0) continue;
 
-            std::string preq = "GET " + path + " HTTP/1.1\r\nHost: " + ip + "\r\nUser-Agent: " + ua + "\r\nConnection: close\r\n\r\n";
+            std::string preq = build_http_get_request(path, host);
             send(psock.get(), preq.c_str(), preq.size(), MSG_NOSIGNAL);
 
             pfd.events = POLLIN;
@@ -655,21 +1191,13 @@ static std::pair<int,bool> probe_udp_smart(const std::string& ip, int port, int 
 
         if (n > 0) {
             int ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - t0).count();
-            return {std::max(1, ms), false}; // Response received -> open
+            return {std::max(1, ms), false};
         }
-        if (n < 0 && errno == ECONNREFUSED) return {-1, false}; // Port unreach -> closed
+        if (n < 0 && errno == ECONNREFUSED) return {-1, false};
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return {-1, true};
     }
 
-    // Timeout -> open|filtered (user explicitly requested returning filtered for timeout to avoid 100% false positives)
     return {-1, true};
-}
-
-static int sev_rank(const std::string& s) {
-    if (s=="CRIT") return 0;
-    if (s=="HIGH") return 1;
-    if (s=="MED")  return 2;
-    return 3;
 }
 
 std::string guess_os_from_ports(const std::vector<int>& open) {
@@ -702,15 +1230,22 @@ bool PortScanEngine::probe_udp_smart(int port) {
 }
 
 TLSInfo PortScanEngine::inspect_tls(int port) {
-    return ::inspect_tls(cfg_.ip, port, cfg_.banner_ms);
+    const std::string& sni = cfg_.sni_host.empty() ? cfg_.ip : cfg_.sni_host;
+    return ::inspect_tls(cfg_.ip, port, cfg_.banner_ms, sni);
+}
+
+TlsHttpResult PortScanEngine::probe_tls_http(int port) {
+    const std::string& sni = cfg_.sni_host.empty() ? cfg_.ip : cfg_.sni_host;
+    return ::probe_tls_http(cfg_.ip, port, cfg_.banner_ms, sni, 3);
 }
 
 HttpInfo PortScanEngine::probe_http(int port) {
-    return ::probe_http(cfg_.ip, port, cfg_.banner_ms, cfg_.aggressive);
+    const std::string& sni = cfg_.sni_host.empty() ? cfg_.ip : cfg_.sni_host;
+    return ::probe_http(cfg_.ip, port, cfg_.banner_ms, cfg_.aggressive, sni);
 }
 
 std::string PortScanEngine::smart_banner(int port) {
-    return ::smart_banner(cfg_.ip, port, cfg_.banner_ms);
+    return ::smart_banner(cfg_.ip, port, cfg_.banner_ms, TLS_PORTS.count(port) != 0);
 }
 
 ScanResults PortScanEngine::run() {
@@ -825,31 +1360,46 @@ ScanResults PortScanEngine::run() {
 
                 std::string svc_name = svc(p);
                 std::string r_label = risk_label(p);
-                std::string b_raw = smart_banner(p);
-                std::string ver = extract_version(b_raw, p);
-                auto vulns = check_vulns(p, ver, b_raw);
+                std::string b_raw;
+                std::string ver;
+                std::vector<VulnHint> vulns;
 
                 TLSInfo tls;
+                HttpInfo http;
                 bool is_tls = false;
-                if (cfg_.tls_inspect && TLS_PORTS.count(p)) {
-                    tls = inspect_tls(p);
-                    is_tls = true;
-                    if (tls.expired) vulns.push_back({"N/A", "TLS Certificate Expired", "HIGH"});
-                    if (tls.self_signed) vulns.push_back({"N/A", "TLS Self-Signed Certificate", "MED"});
+                bool is_http = false;
+
+                if (cfg_.tls_inspect && cfg_.http_probe && is_tls_http_port(p)) {
+                    auto r = probe_tls_http(p);
+                    tls = r.tls;
+                    http = r.http;
+                    is_tls = r.tls_ok;
+                    is_http = r.http_ok;
+                    if (http.status_code > 0)
+                        b_raw = "HTTP/" + std::to_string(http.status_code) +
+                                (http.server.empty() ? "" : " " + http.server);
+                    else if (is_tls)
+                        b_raw = tls.tls_version;
+                    ver = http.server.empty() ? extract_version(b_raw, p) : http.server;
+                } else {
+                    if (!is_tls_http_port(p))
+                        b_raw = smart_banner(p);
+                    ver = extract_version(b_raw, p);
+
+                    if (cfg_.tls_inspect && TLS_PORTS.count(p)) {
+                        tls = inspect_tls(p);
+                        is_tls = !tls.tls_version.empty() || !tls.cn.empty();
+                    }
+
+                    if (cfg_.http_probe && HTTP_PORTS.count(p) && !TLS_PORTS.count(p)) {
+                        http = probe_http(p);
+                        is_http = http.status_code > 0;
+                    }
                 }
 
-                HttpInfo http;
-                bool is_http = false;
-                if (cfg_.http_probe && HTTP_PORTS.count(p)) {
-                    http = probe_http(p);
-                    is_http = true;
-                    if ((p==443||p==8443) && !http.hsts && http.status_code > 0)
-                        vulns.push_back({"INFO", "missing HSTS header", "INFO"});
-                    if (!http.x_frame && http.status_code > 0)
-                        vulns.push_back({"INFO", "clickjacking risk (missing X-Frame-Options)", "INFO"});
-                    if (!http.csp && http.status_code > 0)
-                        vulns.push_back({"INFO", "no Content-Security-Policy", "INFO"});
-                }
+                const TLSInfo* tls_ptr = is_tls ? &tls : nullptr;
+                const HttpInfo* http_ptr = is_http ? &http : nullptr;
+                vulns = check_vulns(p, ver, b_raw, tls_ptr, http_ptr);
 
                 {
                     std::lock_guard<std::mutex> lk(results_mtx);
@@ -900,7 +1450,6 @@ void PortScanEngine::print_results(const ScanResults& r) {
               << "  PORT      SERVICE         VERSION                  LATENCY   RISK      BANNER\n"
               << "  " << std::string(100, '-') << "\n" << RESET;
 
-    int vuln_crit = 0, vuln_high = 0, vuln_med = 0, vuln_info = 0;
     std::vector<VulnHint> all_vulns;
 
     for (const auto& pr : r.open_ports) {
@@ -917,6 +1466,11 @@ void PortScanEngine::print_results(const ScanResults& r) {
         if (dbnr.size() > 45) dbnr = dbnr.substr(0, 45) + "...";
         std::cout << sanitize(dbnr) << RESET << "\n";
 
+        if (pr.tls_port && (!pr.tls.tls_version.empty() || !pr.tls.cn.empty() || !pr.tls.cipher.empty()))
+            print_tls_enrichment(pr.tls);
+        if (pr.http_port && pr.http.status_code > 0)
+            print_http_enrichment(pr.http);
+
         PortEntry pe;
         pe.port = pr.port;
         pe.protocol = cfg_.udp_scan ? "udp" : "tcp";
@@ -931,17 +1485,14 @@ void PortScanEngine::print_results(const ScanResults& r) {
         pe.tls_expired = pr.tls.expired;
 
         for (const auto& v : pr.vulns) {
+            if (!is_significant_severity(v.severity)) continue;
             all_vulns.push_back(v);
             pe.vulns.push_back(v.cve + ":" + v.severity + ":" + v.desc);
-            if      (v.severity == "CRIT") vuln_crit++;
-            else if (v.severity == "HIGH") vuln_high++;
-            else if (v.severity == "MED")  vuln_med++;
-            else                         vuln_info++;
         }
 
         std::lock_guard<std::mutex> lk(g_result_mtx);
         g_result.ports.push_back(pe);
-        g_result.open_ports.push_back({pr.port, pr.service}); // legacy
+        g_result.open_ports.push_back({pr.port, pr.service});
     }
 
     g_result.os_guess = r.os_hint;
@@ -953,41 +1504,31 @@ void PortScanEngine::print_results(const ScanResults& r) {
     std::cout << BLOOD_RED << "  [scan time]     " << WHITE << std::fixed << std::setprecision(2) << r.total_time_s << "s\n";
     std::cout << BLOOD_RED << "  [speed]         " << WHITE << r.ports_per_sec << " ports/sec\n";
 
-    if (!all_vulns.empty()) {
-    // Deduplicate by (cve + desc) key
-    {
-        std::set<std::string> seen_vulns;
-        std::vector<VulnHint> deduped;
-        deduped.reserve(all_vulns.size());
-        for (auto& v : all_vulns) {
-            std::string key = v.cve + "|" + v.desc;
-            if (seen_vulns.insert(key).second) {
-                deduped.push_back(v);
-            }
+    print_section("SECURITY HINTS");
+    all_vulns = dedupe_and_sort_vulns(std::move(all_vulns));
+
+    if (all_vulns.empty()) {
+        std::cout << WHITE
+                  << "  No significant information disclosures or security misconfigurations detected.\n"
+                  << RESET;
+    } else {
+        int vuln_crit = 0, vuln_high = 0, vuln_med = 0;
+        for (const auto& v : all_vulns) {
+            if (v.severity == "CRIT") vuln_crit++;
+            else if (v.severity == "HIGH") vuln_high++;
+            else if (v.severity == "MED") vuln_med++;
         }
-        all_vulns = std::move(deduped);
-    }
-    // Re-sort by severity: CRIT > HIGH > MED > INFO
-    std::sort(all_vulns.begin(), all_vulns.end(), [](const VulnHint& a, const VulnHint& b){
-        return sev_rank(a.severity) < sev_rank(b.severity);
-    });
-    // Recount after dedup
-    vuln_crit = vuln_high = vuln_med = vuln_info = 0;
-    for (auto& v : all_vulns) {
-        if      (v.severity=="CRIT") vuln_crit++;
-        else if (v.severity=="HIGH") vuln_high++;
-        else if (v.severity=="MED")  vuln_med++;
-        else                         vuln_info++;
-    }
-        print_section("VULNERABILITY HINTS");
-        std::cout << BLOOD_RED << "  " << WHITE << vuln_crit << BLOOD_RED << " CRIT  " << WHITE << vuln_high << BLOOD_RED << " HIGH  " << WHITE << vuln_med << BLOOD_RED << " MED\n\n" << RESET;
+        std::cout << BLOOD_RED << "  " << WHITE << vuln_crit << BLOOD_RED << " CRIT  "
+                  << WHITE << vuln_high << BLOOD_RED << " HIGH  "
+                  << WHITE << vuln_med << BLOOD_RED << " MED\n\n" << RESET;
 
         for (const auto& v : all_vulns) {
             std::string c_col = WHITE;
             if (v.severity == "CRIT") c_col = BLOOD_RED;
             else if (v.severity == "HIGH") c_col = YELLOW;
 
-            std::cout << "  " << c_col << "[" << std::left << std::setw(4) << v.severity << "] " << std::setw(14) << v.cve << " " << WHITE << v.desc << "\n" << RESET;
+            std::cout << "  " << c_col << "[" << std::left << std::setw(4) << v.severity << "] "
+                      << std::setw(14) << v.cve << " " << WHITE << v.desc << "\n" << RESET;
         }
     }
 
@@ -996,33 +1537,6 @@ void PortScanEngine::print_results(const ScanResults& r) {
         " filtered=" + std::to_string(r.filtered_ports.size()) +
         " time=" + std::to_string((int)r.total_time_s) + "s");
 }
-
-// TIMEOUT STRATEGY:
-//
-// TCP:  timeout = time to receive RST/SYN-ACK (fast; closed port resets immediately)
-//   < 1000 ports  -> calibrated (2-3s), 2 retries
-//   1000-5000     -> 1 retry, pool+50
-//   > 5000        -> max 800ms, 1 retry, pool*2 (capped at 500)
-//
-// UDP:  timeout = wait for ICMP unreachable OR silence (slow; no fast reset)
-//   < 1000 ports  -> max 1200ms, 0 retries  (enough time for ICMP)
-//   1000-5000     -> max 1000ms, 0 retries
-//   5001-10000    -> max 600ms,  0 retries
-//   > 10000       -> max 400ms,  0 retries  (aggressive - avoids multi-hour scan)
-//
-// Key: UDP timeout must DECREASE for large ranges.
-//      Increasing it (old code) causes exponential blowup.
-
-// Calling conventions:
-//   start=0, end_port=0          → top-1000 TCP ports
-//   start=0, end_port=-1         → top-100 TCP ports
-//   start=N, end_port=0          → single port N (TCP or UDP)
-//   start=N, end_port=M (M>=N)   → range N..M
-//   scan_udp=true                → use UDP probes instead of TCP SYN/connect
-//
-// For UDP single port: caller should pass start=N, end_port=0, scan_udp=true
-// For UDP range 1-1024: caller passes start=1, end_port=1024, scan_udp=true
-//   The caller (menu) should default UDP end_port to 1024 if user skips it.
 
 void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, int timing_profile, const std::set<int>& exclude_ports) {
     print_header("PORT SCAN // " + ip);
@@ -1043,19 +1557,15 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     cfg.exclude_ports = exclude_ports;
 
     if (start == 0 && end_port == 0) {
-        // no range given → top-1000
         cfg.ports = TOP1000;
         std::cout << BLOOD_RED << "  mode: " << WHITE << "top-1000 ports\n" << RESET;
     } else if (start > 0 && end_port == 0) {
-        // single port check (e.g. start=8080, end=0 means "just check port 8080")
         cfg.ports = {start};
         std::cout << BLOOD_RED << "  mode: " << WHITE << "single port → " << start << "\n" << RESET;
     } else if (start == 0 && end_port > 0) {
-        // top-100 shortcut kept for backward compat (caller can send start=0,end=-1 for top-100)
         cfg.ports = TOP100;
         std::cout << BLOOD_RED << "  mode: " << WHITE << "top-100 ports\n" << RESET;
     } else {
-        // explicit range
         int lo = std::max(1, start);
         int hi = std::min(65535, end_port);
         cfg.ports.reserve(hi - lo + 1);
@@ -1075,13 +1585,11 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
 
     auto acfg = calibrate_target(ip);
 
-    // Check FD limits before creating large thread pools.
-    // probe_syn() uses up to 3 FDs per thread; with 500 threads = 1500 FDs > typical ulimit.
     {
         struct rlimit rl;
         getrlimit(RLIMIT_NOFILE, &rl);
-        int available_fds = (int)rl.rlim_cur - 50;       // reserve 50 for other use
-        int needed_fds    = acfg.pool_size * 3;          // probe_syn worst case: 3 FDs/thread
+        int available_fds = (int)rl.rlim_cur - 50;
+        int needed_fds    = acfg.pool_size * 3;
         if (needed_fds > available_fds) {
             int safe_pool = available_fds / 3;
             std::cout << BLOOD_RED << "  [!] FD limit " << available_fds
@@ -1096,13 +1604,10 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     cfg.retry_count = acfg.retry_count;
     cfg.pool_size = acfg.pool_size;
 
-    // For large ranges: reduce retries, tighten timeouts to avoid stalling
     int port_count = (int)cfg.ports.size();
     if (port_count > 5000) {
         cfg.retry_count = 1;
-        // clamp connect timeout tighter for large sweeps
         cfg.connect_ms = std::max(150, std::min(cfg.connect_ms, 800));
-        // scale pool up to handle volume but cap at system limits
         cfg.pool_size  = std::min(500, cfg.pool_size * 2);
         std::cout << BLOOD_RED << "  [large-range] " << WHITE
                   << "adjusted: timeout=" << cfg.connect_ms << "ms"
@@ -1111,9 +1616,6 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
         cfg.retry_count = std::min(cfg.retry_count, 1);
         cfg.pool_size   = std::min(300, cfg.pool_size + 50);
     }
-    // UDP timeout must DECREASE for large ranges - opposite of TCP.
-    // TCP timeout = wait for RST (fast). UDP timeout = wait for ICMP or silence (slow).
-    // Forcing 1500ms minimum on 10000-port UDP scan = 150s minimum -> hangs.
     if (cfg.udp_scan) {
         if (port_count > 10000) {
             cfg.connect_ms = std::min(cfg.connect_ms, 400);
@@ -1125,39 +1627,38 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
             cfg.connect_ms = std::min(cfg.connect_ms, 1000);
             cfg.pool_size  = std::min(cfg.pool_size, 100);
         } else {
-            // Small UDP range: keep generous timeout for ICMP
             cfg.connect_ms = std::max(cfg.connect_ms, 1200);
             cfg.pool_size  = std::min(cfg.pool_size, 100);
         }
     }
 
     if (cfg.udp_scan && port_count > 1000) {
-        cfg.retry_count = 0;  // probe_udp_smart() never retries; retry_count=1 only inflates timeouts
+        cfg.retry_count = 0;
         std::cout << BLOOD_RED << "  [udp] retry_count forced to 0 (UDP has no retries)\n" << RESET;
     }
 
     switch (cfg.timing) {
-        case PortScanConfig::TimingProfile::T0: // Paranoid
+        case PortScanConfig::TimingProfile::T0:
             cfg.connect_ms = 5000; cfg.banner_ms = 10000;
             cfg.retry_count = 3;  cfg.pool_size = 5;
             break;
-        case PortScanConfig::TimingProfile::T1: // Sneaky
+        case PortScanConfig::TimingProfile::T1:
             cfg.connect_ms = 2000; cfg.banner_ms = 5000;
             cfg.retry_count = 2;  cfg.pool_size = 10;
             break;
-        case PortScanConfig::TimingProfile::T2: // Polite
+        case PortScanConfig::TimingProfile::T2:
             cfg.connect_ms = 1500; cfg.banner_ms = 3000;
             cfg.retry_count = 2;  cfg.pool_size = 30;
             break;
-        case PortScanConfig::TimingProfile::T3: // Normal — keep calibrated values
+        case PortScanConfig::TimingProfile::T3:
             break;
-        case PortScanConfig::TimingProfile::T4: // Aggressive
+        case PortScanConfig::TimingProfile::T4:
             cfg.connect_ms  = std::max(100, cfg.connect_ms / 2);
             cfg.banner_ms   = std::max(500, cfg.banner_ms  / 2);
             cfg.retry_count = 1;
             cfg.pool_size   = cfg.pool_size * 2;
             break;
-        case PortScanConfig::TimingProfile::T5: // Insane
+        case PortScanConfig::TimingProfile::T5:
             cfg.connect_ms  = 50;
             cfg.banner_ms   = 300;
             cfg.retry_count = 0;
@@ -1172,6 +1673,10 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
               << BLOOD_RED << "  timeout: " << WHITE << cfg.connect_ms << "ms"
               << BLOOD_RED << "  retries: " << WHITE << cfg.retry_count
               << BLOOD_RED << "  threads: " << WHITE << cfg.pool_size << "\n" << RESET;
+
+    cfg.sni_host = resolve_sni_host(ip);
+    if (!cfg.sni_host.empty() && cfg.sni_host != ip)
+        std::cout << BLOOD_RED << "  sni: " << WHITE << cfg.sni_host << "\n" << RESET;
 
     std::string hostname = ptr_lookup(ip);
     if (!hostname.empty() && hostname != ip)
@@ -1219,9 +1724,7 @@ void net_scan(const std::string& subnet) {
 
             h.alive=true; alive_c++;
 
-            // Threaded ptr_lookup equivalent via getnameinfo, no blocking future destructor since we use ThreadPool directly.
-            // Even though getnameinfo blocks, we submit to thread pool and limit timeout to avoid hang.
-            // To ensure getnameinfo doesn't block infinitely, we can resolve directly here since it's already in a pool thread!
+
             char hbuf[NI_MAXHOST]={};
             sockaddr_in sa{}; sa.sin_family=AF_INET;
             inet_pton(AF_INET,ip.c_str(),&sa.sin_addr);
