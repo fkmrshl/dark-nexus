@@ -125,7 +125,7 @@ std::string banner(const std::string& ip, int port, int ms) {
     return sanitize(result);
 }
 
-std::string smart_banner(const std::string& ip, int port, int ms) {
+std::string smart_banner(const std::string& ip, int port, int ms, bool skip_http_on_tls) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { return ""; }
 
@@ -155,9 +155,6 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
             probe = "GET / HTTP/1.1\r\nHost: " + ip +
             "\r\nUser-Agent: " + random_ua() + "\r\nAccept: */*\r\nConnection: close\r\n\r\n";
             break;
-        case 443: case 8443: case 9443:
-            probe = "GET / HTTP/1.0\r\nUser-Agent: " + random_ua() + "\r\nConnection: close\r\n\r\n";
-            break;
         case 25: case 587:
             probe = "EHLO probe.local\r\n";
             break;
@@ -171,7 +168,7 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
             break;
     }
 
-    if (!probe.empty()) {
+    if (!skip_http_on_tls && !probe.empty()) {
         send(fd, probe.c_str(), probe.size(), MSG_NOSIGNAL);
     }
 
@@ -210,8 +207,7 @@ std::string smart_banner(const std::string& ip, int port, int ms) {
     close(fd);
 
     result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
-    if (port == 80 || port == 8080 || port == 8888 || port == 8000 ||
-        port == 443 || port == 8443 || port == 3000 || port == 9090) {
+    if (port == 80 || port == 8080 || port == 8888 || port == 8000 || port == 3000 || port == 9090) {
         auto end = result.find("\n\n");
     if (end != std::string::npos) { result = result.substr(0, end); }
         }
