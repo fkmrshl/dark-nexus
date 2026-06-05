@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <sys/resource.h>
 #include <unordered_set>
@@ -184,8 +185,13 @@ static void check_http_security_hints(int port, const HttpInfo* http, std::vecto
             std::smatch m;
             if (std::regex_search(pb, m, re_php)) {
                 int maj = std::stoi(m[1].str()), min = std::stoi(m[2].str());
-                if (maj < 7 || (maj == 7 && min < 4) || maj == 8)
-                    add_vuln_hint(out, seen, "N/A", "End-of-life or outdated PHP disclosed (" + http->powered_by + ")", "HIGH");
+                bool php_eol = (maj < 7)
+                            || (maj == 7 && min < 4)
+                            || (maj == 8 && min == 0);
+                if (php_eol)
+                    add_vuln_hint(out, seen, "N/A",
+                        "End-of-life PHP disclosed (" +
+                        InputGuard::sanitize_output(http->powered_by) + ")", "HIGH");
             }
         }
     }
@@ -206,11 +212,37 @@ static void check_redirect_hints(int port, const HttpInfo* http, std::vector<Vul
         add_vuln_hint(out, seen, "N/A", "HTTP redirect does not upgrade to HTTPS", "MED");
 }
 
+static void check_port_exposure_hints(int port, std::vector<VulnHint>& out,
+                                      std::set<std::string>& seen) {
+    struct ExposureEntry { int port; const char* sev; const char* desc; };
+    static const ExposureEntry kExposure[] = {
+        {3389,  "HIGH", "RDP exposed on network — brute-force/exploit surface"},
+        {5432,  "HIGH", "PostgreSQL exposed on network — verify auth and network ACLs"},
+        {1433,  "HIGH", "MSSQL exposed on network — verify auth and network ACLs"},
+        {27017, "CRIT", "MongoDB exposed — unauthenticated by default pre-4.0"},
+        {9200,  "CRIT", "Elasticsearch HTTP API exposed — unauthenticated by default"},
+        {9300,  "HIGH", "Elasticsearch transport layer exposed"},
+        {2379,  "CRIT", "etcd API exposed — Kubernetes secrets accessible"},
+        {5984,  "HIGH", "CouchDB admin API exposed"},
+        {11211, "HIGH", "Memcached exposed — no auth, DDoS amplification vector"},
+        {5900,  "HIGH", "VNC exposed — remote desktop without VPN"},
+        {5901,  "HIGH", "VNC exposed — remote desktop without VPN"},
+        {4444,  "CRIT", "Port 4444 — common Metasploit/C2 indicator"},
+        {6000,  "MED",  "X11 display server exposed — session hijacking risk"},
+        {50070, "CRIT", "Hadoop NameNode web UI exposed"},
+    };
+    for (const auto& e : kExposure) {
+        if (port == e.port)
+            add_vuln_hint(out, seen, "N/A", e.desc, e.sev);
+    }
+}
+
 static std::vector<VulnHint> check_vulns(int port, const std::string& version_str,
                                           const std::string& bnr, const TLSInfo* tls,
                                           const HttpInfo* http) {
     std::vector<VulnHint> vulns;
     std::set<std::string> seen;
+    check_port_exposure_hints(port, vulns, seen);
     std::string bl = lower_copy(bnr);
     std::string vl = lower_copy(version_str);
     std::string hay = fingerprint_text(bnr, version_str, http);
@@ -239,7 +271,7 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
             add_vuln_hint(vulns, seen, "CVE-2015-3306", "ProFTPD 1.3.5 mod_copy RCE", "CRIT");
     }
 
-    if (port == 80 || port == 443 || port == 8080 || port == 8443)
+    if (HTTP_PORTS.count(port))
         check_web_version_cves(hay, vulns, seen);
 
     if (port == 3306 && has_banner) {
@@ -266,6 +298,27 @@ static std::vector<VulnHint> check_vulns(int port, const std::string& version_st
 
     if (port == 161 && has_banner)
         add_vuln_hint(vulns, seen, "N/A", "SNMP service responded to probe (verify community strings)", "MED");
+
+    if (port == 9200 && has_banner) {
+        if (bl.find("\"cluster_name\"") != std::string::npos ||
+            bl.find("you know, for search") != std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A",
+                "Elasticsearch responded without auth (CVE-2014-3120 class)", "CRIT");
+    }
+
+    if (port == 27017 && has_banner) {
+        if (bl.find("mongodb-open") != std::string::npos ||
+            bl.find("ismaster") != std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A",
+                "MongoDB accepts connections without auth challenge", "CRIT");
+    }
+
+    if (port == 11211 && has_banner) {
+        if (bl.find("version") != std::string::npos ||
+            bl.find("stat") != std::string::npos)
+            add_vuln_hint(vulns, seen, "N/A",
+                "Memcached responded to stats probe — no auth configured", "HIGH");
+    }
 
     check_tls_hints(port, tls, vulns, seen);
     check_http_security_hints(port, http, vulns, seen);
@@ -535,6 +588,67 @@ static bool tcp_connect_to(const std::string& ip, int port, int timeout_ms, int 
     }
     if (errno != EINPROGRESS) return false;
     return tcp_connect_wait(fd, timeout_ms);
+}
+
+static std::string probe_redis_ping(const std::string& ip, int port, int timeout_ms) {
+    if (g_cancel_token.cancelled) return {};
+    FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+    if (sock.get() < 0) return {};
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
+
+    static const char kPing[] = "PING\r\n";
+    if (send(sock.get(), kPing, sizeof(kPing) - 1, MSG_NOSIGNAL) < 0) return {};
+
+    struct pollfd pfd{};
+    pfd.fd = sock.get();
+    pfd.events = POLLIN;
+    if (poll(&pfd, 1, timeout_ms) <= 0 || !(pfd.revents & POLLIN)) return {};
+
+    char buf[64];
+    ssize_t n = recv(sock.get(), buf, sizeof(buf), 0);
+    if (n <= 0) return {};
+    return std::string(buf, static_cast<size_t>(n));
+}
+
+static std::string probe_mongo_ping(const std::string& ip, int port, int timeout_ms) {
+    if (g_cancel_token.cancelled) return {};
+    static const uint8_t kMongoIsMasterProbe[] = {
+        0x3a,0x00,0x00,0x00, 0x01,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00, 0xd4,0x07,0x00,0x00,
+        0x00,0x00,0x00,0x00,
+        0x61,0x64,0x6d,0x69,0x6e,0x2e,0x24,0x63,0x6d,0x64,0x00,
+        0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00,
+        0x13,0x00,0x00,0x00, 0x10,0x69,0x73,0x4d,
+        0x61,0x73,0x74,0x65,0x72,0x00, 0x01,0x00,0x00,0x00, 0x00
+    };
+
+    FdGuard sock(socket(AF_INET, SOCK_STREAM, 0));
+    if (sock.get() < 0) return {};
+    if (!tcp_connect_to(ip, port, timeout_ms, sock.get())) return {};
+
+    if (send(sock.get(), kMongoIsMasterProbe, sizeof(kMongoIsMasterProbe), MSG_NOSIGNAL) < 0)
+        return {};
+
+    struct pollfd pfd{};
+    pfd.fd = sock.get();
+    pfd.events = POLLIN;
+    if (poll(&pfd, 1, timeout_ms) <= 0 || !(pfd.revents & POLLIN)) return {};
+
+    char buf[512];
+    ssize_t n = recv(sock.get(), buf, sizeof(buf), 0);
+    if (n < 4) return {};
+
+    uint32_t msg_len = static_cast<uint32_t>(static_cast<uint8_t>(buf[0]))
+        | (static_cast<uint32_t>(static_cast<uint8_t>(buf[1])) << 8)
+        | (static_cast<uint32_t>(static_cast<uint8_t>(buf[2])) << 16)
+        | (static_cast<uint32_t>(static_cast<uint8_t>(buf[3])) << 24);
+    if (msg_len < 16 || msg_len > 65536) return {};
+
+    std::string resp(buf, static_cast<size_t>(n));
+    std::string low = lower_copy(resp);
+    if (low.find("ismaster") != std::string::npos)
+        return resp;
+    return "mongodb-open";
 }
 
 #ifdef HAVE_OPENSSL
@@ -1397,6 +1511,15 @@ ScanResults PortScanEngine::run() {
                     }
                 }
 
+                if (p == 6379 && b_raw.empty()) {
+                    std::string ping_resp = probe_redis_ping(cfg_.ip, p, cfg_.connect_ms);
+                    if (!ping_resp.empty()) b_raw = ping_resp;
+                }
+                if (p == 27017 && b_raw.empty()) {
+                    std::string mongo_resp = probe_mongo_ping(cfg_.ip, p, cfg_.connect_ms);
+                    if (!mongo_resp.empty()) b_raw = mongo_resp;
+                }
+
                 const TLSInfo* tls_ptr = is_tls ? &tls : nullptr;
                 const HttpInfo* http_ptr = is_http ? &http : nullptr;
                 vulns = check_vulns(p, ver, b_raw, tls_ptr, http_ptr);
@@ -1583,6 +1706,27 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     print_section("PHASE 0 // CALIBRATION");
     std::cout << BLOOD_RED << "  measuring target latency...\n" << RESET;
 
+    int port_count = (int)cfg.ports.size();
+
+    switch (cfg.timing) {
+        case PortScanConfig::TimingProfile::T0:
+            cfg.connect_ms = 5000; cfg.banner_ms = 10000;
+            cfg.retry_count = 3;  cfg.pool_size = 5;
+            break;
+        case PortScanConfig::TimingProfile::T1:
+            cfg.connect_ms = 2000; cfg.banner_ms = 5000;
+            cfg.retry_count = 2;  cfg.pool_size = 10;
+            break;
+        case PortScanConfig::TimingProfile::T2:
+            cfg.connect_ms = 1500; cfg.banner_ms = 3000;
+            cfg.retry_count = 2;  cfg.pool_size = 30;
+            break;
+        case PortScanConfig::TimingProfile::T3:
+            break;
+        default:
+            break;
+    }
+
     auto acfg = calibrate_target(ip);
 
     {
@@ -1599,23 +1743,39 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
         }
     }
 
-    cfg.connect_ms = acfg.connect_ms;
-    cfg.banner_ms = acfg.banner_ms;
-    cfg.retry_count = acfg.retry_count;
-    cfg.pool_size = acfg.pool_size;
+    cfg.median_rtt = acfg.median_rtt;
 
-    int port_count = (int)cfg.ports.size();
+    if (cfg.timing == PortScanConfig::TimingProfile::T3 ||
+        cfg.timing == PortScanConfig::TimingProfile::T4 ||
+        cfg.timing == PortScanConfig::TimingProfile::T5) {
+        cfg.connect_ms = acfg.connect_ms;
+        cfg.banner_ms = acfg.banner_ms;
+        cfg.retry_count = acfg.retry_count;
+        cfg.pool_size = acfg.pool_size;
+    } else {
+        cfg.connect_ms = std::max(cfg.connect_ms, acfg.connect_ms);
+        cfg.banner_ms  = std::max(cfg.banner_ms, acfg.banner_ms);
+    }
+
     if (port_count > 5000) {
-        cfg.retry_count = 1;
+        cfg.retry_count = std::min(cfg.retry_count, 1);
         cfg.connect_ms = std::max(150, std::min(cfg.connect_ms, 800));
-        cfg.pool_size  = std::min(500, cfg.pool_size * 2);
+        cfg.pool_size  = std::max(cfg.pool_size, 150);
+        cfg.skip_rate_limiting = true;
         std::cout << BLOOD_RED << "  [large-range] " << WHITE
                   << "adjusted: timeout=" << cfg.connect_ms << "ms"
-                  << " retries=1 threads=" << cfg.pool_size << "\n" << RESET;
+                  << " retries=" << cfg.retry_count << " threads=" << cfg.pool_size << "\n" << RESET;
     } else if (port_count > 1000) {
         cfg.retry_count = std::min(cfg.retry_count, 1);
-        cfg.pool_size   = std::min(300, cfg.pool_size + 50);
+        cfg.pool_size   = std::max(cfg.pool_size, 80);
     }
+
+    if ((cfg.timing == PortScanConfig::TimingProfile::T0 ||
+         cfg.timing == PortScanConfig::TimingProfile::T1) &&
+        port_count > 100) {
+        cfg.pool_size = std::max(cfg.pool_size, 20);
+    }
+
     if (cfg.udp_scan) {
         if (port_count > 10000) {
             cfg.connect_ms = std::min(cfg.connect_ms, 400);
@@ -1638,20 +1798,6 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     }
 
     switch (cfg.timing) {
-        case PortScanConfig::TimingProfile::T0:
-            cfg.connect_ms = 5000; cfg.banner_ms = 10000;
-            cfg.retry_count = 3;  cfg.pool_size = 5;
-            break;
-        case PortScanConfig::TimingProfile::T1:
-            cfg.connect_ms = 2000; cfg.banner_ms = 5000;
-            cfg.retry_count = 2;  cfg.pool_size = 10;
-            break;
-        case PortScanConfig::TimingProfile::T2:
-            cfg.connect_ms = 1500; cfg.banner_ms = 3000;
-            cfg.retry_count = 2;  cfg.pool_size = 30;
-            break;
-        case PortScanConfig::TimingProfile::T3:
-            break;
         case PortScanConfig::TimingProfile::T4:
             cfg.connect_ms  = std::max(100, cfg.connect_ms / 2);
             cfg.banner_ms   = std::max(500, cfg.banner_ms  / 2);
@@ -1664,9 +1810,11 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
             cfg.retry_count = 0;
             cfg.pool_size   = std::min(1000, cfg.pool_size * 4);
             break;
+        default:
+            break;
     }
 
-    cfg.median_rtt = acfg.median_rtt;
+    cfg.pool_size = std::min(cfg.pool_size, 600);
 
     std::cout << BLOOD_RED << "  rtt: " << WHITE
               << (cfg.median_rtt >= 0 ? std::to_string(cfg.median_rtt) + "ms" : "n/a")
@@ -1682,8 +1830,7 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     if (!hostname.empty() && hostname != ip)
         std::cout << BLOOD_RED << "  ptr: " << WHITE << hostname << "\n" << RESET;
 
-    if (port_count > 5000) {
-        cfg.skip_rate_limiting = true;
+    if (cfg.skip_rate_limiting) {
         std::cout << BLOOD_RED << "  [opt] rate limiter disabled for large scan\n" << RESET;
     }
 
