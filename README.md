@@ -66,7 +66,7 @@ Dark Nexus is heavily automated. You can install it on any Debian, Ubuntu, Kali,
 curl -sL https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh | sudo bash
 ```
 
-### Local Install (if already cloned)
+### Re-run the install command to update
 ```
 sudo bash install.sh
 ```
@@ -99,6 +99,6 @@ The author is not responsible for any misuse or damage caused by this tool.
 ---
 
 ## Author
-By - Marshal with Jules❤️
+By - Marshal
 
 Bugs & feedback welcome - [t.me/fuckmarshal](https://t.me/fuckmarshal) 
