@@ -16,26 +16,91 @@ bool valid_port(int p) {
 }
 
 std::string resolve(const std::string& host) {
-    auto ips = DnsEngine::get().resolve(host);
-    return ips.empty() ? "" : ips[0];
+    return resolve_for_scan(host, ScanAddrFamily::Auto);
+}
+
+std::string resolve_for_scan(const std::string& host, ScanAddrFamily family) {
+    if (InputGuard::is_valid_ipv4(host)) {
+        if (family == ScanAddrFamily::IPv6) return "";
+        return host;
+    }
+    if (InputGuard::is_valid_ipv6(host)) {
+        if (family == ScanAddrFamily::IPv4) return "";
+        return host;
+    }
+
+    if (family == ScanAddrFamily::IPv4 || family == ScanAddrFamily::Auto) {
+        auto ips = DnsEngine::get().resolve(host);
+        for (const auto& ip : ips) {
+            if (InputGuard::is_valid_ipv4(ip)) return ip;
+        }
+        if (family == ScanAddrFamily::IPv4) return "";
+    }
+
+    if (family == ScanAddrFamily::IPv6 || family == ScanAddrFamily::Auto) {
+        auto v6 = DnsEngine::get().resolve_aaaa(host);
+        if (!v6.empty()) return v6[0];
+    }
+
+    if (family == ScanAddrFamily::Auto) {
+        auto ips = DnsEngine::get().resolve(host);
+        return ips.empty() ? "" : ips[0];
+    }
+    return "";
 }
 
 bool tcp_probe(const std::string& ip, int port, int ms) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int af = InputGuard::is_valid_ipv6(ip) ? AF_INET6 : AF_INET;
+    int fd = socket(af, SOCK_STREAM, 0);
     if (fd < 0) { return false; }
 
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port   = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
+    sockaddr_storage ss{};
+    socklen_t slen = 0;
+    if (af == AF_INET6) {
+        auto* sa = reinterpret_cast<sockaddr_in6*>(&ss);
+        sa->sin6_family = AF_INET6;
+        sa->sin6_port = htons(static_cast<uint16_t>(port));
+        if (inet_pton(AF_INET6, ip.c_str(), &sa->sin6_addr) != 1) { close(fd); return false; }
+        slen = sizeof(sockaddr_in6);
+    } else {
+        auto* sa = reinterpret_cast<sockaddr_in*>(&ss);
+        sa->sin_family = AF_INET;
+        sa->sin_port = htons(static_cast<uint16_t>(port));
+        if (inet_pton(AF_INET, ip.c_str(), &sa->sin_addr) != 1) { close(fd); return false; }
+        slen = sizeof(sockaddr_in);
+    }
     fcntl(fd, F_SETFL, O_NONBLOCK);
-    connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    connect(fd, reinterpret_cast<sockaddr*>(&ss), slen);
     struct pollfd pfd{};
     pfd.fd = fd;
     pfd.events = POLLOUT;
     int r = poll(&pfd, 1, ms);
     close(fd);
     return r > 0;
+}
+
+static int tcp_socket_for(const std::string& ip) {
+    return socket(InputGuard::is_valid_ipv6(ip) ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
+}
+
+static void tcp_connect_endpoint(int fd, const std::string& ip, int port) {
+    sockaddr_storage ss{};
+    socklen_t slen = 0;
+    if (InputGuard::is_valid_ipv6(ip)) {
+        auto* sa = reinterpret_cast<sockaddr_in6*>(&ss);
+        sa->sin6_family = AF_INET6;
+        sa->sin6_port = htons(static_cast<uint16_t>(port));
+        inet_pton(AF_INET6, ip.c_str(), &sa->sin6_addr);
+        slen = sizeof(sockaddr_in6);
+    } else {
+        auto* sa = reinterpret_cast<sockaddr_in*>(&ss);
+        sa->sin_family = AF_INET;
+        sa->sin_port = htons(static_cast<uint16_t>(port));
+        inet_pton(AF_INET, ip.c_str(), &sa->sin_addr);
+        slen = sizeof(sockaddr_in);
+    }
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+    connect(fd, reinterpret_cast<sockaddr*>(&ss), slen);
 }
 
 std::pair<bool,int> tcp_probe_ms(const std::string& ip, int port, int ms) {
@@ -89,15 +154,10 @@ std::string risk_label(int port) {
 }
 
 std::string banner(const std::string& ip, int port, int ms) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = tcp_socket_for(ip);
     if (fd < 0) { return ""; }
 
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port   = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-    fcntl(fd, F_SETFL, O_NONBLOCK);
-    connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    tcp_connect_endpoint(fd, ip, port);
     struct pollfd pfd{};
     pfd.fd = fd;
     pfd.events = POLLOUT;
@@ -126,18 +186,10 @@ std::string banner(const std::string& ip, int port, int ms) {
 }
 
 std::string smart_banner(const std::string& ip, int port, int ms, bool skip_http_on_tls) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = tcp_socket_for(ip);
     if (fd < 0) { return ""; }
 
-
-
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port   = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-
-    fcntl(fd, F_SETFL, O_NONBLOCK);
-    connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    tcp_connect_endpoint(fd, ip, port);
 
     struct pollfd pfd{};
     pfd.fd = fd;
@@ -247,14 +299,9 @@ bool udp_probe(const std::string& ip, int port, int ms) {
 
 
 std::string smb_os_probe(const std::string& ip, int ms) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = tcp_socket_for(ip);
     if (fd < 0) return "";
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port   = htons(445);
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-    fcntl(fd, F_SETFL, O_NONBLOCK);
-    connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    tcp_connect_endpoint(fd, ip, 445);
 
     struct pollfd pfd{};
     pfd.fd = fd;
@@ -312,14 +359,9 @@ std::string smb_os_probe(const std::string& ip, int ms) {
 
 
 std::string analyze_http_headers(const std::string& ip, int port, int ms) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = tcp_socket_for(ip);
     if (fd < 0) return "";
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port   = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &sa.sin_addr);
-    fcntl(fd, F_SETFL, O_NONBLOCK);
-    connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    tcp_connect_endpoint(fd, ip, port);
 
     struct pollfd pfd{};
     pfd.fd = fd;
