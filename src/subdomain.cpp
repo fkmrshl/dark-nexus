@@ -321,14 +321,26 @@ static void passive_dnsdumpster(const std::string& domain, std::set<std::string>
     curl_slist_free_all(hdrs); curl_easy_cleanup(c);
 }
 static void passive_virustotal(const std::string& d, std::set<std::string>& out) {
-    const char* k = getenv("VT_API_KEY"); if (!k||!*k) return;
-    auto resp = libcurl_get("https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40", "", random_ua(), 15, {"x-apikey: "+std::string(k)});
-    if (resp.body.empty()) return; extract_subs(resp.body, d, out);
-    std::regex re_c("\"cursor\"\\s*:\\s*\"([^\"]+)\""); std::smatch mc;
-    if (std::regex_search(resp.body, mc, re_c)) {
-        auto resp2 = libcurl_get("https://www.virustotal.com/api/v3/domains/"+d+"/subdomains?limit=40&cursor="+mc[1].str(), "", random_ua(), 15, {"x-apikey: "+std::string(k)});
-        if (!resp2.body.empty()) extract_subs(resp2.body, d, out);
-    }
+    const char* k = getenv("VT_API_KEY");
+    if (!k || !*k) return;
+
+    auto resp = libcurl_get(
+        "https://www.virustotal.com/api/v3/domains/" + d + "/subdomains?limit=40",
+        "", random_ua(), 15, {"x-apikey: " + std::string(k)});
+    if (resp.body.empty()) return;
+
+    extract_subs(resp.body, d, out);
+
+    std::regex re_c("\"cursor\"\\s*:\\s*\"([^\"]+)\"");
+    std::smatch mc;
+    if (!std::regex_search(resp.body, mc, re_c)) return;
+
+    auto resp2 = libcurl_get(
+        "https://www.virustotal.com/api/v3/domains/" + d + "/subdomains?limit=40&cursor=" + mc[1].str(),
+        "", random_ua(), 15, {"x-apikey: " + std::string(k)});
+    if (resp2.body.empty()) return;
+
+    extract_subs(resp2.body, d, out);
 }
 static void passive_securitytrails(const std::string& d, std::set<std::string>& out) {
     const char* k = getenv("ST_API_KEY"); if (!k||!*k) return;
