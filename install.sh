@@ -125,7 +125,7 @@ render_bar() {
 
     local i out=""
     local pidx=$(( tick % 4 ))
-    local heads=('►' '▶' '►' '▸')
+    local heads=('►' '▶' '►' '▶')
     local head="${heads[$pidx]}"
     local hcolors=("$R2" "$R3" "$R2" "$R4")
     local hc="${hcolors[$pidx]}"
