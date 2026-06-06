@@ -3,6 +3,8 @@
 [ -t 0 ] || exec 0</dev/null
 
 set -e
+set -o pipefail
+trap '' PIPE
 
 RED=$'\033[31m'
 R2=$'\033[38;5;196m'
@@ -37,30 +39,45 @@ BUILD_DEN=0
 SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 SPIN_COUNT=${#SPIN_FRAMES[@]}
 
-: >"$LOG"
+UI_FD=""
 
-UI_FD=1
-if [ -w /dev/tty ] 2>/dev/null; then
-    UI_FD=/dev/tty
-elif [ -t 2 ]; then
-    UI_FD=2
-elif [ ! -t 1 ]; then
-    SIMPLE_UI=1
-fi
-
-ui_put() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then
+open_ui_fd() {
+    if { exec {UI_FD}>/dev/tty; } 2>/dev/null; then
+        SIMPLE_UI=0
         return 0
     fi
-    printf '%b' "$@" >&$UI_FD
+    if [ -t 2 ]; then
+        UI_FD=2
+        SIMPLE_UI=0
+        return 0
+    fi
+    if [ -t 1 ]; then
+        UI_FD=1
+        SIMPLE_UI=0
+        return 0
+    fi
+    UI_FD=1
+    SIMPLE_UI=1
+}
+
+open_ui_fd
+
+ui_put() {
+    [ "$SIMPLE_UI" -eq 1 ] && return 0
+    printf '%b' "$@" >&$UI_FD 2>/dev/null || true
 }
 
 ui_msg() {
     if [ "$SIMPLE_UI" -eq 1 ]; then
-        printf '%b\n' "$@"
+        printf '%b\n' "$@" || true
     else
         ui_put "$@"
+        ui_put '\n'
     fi
+}
+
+log_mark() {
+    printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" >>"$LOG" 2>/dev/null || true
 }
 
 get_jobs() {
@@ -86,23 +103,23 @@ distro_label() {
 }
 
 ui_hide_cursor() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then return 0; fi
+    [ "$SIMPLE_UI" -eq 1 ] && return 0
     ui_put '\033[?25l'
 }
 
 ui_show_cursor() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then return 0; fi
+    [ "$SIMPLE_UI" -eq 1 ] && return 0
     ui_put '\033[?25h'
 }
 
 ui_clear_line() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then return 0; fi
+    [ "$SIMPLE_UI" -eq 1 ] && return 0
     ui_put '\033[K'
 }
 
 ui_goto() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then return 0; fi
-    ui_put "$(printf '\033[%d;0H' "$1")"
+    [ "$SIMPLE_UI" -eq 1 ] && return 0
+    ui_put "\033[${1};0H"
 }
 
 step_start_pct() {
@@ -151,9 +168,8 @@ render_bar() {
         fi
     done
 
-    out+="${GRAY}"
     for ((i = fill; i < BAR_WIDTH; i++)); do
-        out+="─"
+        out+="${R4}─"
     done
     out+="${RESET}"
 
@@ -205,10 +221,11 @@ update_ui() {
 }
 
 fail() {
+    log_mark "FAILED"
     ui_show_cursor
     ui_put '\033[2J\033[H'
     ui_msg "${RED}${BOLD}  [!] Installation failed${RESET}"
-    ui_msg "${WHITE}  Log: ${LOG}${RESET}\n"
+    ui_msg "${WHITE}  Log: ${LOG}${RESET}"
     ui_msg "${DIM}  --- last lines ---${RESET}"
     tail -n 25 "$LOG" 2>/dev/null | while IFS= read -r line; do ui_msg "${line}"; done
     ui_msg ""
@@ -249,6 +266,7 @@ run_step() {
     shift
     local tick=0
 
+    log_mark "STEP: ${label}"
     BUILD_NUM=0
     BUILD_DEN=0
     set_display_pct "$(step_start_pct)"
@@ -269,6 +287,7 @@ run_step() {
     set_display_pct "$(step_end_pct)"
     update_ui "$label" "done" "$tick"
     CURRENT_STEP=$(( CURRENT_STEP + 1 ))
+    log_mark "DONE: ${label}"
     sleep 0.2
 }
 
@@ -276,6 +295,7 @@ run_build_step() {
     local label="$1"
     local tick=0
 
+    log_mark "STEP: ${label}"
     BUILD_NUM=0
     BUILD_DEN=0
     set_display_pct "$(step_start_pct)"
@@ -303,6 +323,7 @@ run_build_step() {
     set_display_pct "$(step_end_pct)"
     update_ui "$label" "compile done" "$tick"
     CURRENT_STEP=$(( CURRENT_STEP + 1 ))
+    log_mark "DONE: ${label}"
     sleep 0.2
 }
 
@@ -312,6 +333,8 @@ if [ "$EUID" -ne 0 ]; then
     ui_msg "${RED}[!] Please run the installer as root (use sudo)${RESET}"
     exit 1
 fi
+
+: >"$LOG" 2>/dev/null || true
 
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -323,13 +346,13 @@ else
 fi
 
 distro_label
-printf 'distro=%s label=%s jobs=%s ui_fd=%s simple=%s\n' \
-    "$OS" "$DISTRO_LABEL" "$JOBS" "$UI_FD" "$SIMPLE_UI" >>"$LOG"
+log_mark "START distro=${OS} label=${DISTRO_LABEL} jobs=${JOBS} ui_fd=${UI_FD} simple=${SIMPLE_UI}"
 
 ui_hide_cursor
 init_ui
 set_display_pct 0
 update_ui "Preparing installer..." "initializing..." 0
+log_mark "UI ready"
 sleep 0.35
 
 if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || \
@@ -382,6 +405,7 @@ run_step "${STEP_LABELS[4]}" bash -c '
 
 set_display_pct 100
 update_ui "Installation complete" "all steps finished" 0
+log_mark "FINISHED OK"
 ui_show_cursor
 
 if [ "$SIMPLE_UI" -eq 0 ]; then
