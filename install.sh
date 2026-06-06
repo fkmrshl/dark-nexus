@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-
 set -e
 
-RED="\033[31m"
-WHITE="\033[97m"
-BOLD="\033[1m"
-DIM="\033[2m"
-RESET="\033[0m"
+RED=$'\033[31m'
+R2=$'\033[38;5;196m'
+R3=$'\033[38;5;160m'
+R4=$'\033[38;5;124m'
+WHITE=$'\033[97m'
+GRAY=$'\033[90m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+RESET=$'\033[0m'
 
 LOG="/tmp/dark-nexus-install.log"
-BAR_WIDTH=42
+BAR_WIDTH=40
 
 STEP_ENDS=(22 30 42 92 100)
 STEP_LABELS=(
@@ -27,9 +30,24 @@ DISTRO_LABEL=""
 BUILD_NUM=0
 BUILD_DEN=0
 
-PULSE_CHARS=('█' '▓' '▒' '▓')
+SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
+SPIN_COUNT=${#SPIN_FRAMES[@]}
 
 : >"$LOG"
+
+get_jobs() {
+    local cpus mem_kb max_by_ram jobs
+    cpus=$(nproc 2>/dev/null || echo 2)
+    mem_kb=$(awk '/MemAvailable/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 2097152)
+    max_by_ram=$(( mem_kb / 1400000 ))
+    (( max_by_ram < 1 )) && max_by_ram=1
+    jobs=$cpus
+    (( jobs > max_by_ram )) && jobs=$max_by_ram
+    (( jobs < 1 )) && jobs=1
+    echo "$jobs"
+}
+
+JOBS=$(get_jobs)
 
 distro_label() {
     if [ -n "${PRETTY_NAME:-}" ]; then
@@ -39,110 +57,103 @@ distro_label() {
     fi
 }
 
-ui_hide_cursor() {
-    printf '\033[?25l'
-}
-
-ui_show_cursor() {
-    printf '\033[?25h'
-}
-
-ui_clear_line() {
-    printf '\033[K'
-}
-
-ui_goto() {
-    printf '\033[%d;0H' "$1"
-}
+ui_hide_cursor() { printf '\033[?25l'; }
+ui_show_cursor() { printf '\033[?25h'; }
+ui_clear_line()  { printf '\033[K'; }
+ui_goto()        { printf '\033[%d;0H' "$1"; }
 
 step_start_pct() {
-    if [ "$CURRENT_STEP" -eq 0 ]; then
-        echo 0
-    else
-        echo "${STEP_ENDS[$((CURRENT_STEP - 1))]}"
-    fi
+    [ "$CURRENT_STEP" -eq 0 ] && echo 0 || echo "${STEP_ENDS[$((CURRENT_STEP - 1))]}"
 }
-
-step_end_pct() {
-    echo "${STEP_ENDS[$CURRENT_STEP]}"
-}
+step_end_pct() { echo "${STEP_ENDS[$CURRENT_STEP]}"; }
 
 clamp_pct() {
     local v=$1
-    if [ "$v" -lt 0 ]; then v=0; fi
-    if [ "$v" -gt 100 ]; then v=100; fi
+    (( v < 0   )) && v=0
+    (( v > 100 )) && v=100
     echo "$v"
 }
 
 set_display_pct() {
     local next
     next=$(clamp_pct "$1")
-    if [ "$next" -gt "$DISPLAY_PCT" ]; then
-        DISPLAY_PCT=$next
-    fi
+    (( next > DISPLAY_PCT )) && DISPLAY_PCT=$next
 }
 
 render_bar() {
-    local pct=$1
-    local tick=$2
+    local pct=$1 tick=$2
     local fill=$(( pct * BAR_WIDTH / 100 ))
-    if [ "$fill" -gt "$BAR_WIDTH" ]; then fill=$BAR_WIDTH; fi
-    if [ "$fill" -lt 0 ]; then fill=0; fi
+    (( fill > BAR_WIDTH )) && fill=$BAR_WIDTH
+    (( fill < 0 )) && fill=0
 
-    local pulse="${PULSE_CHARS[$(( tick % ${#PULSE_CHARS[@]} ))]}"
-    local i
-    local out=""
+    local i out=""
+    local pidx=$(( tick % 4 ))
+
+    local heads=('►' '▶' '►' '▸')
+    local head="${heads[$pidx]}"
+
+    local hcolors=("$R2" "$R3" "$R2" "$R4")
+    local hc="${hcolors[$pidx]}"
 
     for ((i = 0; i < fill; i++)); do
-        if [ "$i" -eq $((fill - 1)) ] && [ "$fill" -gt 0 ] && [ "$pct" -lt 100 ]; then
-            out+="$pulse"
+        local dist=$(( fill - 1 - i ))
+        if (( pct < 100 )); then
+            case $dist in
+                0) out+="${hc}${head}" ;;
+                1) out+="${R3}▓" ;;
+                2) out+="${R4}▒" ;;
+                *) out+="${RED}═" ;;
+            esac
         else
-            out+="#"
+            out+="${R2}═"
         fi
     done
+
+    out+="${GRAY}"
     for ((i = fill; i < BAR_WIDTH; i++)); do
-        out+="-"
+        out+="─"
     done
-    echo "$out"
+    out+="${RESET}"
+
+    printf '%s' "$out"
 }
 
 init_ui() {
     printf '\033[2J\033[H'
-    echo -e "${RED}${BOLD}  Dark Nexus Installer${RESET}"
-    echo -e "${RED}  ========================================${RESET}"
-    echo ""
-    echo -e "${WHITE}[*] Detecting distribution... ${RED}${DISTRO_LABEL}${RESET}"
-    echo ""
+    printf '%s%s  Dark Nexus Installer%s\n' "$RED" "$BOLD" "$RESET"
+    printf '%s  ════════════════════════════════════════%s\n' "$RED" "$RESET"
+    printf '\n'
+    printf '%s[*] Detecting distribution... %s%s%s\n' \
+        "$WHITE" "$RED" "$DISTRO_LABEL" "$RESET"
+    printf '\n'
     UI_READY=1
 }
 
 update_ui() {
-    local label="$1"
-    local status="$2"
-    local tick="${3:-0}"
+    local label="$1" status="$2" tick="${3:-0}"
 
-    if [ "$UI_READY" -eq 0 ]; then
-        init_ui
-    fi
+    [ "$UI_READY" -eq 0 ] && init_ui
 
-    local bar
+    local bar spin
     bar=$(render_bar "$DISPLAY_PCT" "$tick")
+    spin="${SPIN_FRAMES[$(( tick % SPIN_COUNT ))]}"
 
     ui_goto 7
     ui_clear_line
-    echo -ne "${WHITE}  ${label}${RESET}"
+    printf '%s  %-40s%s' "$WHITE" "$label" "$RESET"
 
     ui_goto 8
     ui_clear_line
-    echo -ne "${RED}  [${WHITE}${bar}${RED}]${RESET} ${WHITE}${DISPLAY_PCT}%${RESET}"
+    printf '%s  [%s%s]  %s%3d%%%s' \
+        "$RED" "$bar" "$RED" "$WHITE" "$DISPLAY_PCT" "$RESET"
 
     ui_goto 9
     ui_clear_line
-    echo -ne "${DIM}  ${status}${RESET}"
+    printf '%s  %s %s%s%s' "$RED" "$spin" "$DIM" "$status" "$RESET"
 
     ui_goto 10
     ui_clear_line
-    echo -ne "${DIM}  log: ${LOG}${RESET}"
+    printf '%s  log: %s%s' "$DIM" "$LOG" "$RESET"
 
     ui_goto 11
     ui_clear_line
@@ -151,11 +162,11 @@ update_ui() {
 fail() {
     ui_show_cursor
     printf '\033[2J\033[H'
-    echo -e "${RED}${BOLD}  [!] Installation failed${RESET}"
-    echo -e "${WHITE}  Log: ${LOG}${RESET}\n"
-    echo -e "${DIM}  --- last lines ---${RESET}"
+    printf '%s%s  [!] Installation failed%s\n' "$RED" "$BOLD" "$RESET"
+    printf '%s  Log: %s%s\n\n' "$WHITE" "$LOG" "$RESET"
+    printf '%s  --- last lines ---%s\n' "$DIM" "$RESET"
     tail -n 25 "$LOG" 2>/dev/null || true
-    echo ""
+    printf '\n'
     exit 1
 }
 
@@ -168,10 +179,10 @@ tick_subprogress() {
 
     if [ "$BUILD_DEN" -gt 0 ]; then
         sub=$(( BUILD_NUM * 100 / BUILD_DEN ))
-        if [ "$sub" -gt 98 ]; then sub=98; fi
+        (( sub > 98 )) && sub=98
     else
         sub=$(( tick * 2 ))
-        if [ "$sub" -gt 88 ]; then sub=88; fi
+        (( sub > 88 )) && sub=88
     fi
 
     target=$(( start + span * sub / 100 ))
@@ -181,20 +192,17 @@ tick_subprogress() {
 poll_build_progress() {
     local last
     last=$(grep -oE '\[[0-9]+/[0-9]+\]' "$LOG" 2>/dev/null | tail -1 || true)
-    if [ -z "$last" ]; then
-        return
-    fi
-    BUILD_NUM=${last#[}
-    BUILD_NUM=${BUILD_NUM%/*}
-    BUILD_DEN=${last#*/}
-    BUILD_DEN=${BUILD_DEN%]*}
+    [ -z "$last" ] && return
+    BUILD_NUM="${last#[}"
+    BUILD_NUM="${BUILD_NUM%/*}"
+    BUILD_DEN="${last#*/}"
+    BUILD_DEN="${BUILD_DEN%]*}"
 }
 
 run_step() {
     local label="$1"
     shift
     local tick=0
-    local spin="|/-\\"
 
     BUILD_NUM=0
     BUILD_DEN=0
@@ -206,65 +214,57 @@ run_step() {
 
     while kill -0 "$pid" 2>/dev/null; do
         tick_subprogress "$tick"
-        local ch="${spin:$(( tick % 4 )):1}"
-        update_ui "$label" "working ${ch}" "$tick"
-        tick=$((tick + 1))
+        update_ui "$label" "working" "$tick"
+        tick=$(( tick + 1 ))
         sleep 0.12
     done
 
-    if ! wait "$pid"; then
-        fail
-    fi
+    if ! wait "$pid"; then fail; fi
 
     set_display_pct "$(step_end_pct)"
     update_ui "$label" "done" "$tick"
-    CURRENT_STEP=$((CURRENT_STEP + 1))
+    CURRENT_STEP=$(( CURRENT_STEP + 1 ))
     sleep 0.2
 }
 
 run_build_step() {
     local label="$1"
     local tick=0
-    local spin="|/-\\"
 
     BUILD_NUM=0
     BUILD_DEN=0
     set_display_pct "$(step_start_pct)"
     update_ui "$label" "starting compile..." 0
 
-    (cd /tmp/dark-nexus && cmake --build build >>"$LOG" 2>&1) &
+    (cd /tmp/dark-nexus && cmake --build build -j "$JOBS" >>"$LOG" 2>&1) &
     local pid=$!
 
     while kill -0 "$pid" 2>/dev/null; do
         poll_build_progress
         tick_subprogress "$tick"
-        local status="compiling"
+        local status_msg="compiling"
         if [ "$BUILD_DEN" -gt 0 ]; then
-            status="compiling ${BUILD_NUM}/${BUILD_DEN}  ${spin:$(( tick % 4 )):1}"
-        else
-            status="compiling ${spin:$(( tick % 4 )):1}"
+            status_msg="compiling ${BUILD_NUM}/${BUILD_DEN}"
         fi
-        update_ui "$label" "$status" "$tick"
-        tick=$((tick + 1))
+        update_ui "$label" "$status_msg" "$tick"
+        tick=$(( tick + 1 ))
         sleep 0.12
     done
 
-    if ! wait "$pid"; then
-        fail
-    fi
+    if ! wait "$pid"; then fail; fi
 
     BUILD_NUM=0
     BUILD_DEN=0
     set_display_pct "$(step_end_pct)"
     update_ui "$label" "compile done" "$tick"
-    CURRENT_STEP=$((CURRENT_STEP + 1))
+    CURRENT_STEP=$(( CURRENT_STEP + 1 ))
     sleep 0.2
 }
 
 trap 'ui_show_cursor' EXIT
 
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}[!] Please run the installer as root (use sudo)${RESET}"
+    printf '%s[!] Please run the installer as root (use sudo)%s\n' "$RED" "$RESET"
     exit 1
 fi
 
@@ -273,12 +273,12 @@ if [ -f /etc/os-release ]; then
     OS=$ID
     OS_LIKE=$ID_LIKE
 else
-    echo -e "${RED}[!] Cannot determine OS. Unsupported distribution.${RESET}"
+    printf '%s[!] Cannot determine OS. Unsupported distribution.%s\n' "$RED" "$RESET"
     exit 1
 fi
 
 distro_label
-echo "distro=$OS label=$DISTRO_LABEL" >>"$LOG"
+printf 'distro=%s label=%s jobs=%s\n' "$OS" "$DISTRO_LABEL" "$JOBS" >>"$LOG"
 
 ui_hide_cursor
 init_ui
@@ -286,7 +286,8 @@ set_display_pct 0
 update_ui "Preparing installer..." "initializing..." 0
 sleep 0.35
 
-if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || "$OS_LIKE" == *"debian"* || "$OS_LIKE" == *"ubuntu"* ]]; then
+if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || \
+      "$OS_LIKE" == *"debian"* || "$OS_LIKE" == *"ubuntu"* ]]; then
     run_step "${STEP_LABELS[0]}" bash -c '
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
@@ -301,7 +302,7 @@ elif [[ "$OS" == "arch" || "$OS" == "blackarch" || "$OS_LIKE" == *"arch"* ]]; th
     '
 else
     ui_show_cursor
-    echo -e "${RED}[!] Unsupported OS. Please install dependencies manually.${RESET}"
+    printf '%s[!] Unsupported OS. Please install dependencies manually.%s\n' "$RED" "$RESET"
     exit 1
 fi
 
@@ -339,11 +340,11 @@ ui_show_cursor
 
 ui_goto 13
 ui_clear_line
-echo -e "${RED}${BOLD}  [+] Installation Complete!${RESET}"
+printf '%s%s  [+] Installation Complete!%s\n' "$RED" "$BOLD" "$RESET"
 ui_goto 14
 ui_clear_line
-echo -e "${WHITE}  Run from anywhere (no sudo):${RESET}"
+printf '%s  Run from anywhere (no sudo):%s\n' "$WHITE" "$RESET"
 ui_goto 15
 ui_clear_line
-echo -e "${RED}  dark-nexus --help${RESET}"
-echo ""
+printf '%s  dark-nexus --help%s\n' "$RED" "$RESET"
+printf '\n'
