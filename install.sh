@@ -3,7 +3,6 @@
 [ -t 0 ] || exec 0</dev/null
 
 set -e
-set -o pipefail
 trap '' PIPE
 
 RED=$'\033[31m'
@@ -35,45 +34,18 @@ SIMPLE_UI=0
 DISTRO_LABEL=""
 BUILD_NUM=0
 BUILD_DEN=0
+JOBS=1
 
 SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 SPIN_COUNT=${#SPIN_FRAMES[@]}
 
-UI_FD=""
-
-open_ui_fd() {
-    if { exec {UI_FD}>/dev/tty; } 2>/dev/null; then
-        SIMPLE_UI=0
-        return 0
-    fi
-    if [ -t 2 ]; then
-        UI_FD=2
-        SIMPLE_UI=0
-        return 0
-    fi
-    if [ -t 1 ]; then
-        UI_FD=1
-        SIMPLE_UI=0
-        return 0
-    fi
-    UI_FD=1
-    SIMPLE_UI=1
-}
-
-open_ui_fd
-
 ui_put() {
     [ "$SIMPLE_UI" -eq 1 ] && return 0
-    printf '%b' "$@" >&$UI_FD 2>/dev/null || true
+    printf '%b' "$@" || true
 }
 
 ui_msg() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then
-        printf '%b\n' "$@" || true
-    else
-        ui_put "$@"
-        ui_put '\n'
-    fi
+    printf '%b\n' "$@" || true
 }
 
 log_mark() {
@@ -84,7 +56,11 @@ get_jobs() {
     local cpus mem_kb max_by_ram jobs
     cpus=$(nproc 2>/dev/null || echo 2)
     mem_kb=$(awk '/MemAvailable/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 2097152)
-    max_by_ram=$(( mem_kb / 1400000 ))
+    if (( mem_kb < 1500000 )); then
+        echo 1
+        return 0
+    fi
+    max_by_ram=$(( mem_kb / 1000000 ))
     if (( max_by_ram < 1 )); then max_by_ram=1; fi
     jobs=$cpus
     if (( jobs > max_by_ram )); then jobs=$max_by_ram; fi
@@ -92,13 +68,13 @@ get_jobs() {
     echo "$jobs"
 }
 
-JOBS=$(get_jobs)
-
 distro_label() {
     if [ -n "${PRETTY_NAME:-}" ]; then
         DISTRO_LABEL="$PRETTY_NAME"
-    else
+    elif [ -n "${OS:-}" ]; then
         DISTRO_LABEL="${OS^}"
+    else
+        DISTRO_LABEL="unknown"
     fi
 }
 
@@ -159,8 +135,6 @@ render_bar() {
         if (( pct < 100 )); then
             case $dist in
                 0) out+="${hc}${head}" ;;
-                1) out+="${R3}▓" ;;
-                2) out+="${R4}▒" ;;
                 *) out+="${RED}═" ;;
             esac
         else
@@ -168,8 +142,9 @@ render_bar() {
         fi
     done
 
+    out+="${WHITE}"
     for ((i = fill; i < BAR_WIDTH; i++)); do
-        out+="${R4}─"
+        out+="─"
     done
     out+="${RESET}"
 
@@ -186,7 +161,7 @@ init_ui() {
 
     ui_put '\033[2J\033[H'
     ui_put "${RED}${BOLD}  Dark Nexus Installer${RESET}\n"
-    ui_put "${RED}  ════════════════════════════════════════${RESET}\n\n"
+    ui_put "${RED}  ========================================${RESET}\n\n"
     ui_put "${WHITE}[*] Detecting distribution... ${RED}${DISTRO_LABEL}${RESET}\n\n"
     UI_READY=1
 }
@@ -197,7 +172,7 @@ update_ui() {
     if [ "$UI_READY" -eq 0 ]; then init_ui; fi
 
     if [ "$SIMPLE_UI" -eq 1 ]; then
-        ui_msg "${WHITE}[${DISPLAY_PCT}%] ${label} — ${status}${RESET}"
+        ui_msg "${WHITE}[${DISPLAY_PCT}%] ${label} - ${status}${RESET}"
         return 0
     fi
 
@@ -228,7 +203,6 @@ fail() {
     ui_msg "${WHITE}  Log: ${LOG}${RESET}"
     ui_msg "${DIM}  --- last lines ---${RESET}"
     tail -n 25 "$LOG" 2>/dev/null | while IFS= read -r line; do ui_msg "${line}"; done
-    ui_msg ""
     exit 1
 }
 
@@ -313,7 +287,7 @@ run_build_step() {
         fi
         update_ui "$label" "$status_msg" "$tick"
         tick=$(( tick + 1 ))
-        sleep 0.12
+        sleep 0.25
     done
 
     if ! wait "$pid"; then fail; fi
@@ -329,14 +303,29 @@ run_build_step() {
 
 trap 'ui_show_cursor' EXIT
 
+say() {
+    if [ -w /dev/tty ] 2>/dev/null; then
+        printf '%b\n' "$1" >/dev/tty
+    else
+        printf '%b\n' "$1" >&2
+    fi
+}
+
 if [ "$EUID" -ne 0 ]; then
-    ui_msg "${RED}[!] Please run the installer as root (use sudo)${RESET}"
+    say "${RED}[!] Please run the installer as root (use sudo)${RESET}"
     exit 1
+fi
+
+if [ -w /dev/tty ] 2>/dev/null; then
+    exec >/dev/tty 2>&1
+else
+    SIMPLE_UI=1
 fi
 
 : >"$LOG" 2>/dev/null || true
 
 if [ -f /etc/os-release ]; then
+    # shellcheck source=/dev/null
     . /etc/os-release
     OS=$ID
     OS_LIKE=$ID_LIKE
@@ -346,7 +335,8 @@ else
 fi
 
 distro_label
-log_mark "START distro=${OS} label=${DISTRO_LABEL} jobs=${JOBS} ui_fd=${UI_FD} simple=${SIMPLE_UI}"
+JOBS=$(get_jobs)
+log_mark "START distro=${OS} label=${DISTRO_LABEL} jobs=${JOBS} simple=${SIMPLE_UI} tty=$([ -t 1 ] && echo yes || echo no)"
 
 ui_hide_cursor
 init_ui
