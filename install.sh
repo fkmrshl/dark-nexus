@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
+
+[ -t 0 ] || exec 0</dev/null
+
 set -e
 
 RED=$'\033[31m'
-R2=$'\033[38;5;196m'
-R3=$'\033[38;5;160m'
-R4=$'\033[38;5;124m'
+R2=$'\033[38;5;196m'       
+R3=$'\033[38;5;160m'       
+R4=$'\033[38;5;124m'       
 WHITE=$'\033[97m'
 GRAY=$'\033[90m'
 BOLD=$'\033[1m'
@@ -34,6 +37,7 @@ SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 SPIN_COUNT=${#SPIN_FRAMES[@]}
 
 : >"$LOG"
+
 
 get_jobs() {
     local cpus mem_kb max_by_ram jobs
@@ -80,6 +84,7 @@ set_display_pct() {
     (( next > DISPLAY_PCT )) && DISPLAY_PCT=$next
 }
 
+
 render_bar() {
     local pct=$1 tick=$2
     local fill=$(( pct * BAR_WIDTH / 100 ))
@@ -99,10 +104,10 @@ render_bar() {
         local dist=$(( fill - 1 - i ))
         if (( pct < 100 )); then
             case $dist in
-                0) out+="${hc}${head}" ;;
-                1) out+="${R3}▓" ;;
-                2) out+="${R4}▒" ;;
-                *) out+="${RED}═" ;;
+                0) out+="${hc}${head}" ;;  
+                1) out+="${R3}▓" ;;         
+                2) out+="${R4}▒" ;;         
+                *) out+="${RED}═" ;;        
             esac
         else
             out+="${R2}═"
@@ -158,7 +163,7 @@ update_ui() {
     ui_goto 11
     ui_clear_line
 }
-
+ 
 fail() {
     ui_show_cursor
     printf '\033[2J\033[H'
