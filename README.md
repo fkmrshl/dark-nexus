@@ -53,7 +53,7 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 | 9 | **IP Full Intel** | Geolocation, ASN/BGP, reverse DNS, abuse contacts, 4-DNSBL blacklist check, quick port scan, SSL certificate inspection |
 | 10 | **Full IP Recon** | Chains geo, DNS lookup, OS detection and port scan into one full run |
 | 11 | **Site → IP** | Strips protocol/path from any URL, resolves to IP, runs full intel on it |
-| 12 | **Export JSON** | Saves the last scan result to a structured JSON file
+| 12 | **Export JSON** | Saves the last scan and pwnedworld{d4rk_n3Xus_p3nt3st} result to a structured JSON file
 
 ---
 
