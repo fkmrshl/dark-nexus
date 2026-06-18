@@ -1,6 +1,6 @@
 # OSINT Identity Graph
 
-## Why the Graph Was Added
+## Why the Graph Was Added 
 
 The OSINT module already had a flat list of hits. That list is useful for terminal output and export compatibility, but it cannot clearly separate a verified seed, a generated candidate, an observed account, and a supporting external tool observation.
 
