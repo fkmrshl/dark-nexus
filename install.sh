@@ -16,12 +16,16 @@ DIM=$'\033[2m'
 RESET=$'\033[0m'
 
 LOG="/tmp/dark-nexus-install.log"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="/tmp/dark-nexus-build"
+REPO_URL="https://github.com/fkmrshl/dark-nexus.git"
 BAR_WIDTH=40
 
-STEP_ENDS=(22 30 42 92 100)
+STEP_ENDS=(20 30 40 50 92 100)
 STEP_LABELS=(
     "Installing dependencies..."
-    "Fetching source from GitHub..."
+    "Installing OSINT helper tools..."
+    "Preparing local source..."
     "Configuring build (CMake)..."
     "Compiling (Ninja)..."
     "Installing binary, setcap, wordlist..."
@@ -35,6 +39,7 @@ DISTRO_LABEL=""
 BUILD_NUM=0
 BUILD_DEN=0
 JOBS=1
+export SOURCE_DIR BUILD_DIR
 
 SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 SPIN_COUNT=${#SPIN_FRAMES[@]}
@@ -54,6 +59,10 @@ log_mark() {
 
 get_jobs() {
     local cpus mem_kb max_by_ram jobs
+    if [[ "${DARK_NEXUS_JOBS:-}" =~ ^[0-9]+$ ]] && (( DARK_NEXUS_JOBS > 0 )); then
+        echo "$DARK_NEXUS_JOBS"
+        return 0
+    fi
     cpus=$(nproc 2>/dev/null || echo 2)
     mem_kb=$(awk '/MemAvailable/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 2097152)
     if (( mem_kb < 1500000 )); then
@@ -64,6 +73,7 @@ get_jobs() {
     if (( max_by_ram < 1 )); then max_by_ram=1; fi
     jobs=$cpus
     if (( jobs > max_by_ram )); then jobs=$max_by_ram; fi
+    if (( jobs > 2 )); then jobs=2; fi
     if (( jobs < 1 )); then jobs=1; fi
     echo "$jobs"
 }
@@ -275,7 +285,7 @@ run_build_step() {
     set_display_pct "$(step_start_pct)"
     update_ui "$label" "starting compile..." 0
 
-    (cd /tmp/dark-nexus && cmake --build build -j "$JOBS" >>"$LOG" 2>&1) &
+    (cd "$BUILD_DIR" && cmake --build build -j "$JOBS" >>"$LOG" 2>&1) &
     local pid=$!
 
     while kill -0 "$pid" 2>/dev/null; do
@@ -352,12 +362,14 @@ if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || \
         apt-get update -qq
         apt-get install -y -qq \
             build-essential cmake ninja-build g++ libssl-dev liburing-dev \
-            whois dnsutils traceroute iputils-ping git libcap2-bin libcap-dev curl
+            whois dnsutils traceroute iputils-ping git libcap2-bin libcap-dev curl \
+            python3 python3-pip python3-venv
     '
 elif [[ "$OS" == "arch" || "$OS" == "blackarch" || "$OS_LIKE" == *"arch"* ]]; then
     run_step "${STEP_LABELS[0]}" bash -c '
         pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja openssl liburing whois bind traceroute iputils git libcap curl
+            base-devel cmake ninja openssl liburing whois bind traceroute iputils git libcap curl \
+            python python-pip
     '
 else
     ui_show_cursor
@@ -366,19 +378,72 @@ else
 fi
 
 run_step "${STEP_LABELS[1]}" bash -c '
-    rm -rf /tmp/dark-nexus
-    git clone --quiet --depth 1 https://github.com/fkmrshl/dark-nexus.git /tmp/dark-nexus
+    set +e
+    PY_ROOT=/opt/dark-nexus-osint
+    rm -rf "$PY_ROOT"
+    mkdir -p "$PY_ROOT"
+    python3 -m venv "$PY_ROOT"
+    if [ $? -ne 0 ]; then
+        echo "[warn] python venv unavailable, skipping OSINT helper tools"
+        exit 0
+    fi
+    "$PY_ROOT/bin/python" -m pip install --upgrade pip wheel
+    for entry in "sherlock:sherlock-project" "maigret:maigret" "holehe:holehe" "theHarvester:theHarvester"; do
+        tool="${entry%%:*}"
+        package="${entry#*:}"
+        "$PY_ROOT/bin/python" -m pip install "$package"
+        if [ $? -ne 0 ]; then
+            echo "[warn] failed to install $tool package $package"
+        fi
+        if [ -x "$PY_ROOT/bin/$tool" ]; then
+            ln -sf "$PY_ROOT/bin/$tool" "/usr/local/bin/$tool"
+        else
+            echo "[warn] $tool executable not found in $PY_ROOT/bin"
+        fi
+        if [ -x "/usr/local/bin/$tool" ]; then
+            echo "[info] verified $tool"
+        else
+            echo "[warn] $tool is not executable after install"
+        fi
+    done
+
+    if command -v go >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/sundowndev/phoneinfoga/v2@latest
+        if [ $? -ne 0 ]; then
+            echo "[warn] optional phoneinfoga go install failed"
+        elif [ -x /usr/local/bin/phoneinfoga ]; then
+            echo "[info] verified phoneinfoga"
+        else
+            echo "[warn] optional phoneinfoga binary was not created"
+        fi
+    else
+        echo "[warn] go not found, skipping optional phoneinfoga"
+    fi
+    exit 0
 '
 
 run_step "${STEP_LABELS[2]}" bash -c '
-    cd /tmp/dark-nexus
+    rm -rf "$BUILD_DIR"
+    if [ -f "$SOURCE_DIR/CMakeLists.txt" ] && [ -d "$SOURCE_DIR/src" ] && [ -d "$SOURCE_DIR/include" ]; then
+        mkdir -p "$BUILD_DIR"
+        cp -a "$SOURCE_DIR"/. "$BUILD_DIR"/
+        rm -rf "$BUILD_DIR/build" "$BUILD_DIR/.git"
+        echo "[info] using local source: $SOURCE_DIR"
+    else
+        git clone --quiet --depth 1 "$REPO_URL" "$BUILD_DIR"
+        echo "[info] using remote source: $REPO_URL"
+    fi
+'
+
+run_step "${STEP_LABELS[3]}" bash -c '
+    cd "$BUILD_DIR"
     cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 '
 
-run_build_step "${STEP_LABELS[3]}"
+run_build_step "${STEP_LABELS[4]}"
 
-run_step "${STEP_LABELS[4]}" bash -c '
-    cd /tmp/dark-nexus
+run_step "${STEP_LABELS[5]}" bash -c '
+    cd "$BUILD_DIR"
     rm -f /usr/local/bin/dark-nexus
     cp build/dark_nexus /usr/local/bin/dark-nexus
     chmod 755 /usr/local/bin/dark-nexus
