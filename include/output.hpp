@@ -15,7 +15,7 @@ public:
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PortEntry, port, protocol, service, banner, version, risk, latency_ms, tls, tls_version, tls_cn, tls_expired, vulns)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubEntry, sub, ips, cname, http_code, server, waf, language, cms, source, title, takeover_possible)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OsintEntry, platform, url, category, certainty)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OsintEntry, platform, url, category, certainty, confidence, evidence, source)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TraceHop, ttl, addr, hostname, avg_rtt_ms, loss_pct, asn)
 
 namespace nlohmann {
@@ -48,7 +48,6 @@ namespace nlohmann {
             };
         }
         static void from_json(const json& j, ScanResult& r) {
-            // Not strictly necessary since we only serialize, but good for completeness.
             j.at("schema_version").get_to(r.schema_version);
             j.at("tool_version").get_to(r.tool_version);
             j.at("scan_type").get_to(r.scan_type);
