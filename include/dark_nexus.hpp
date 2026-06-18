@@ -103,6 +103,9 @@ struct OsintEntry {
     std::string url;
     std::string category;
     std::string certainty;
+    double confidence = 0.0;
+    std::string evidence;
+    std::string source;
 };
 
 struct TraceHop {
@@ -138,8 +141,8 @@ struct ScanResult {
     std::vector<TraceHop> trace;
     std::vector<std::string> dns_records;
 
-    std::vector<std::pair<int,std::string>> open_ports; // legacy
-    std::vector<std::string> osint_hits; // legacy
+    std::vector<std::pair<int,std::string>> open_ports;
+    std::vector<std::string> osint_hits;
 };
 
 struct CancellationToken {
@@ -151,8 +154,20 @@ extern std::mutex   g_print_mtx;
 extern std::mutex g_result_mtx;
 extern CancellationToken g_cancel_token;
 
+struct HttpFetchResult {
+    std::string body;
+    std::string final_url;
+    int http_status = 0;
+    int curl_exit_code = -1;
+    bool timed_out = false;
+    bool fetched = false;
+    bool success = false;
+    bool blocked_or_error = false;
+};
+
 std::string safe_exec(const std::vector<std::string>& args, int t = 8);
 std::string safe_curl(const std::string& url, int t = 8);
+HttpFetchResult safe_curl_detailed(const std::string& url, int t = 8);
 
 bool        valid_target(const std::string& s);
 bool        valid_username(const std::string& s);
@@ -187,7 +202,7 @@ std::vector<std::string> split_lines(const std::string& s);
 std::string dig_short(const std::string& domain, const std::string& type, int t = 6);
 std::string dig_full(const std::string& domain, const std::string& type, int t = 6);
 
-void        port_scan(const std::string& ip, int start, int end_port, bool scan_udp = false, int timing_profile = 3, const std::set<int>& exclude_ports = {}, ScanAddrFamily addr_family = ScanAddrFamily::Auto);
+void        port_scan(const std::string& ip, int start, int end_port, bool scan_udp = false, int timing_profile = 3, const std::set<int>& exclude_ports = {}, ScanAddrFamily addr_family = ScanAddrFamily::Auto, const std::vector<int>& selected_ports = {});
 void        net_scan(const std::string& subnet);
 std::string guess_os_from_ports(const std::vector<int>& open);
 
