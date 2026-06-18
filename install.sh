@@ -39,7 +39,7 @@ DISTRO_LABEL=""
 BUILD_NUM=0
 BUILD_DEN=0
 JOBS=1
-export SOURCE_DIR BUILD_DIR
+export SOURCE_DIR BUILD_DIR REPO_URL
 
 SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 SPIN_COUNT=${#SPIN_FRAMES[@]}
@@ -423,6 +423,7 @@ run_step "${STEP_LABELS[1]}" bash -c '
 '
 
 run_step "${STEP_LABELS[2]}" bash -c '
+    set -e
     rm -rf "$BUILD_DIR"
     if [ -f "$SOURCE_DIR/CMakeLists.txt" ] && [ -d "$SOURCE_DIR/src" ] && [ -d "$SOURCE_DIR/include" ]; then
         mkdir -p "$BUILD_DIR"
@@ -430,12 +431,17 @@ run_step "${STEP_LABELS[2]}" bash -c '
         rm -rf "$BUILD_DIR/build" "$BUILD_DIR/.git"
         echo "[info] using local source: $SOURCE_DIR"
     else
+        if [ -z "${REPO_URL:-}" ]; then
+            echo "[error] REPO_URL is empty"
+            exit 1
+        fi
         git clone --quiet --depth 1 "$REPO_URL" "$BUILD_DIR"
         echo "[info] using remote source: $REPO_URL"
     fi
 '
 
 run_step "${STEP_LABELS[3]}" bash -c '
+    set -e
     cd "$BUILD_DIR"
     cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 '
@@ -443,6 +449,7 @@ run_step "${STEP_LABELS[3]}" bash -c '
 run_build_step "${STEP_LABELS[4]}"
 
 run_step "${STEP_LABELS[5]}" bash -c '
+    set -e
     cd "$BUILD_DIR"
     rm -f /usr/local/bin/dark-nexus
     cp build/dark_nexus /usr/local/bin/dark-nexus
