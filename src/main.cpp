@@ -51,7 +51,7 @@ static void print_help() {
     std::cout << WHITE << BOLD << "  USAGE:\n"<<RESET;
     std::cout << BLOOD_RED << "    dark-nexus [options] <target>\n\n"<<RESET;
     std::cout << WHITE << BOLD << "  OPTIONS:\n"<<RESET;
-    std::cout << BLOOD_RED << "    --portscan <target> [ports] " << WHITE << "Port scan (0=top1000, 0-1=top100, 80-443, 0U=UDP)\n"<<RESET;
+    std::cout << BLOOD_RED << "    --portscan <target> [ports] " << WHITE << "Port scan (0=top1000, 0-1=top100, 80-443, 22,80, 0U=UDP)\n"<<RESET;
     std::cout << BLOOD_RED << "    -T<0-5>                     " << WHITE << "Timing (0=Paranoid .. 5=Insane, default 3)\n"<<RESET;
     std::cout << BLOOD_RED << "    --ipv4                      " << WHITE << "Resolve/scan IPv4 only (A records)\n"<<RESET;
     std::cout << BLOOD_RED << "    --ipv6                      " << WHITE << "Resolve/scan IPv6 only (AAAA records)\n"<<RESET;
@@ -218,16 +218,25 @@ int main(int argc, char** argv) {
                     udp = true; extra.pop_back();
                 }
                 int s = 0, e = 0;
+                std::vector<int> selected_ports;
                 if (!extra.empty()) {
-                    auto dash = extra.find('-');
-                    if (dash != std::string::npos) {
+                    if (extra.find(',') != std::string::npos) {
+                        std::stringstream ss(extra);
+                        std::string item;
+                        while (std::getline(ss, item, ',')) {
+                            try {
+                                int p = std::stoi(item);
+                                if (valid_port(p)) selected_ports.push_back(p);
+                            } catch (...) {}
+                        }
+                    } else if (auto dash = extra.find('-'); dash != std::string::npos) {
                         try { s = std::stoi(extra.substr(0, dash)); e = std::stoi(extra.substr(dash+1)); } catch (...) {}
                     } else {
                         try { s = std::stoi(extra); e = s; } catch (...) {}
                         if (s == 0) e = 0;
                     }
                 }
-                port_scan(ip_res, s, e, udp, timing_profile, exclude_ports, addr_family);
+                port_scan(ip_res, s, e, udp, timing_profile, exclude_ports, addr_family, selected_ports);
             }
             else if (mode == "netscan") { g_result.scan_type = "netscan"; net_scan(ip_res.substr(0,ip_res.rfind('.'))); }
             else if (mode == "os-detect") { g_result.scan_type = "os_detect"; os_detect(ip_res); }
@@ -326,8 +335,8 @@ int main(int argc, char** argv) {
                 std::cout<<"\n"<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  | "<<WHITE<<BOLD<<std::left<<std::setw(3)<<"MOD"<<RESET<<BLOOD_RED<<" | "<<WHITE<<BOLD<<std::left<<std::setw(50)<<"DESCRIPTION"<<BLOOD_RED<<" | "<<std::setw(8)<<"ETA"<<BLOOD_RED<<" |\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
-                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" F"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  — builtin 300 words + passive + enrich"<<BLOOD_RED<<" | "<<WHITE<<"~3 min  "<<BLOOD_RED<<" |\n"<<RESET;
-                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" D"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  — full wordlist + all sources + takeover scan"<<BLOOD_RED<<" | "<<WHITE<<"~1-2hr  "<<BLOOD_RED<<" |\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" F"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"FAST  - builtin 300 words + passive + enrich"<<BLOOD_RED<<" | "<<WHITE<<"~3 min  "<<BLOOD_RED<<" |\n"<<RESET;
+                std::cout<<BLOOD_RED<<"  | "<<BLOOD_RED<<BOLD<<" D"<<RESET<<BLOOD_RED<<"  | "<<WHITE<<std::left<<std::setw(50)<<"DEEP  - full wordlist + all sources + takeover scan"<<BLOOD_RED<<" | "<<WHITE<<"~1-2hr  "<<BLOOD_RED<<" |\n"<<RESET;
                 std::cout<<BLOOD_RED<<"  +-----+----------------------------------------------------+----------+\n"<<RESET;
 
                 std::cout<<BLOOD_RED<<"  select mode [F/D]: "<<RESET;
