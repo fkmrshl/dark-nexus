@@ -36,7 +36,6 @@ bool OutputWriter::write(const ScanResult& r, const std::string& path) {
     } else if (path.find(".csv") == path.length() - 4) {
         return write_csv(r, path);
     } else {
-        // Assume text output
         std::ofstream f(path);
         if (!f.is_open()) return false;
         f << "Scan Report: " << r.target << "\n";
@@ -172,12 +171,15 @@ bool OutputWriter::write_csv(const ScanResult& r, const std::string& path) {
         std::string osint_path = base_path + "_osint.csv";
         std::ofstream fo(osint_path);
         if (fo.is_open()) {
-            fo << "platform,url,category,certainty\r\n";
+            fo << "platform,url,category,certainty,confidence,evidence,source\r\n";
             for (const auto& o : r.osint) {
                 fo << escape_csv(o.platform) << ","
                    << escape_csv(o.url) << ","
                    << escape_csv(o.category) << ","
-                   << escape_csv(o.certainty) << "\r\n";
+                   << escape_csv(o.certainty) << ","
+                   << o.confidence << ","
+                   << escape_csv(o.evidence) << ","
+                   << escape_csv(o.source) << "\r\n";
             }
             std::cout << BLOOD_RED << "  [+] saved csv: " << WHITE << osint_path << "\n" << RESET;
         }
