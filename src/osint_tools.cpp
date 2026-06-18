@@ -1,27 +1,239 @@
 #include "../include/osint.hpp"
+#include <cerrno>
+#include <sys/stat.h>
 
 namespace osint {
 
+static std::string join_path(const std::string& dir, const std::string& name) {
+    if (dir.empty()) return name;
+    return dir.back() == '/' ? dir + name : dir + "/" + name;
+}
+
+static std::string home_dir() {
+    const char* home = std::getenv("HOME");
+    return home && *home ? std::string(home) : "";
+}
+
+static bool is_executable(const std::string& path) {
+    return !path.empty() && access(path.c_str(), X_OK) == 0;
+}
+
+static std::string search_path_tool(const std::string& name) {
+    const char* path_env = std::getenv("PATH");
+    if (!path_env || !*path_env) return "";
+
+    std::stringstream ss(path_env);
+    std::string dir;
+    while (std::getline(ss, dir, ':')) {
+        if (dir.empty()) dir = ".";
+        std::string candidate = join_path(dir, name);
+        if (is_executable(candidate)) return candidate;
+    }
+    return "";
+}
+
+static std::string local_bin_dir() {
+    std::string home = home_dir();
+    return home.empty() ? "" : join_path(home, ".local/bin");
+}
+
+static std::string local_venv_dir() {
+    std::string home = home_dir();
+    return home.empty() ? "" : join_path(home, ".local/share/dark-nexus/osint-venv");
+}
+
+static std::string resolve_tool_path(const std::string& name) {
+    if (name.find('/') != std::string::npos) return is_executable(name) ? name : "";
+
+    std::string from_path = search_path_tool(name);
+    if (!from_path.empty()) return from_path;
+
+    std::vector<std::string> dirs = {"/usr/local/bin", "/opt/dark-nexus-osint/bin"};
+    std::string local_bin = local_bin_dir();
+    std::string local_venv = local_venv_dir();
+    if (!local_bin.empty()) dirs.push_back(local_bin);
+    if (!local_venv.empty()) dirs.push_back(join_path(local_venv, "bin"));
+
+    for (const auto& dir : dirs) {
+        std::string candidate = join_path(dir, name);
+        if (is_executable(candidate)) return candidate;
+    }
+    return "";
+}
+
 static bool tool_exists(const std::string& name) {
-    return !safe_exec({"which", name}, 3).empty();
+    return !resolve_tool_path(name).empty();
+}
+
+static int run_command_status(const std::vector<std::string>& args, int timeout_sec) {
+    if (args.empty()) return -1;
+
+    std::vector<char*> argv;
+    for (const auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+    argv.push_back(nullptr);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        setpgid(0, 0);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+    if (pid < 0) return -1;
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_sec);
+    int status = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        pid_t done = waitpid(pid, &status, WNOHANG);
+        if (done == pid) {
+            if (WIFEXITED(status)) return WEXITSTATUS(status);
+            return -1;
+        }
+        if (done < 0) return -1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    kill(-pid, SIGKILL);
+    waitpid(pid, &status, 0);
+    return -1;
 }
 
 static bool is_interactive() {
     return isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
 }
 
-static bool install_tool(const ToolSpec& spec) {
-    if (!spec.python_package) return false;
+static bool path_is_symlink(const std::string& path) {
+    struct stat st {};
+    return lstat(path.c_str(), &st) == 0 && S_ISLNK(st.st_mode);
+}
 
-    std::cout << BLOOD_RED << "  [*] installing " << WHITE << spec.binary << BLOOD_RED << "...\n" << RESET;
-    safe_exec({"pip3", "install", "-q", spec.package}, 120);
+static bool ensure_dir(const std::string& path) {
+    if (path.empty()) return false;
+    if (access(path.c_str(), F_OK) == 0) return true;
+
+    std::string current;
+    size_t pos = 0;
+    if (path[0] == '/') {
+        current = "/";
+        pos = 1;
+    }
+
+    while (pos <= path.size()) {
+        size_t next = path.find('/', pos);
+        std::string part = path.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+        if (!part.empty()) {
+            if (!current.empty() && current.back() != '/') current += "/";
+            current += part;
+            if (mkdir(current.c_str(), 0755) != 0 && errno != EEXIST) return false;
+        }
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
+    return access(path.c_str(), F_OK) == 0;
+}
+
+static void link_local_tool(const std::string& source, const std::string& binary) {
+    std::string bin_dir = local_bin_dir();
+    if (bin_dir.empty() || !is_executable(source) || !ensure_dir(bin_dir)) return;
+
+    std::string target = join_path(bin_dir, binary);
+    if (access(target.c_str(), F_OK) == 0 && !path_is_symlink(target)) return;
+
+    unlink(target.c_str());
+    if (symlink(source.c_str(), target.c_str()) != 0) {
+        std::cout << BLOOD_RED << "  [warn] could not link " << WHITE << binary << BLOOD_RED << " into " << WHITE << bin_dir << "\n" << RESET;
+    }
+}
+
+static void print_phoneinfoga_manual_install(const std::string& bin_dir) {
+    std::string target = bin_dir.empty() ? "$HOME/.local/bin/phoneinfoga" : join_path(bin_dir, "phoneinfoga");
+    std::cout << WHITE << "      manual install: download the latest PhoneInfoga release binary\n" << RESET;
+    std::cout << WHITE << "      place it in " << target << "\n" << RESET;
+    std::cout << WHITE << "      run: chmod +x \"" << target << "\"\n" << RESET;
+}
+
+static bool install_tool(const ToolSpec& spec) {
+    if (!spec.python_package) {
+        std::string bin_dir = local_bin_dir();
+        if (bin_dir.empty()) {
+            std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install skipped: HOME is not set\n" << RESET;
+            return false;
+        }
+        if (!ensure_dir(bin_dir)) {
+            std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install skipped: cannot create " << WHITE << bin_dir << "\n" << RESET;
+            return false;
+        }
+
+        std::string go = resolve_tool_path("go");
+        if (go.empty()) {
+            std::cout << BLOOD_RED << "  [-] " << WHITE << "phoneinfoga" << BLOOD_RED << " install skipped: go not found\n" << RESET;
+            print_phoneinfoga_manual_install(bin_dir);
+            return false;
+        }
+
+        std::cout << BLOOD_RED << "  [*] installing " << WHITE << spec.binary << BLOOD_RED << " into " << WHITE << bin_dir << BLOOD_RED << "...\n" << RESET;
+        int status = run_command_status({"/usr/bin/env", "GOBIN=" + bin_dir, go, "install", spec.package}, 300);
+        std::string expected = join_path(bin_dir, spec.binary);
+
+        if (status != 0) {
+            std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " go install failed; skipping optional phone helper\n" << RESET;
+            print_phoneinfoga_manual_install(bin_dir);
+            return false;
+        }
+
+        if (is_executable(expected)) {
+            std::cout << BLOOD_RED << "  [+] " << WHITE << spec.binary << BLOOD_RED << " installed\n" << RESET;
+            return true;
+        }
+
+        std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " binary was not created; skipping optional phone helper\n" << RESET;
+        print_phoneinfoga_manual_install(bin_dir);
+        return false;
+    }
+
+    std::string venv = local_venv_dir();
+    if (venv.empty()) {
+        std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install skipped: HOME is not set\n" << RESET;
+        return false;
+    }
+
+    std::string parent = join_path(home_dir(), ".local/share/dark-nexus");
+    if (!ensure_dir(parent)) {
+        std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install skipped: cannot create " << WHITE << parent << "\n" << RESET;
+        return false;
+    }
+
+    std::string python = resolve_tool_path("python3");
+    if (python.empty()) python = "python3";
+
+    std::cout << BLOOD_RED << "  [*] installing " << WHITE << spec.binary << BLOOD_RED << " into " << WHITE << venv << BLOOD_RED << "...\n" << RESET;
+    if (!is_executable(join_path(join_path(venv, "bin"), "python"))) {
+        safe_exec({python, "-m", "venv", venv}, 120);
+    }
+
+    std::string venv_python = join_path(join_path(venv, "bin"), "python");
+    if (!is_executable(venv_python)) {
+        std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install failed: cannot create Python venv\n" << RESET;
+        return false;
+    }
+
+    safe_exec({venv_python, "-m", "pip", "install", "-q", "--upgrade", "pip", "wheel"}, 180);
+    safe_exec({venv_python, "-m", "pip", "install", "-q", spec.package}, 300);
+
+    std::string venv_tool = join_path(join_path(venv, "bin"), spec.binary);
+    link_local_tool(venv_tool, spec.binary);
 
     if (tool_exists(spec.binary)) {
         std::cout << BLOOD_RED << "  [+] " << WHITE << spec.binary << BLOOD_RED << " installed\n" << RESET;
         return true;
     }
 
-    std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install failed. Run manually: pip3 install " << WHITE << spec.package << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " install failed. Run manually: " << WHITE << venv_python << " -m pip install " << spec.package << "\n" << RESET;
     return false;
 }
 
@@ -57,10 +269,7 @@ static bool prepare_tools(const std::vector<ToolSpec>& specs, const std::string&
         return true;
     }
 
-    for (const auto& spec : missing) {
-        if (spec.python_package) install_tool(spec);
-        else std::cout << BLOOD_RED << "  [-] " << WHITE << spec.binary << BLOOD_RED << " requires manual installation\n" << RESET;
-    }
+    for (const auto& spec : missing) install_tool(spec);
 
     return true;
 }
@@ -171,12 +380,13 @@ static void add_external_only_graph_record(IdentityGraph& graph, const ToolResul
 static ToolResult run_sherlock(const std::string& username) {
     ToolResult result;
     result.tool = "sherlock";
-    result.available = tool_exists("sherlock");
+    std::string tool_path = resolve_tool_path("sherlock");
+    result.available = !tool_path.empty();
     if (!result.available) return result;
     result.installed = true;
 
     std::cout << BLOOD_RED << "    running " << WHITE << "sherlock" << BLOOD_RED << "...\n" << RESET;
-    std::string output = safe_exec({"sherlock", "--print-found", "--timeout", "10", username}, 180);
+    std::string output = safe_exec({tool_path, "--print-found", "--timeout", "10", username}, 180);
     for (const auto& raw : split_lines(output)) {
         if (raw.find("[+]") == std::string::npos) continue;
         size_t url_pos = raw.find("http");
@@ -197,12 +407,13 @@ static ToolResult run_sherlock(const std::string& username) {
 static ToolResult run_maigret(const std::string& username) {
     ToolResult result;
     result.tool = "maigret";
-    result.available = tool_exists("maigret");
+    std::string tool_path = resolve_tool_path("maigret");
+    result.available = !tool_path.empty();
     if (!result.available) return result;
     result.installed = true;
 
     std::cout << BLOOD_RED << "    running " << WHITE << "maigret" << BLOOD_RED << "...\n" << RESET;
-    std::string output = safe_exec({"maigret", "--no-color", "--timeout", "10", "-a", username}, 300);
+    std::string output = safe_exec({tool_path, "--no-color", "--timeout", "10", "-a", username}, 300);
     for (const auto& raw : split_lines(output)) {
         if (raw.find("[+]") == std::string::npos) continue;
         size_t url_pos = raw.find("http");
@@ -215,12 +426,13 @@ static ToolResult run_maigret(const std::string& username) {
 static ToolResult run_holehe(const std::string& email) {
     ToolResult result;
     result.tool = "holehe";
-    result.available = tool_exists("holehe");
+    std::string tool_path = resolve_tool_path("holehe");
+    result.available = !tool_path.empty();
     if (!result.available) return result;
     result.installed = true;
 
     std::cout << BLOOD_RED << "    running " << WHITE << "holehe" << BLOOD_RED << "...\n" << RESET;
-    std::string output = safe_exec({"holehe", "--only-used", "--no-color", email}, 300);
+    std::string output = safe_exec({tool_path, "--only-used", "--no-color", email}, 300);
     for (const auto& raw : split_lines(output)) {
         if (raw.find("[+]") == std::string::npos) continue;
         std::string platform = raw;
@@ -235,12 +447,13 @@ static ToolResult run_holehe(const std::string& email) {
 static ToolResult run_theharvester(const std::string& domain) {
     ToolResult result;
     result.tool = "theHarvester";
-    result.available = tool_exists("theHarvester");
+    std::string tool_path = resolve_tool_path("theHarvester");
+    result.available = !tool_path.empty();
     if (!result.available) return result;
     result.installed = true;
 
     std::cout << BLOOD_RED << "    running " << WHITE << "theHarvester" << BLOOD_RED << "...\n" << RESET;
-    std::string output = safe_exec({"theHarvester", "-d", domain, "-b", "all", "-l", "200"}, 180);
+    std::string output = safe_exec({tool_path, "-d", domain, "-b", "all", "-l", "200"}, 180);
     std::set<std::string> seen;
     for (const auto& raw : split_lines(output)) {
         std::string lowered = lower_copy(raw);
@@ -272,16 +485,19 @@ std::vector<ToolResult> run_email_tools(const std::string& email, const std::str
 ToolResult run_phoneinfoga(const std::string& e164) {
     ToolResult result;
     result.tool = "phoneinfoga";
-    result.available = tool_exists("phoneinfoga");
+    std::vector<ToolSpec> specs = {{"phoneinfoga", "github.com/sundowndev/phoneinfoga/v2@latest", false}};
+    prepare_tools(specs, "phone");
+
+    std::string tool_path = resolve_tool_path("phoneinfoga");
+    result.available = !tool_path.empty();
     if (!result.available) {
-        std::cout << BLOOD_RED << "  [-] phoneinfoga: not installed\n";
-        std::cout << WHITE << "      install manually: go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest\n" << RESET;
+        std::cout << BLOOD_RED << "  [-] phoneinfoga: not installed; skipping optional phone helper\n" << RESET;
         return result;
     }
 
     result.installed = true;
     std::cout << BLOOD_RED << "    running " << WHITE << "phoneinfoga" << BLOOD_RED << "...\n" << RESET;
-    std::string output = safe_exec({"phoneinfoga", "scan", "-n", e164}, 120);
+    std::string output = safe_exec({tool_path, "scan", "-n", e164}, 120);
     std::set<std::string> seen;
     for (const auto& raw : split_lines(output)) {
         if (raw.empty() || raw[0] == '=' || raw[0] == '-') continue;
