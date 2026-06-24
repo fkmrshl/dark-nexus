@@ -20,7 +20,7 @@
 ---
 ## Dark Nexus Project:
  
-**The ultimate multi-threaded reconnaissance and pentesting toolkit packed into a single binary.**
+** A modular, multi-threaded C++17 toolkit for network reconnaissance, service analysis, and infrastructure mapping.**
 
 Dark Nexus replaces dozens of disjointed utilities. Written in C++17, it compiles into a single standalone executable that requires no complex environment setup or dependency management. Everything is controlled through an intuitive hybrid CLI, supporting both an interactive menu and direct arguments
 
