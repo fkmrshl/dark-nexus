@@ -6,8 +6,7 @@
 
 <br>
 
-**Dark Nexus** - ultimate multi-threaded reconnaissance & pentesting framework written in **C++17**.
-  
+**Dark Nexus** - modular **C++17** framework for network reconnaissance and infrastructure analysis.
 
   ![Language](https://img.shields.io/badge/language-C%2B%2B17-dc143c?style=flat-square)
   ![Platform](https://img.shields.io/badge/platform-Linux-dc143c?style=flat-square)
