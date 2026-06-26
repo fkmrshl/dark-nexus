@@ -33,7 +33,7 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 
 | # | Module | What it does |
 |---|--------|--------------|
-| 1 | **Subdomain Scan** | Passive recon from 11 sources (crt.sh, VirusTotal, Shodan, Censys…) + async DNS pipeline, DoH fallback, takeover + language detect, permutation engine and JS scraping|
+| 1 | **Subdomain Scan** | Passive recon from 11 sources + async DNS pipeline, DoH fallback, takeover + language detect, permutation engine and JS scraping|
 | 2 | **OSINT** | OSINT Intelligence & Identity Graph: Multi-vector Identity Graph (User/Email/Phone) with detect input type, bayes score verification, cross_reference orchestration (Sherlock, Maigret, Holehe, PhoneInfoga), Breach Intelligence. |
 | 3 | **Port Scan** |Dual-mode TCP/UDP scanner · raw SYN + connect fallback · T0–T5 timing · TLS/HTTP inspect · CVE hints · OS fingerprint · adaptive IpV4 + IpV6 scan. |
 | 4 | **Traceroute** | Multi-protocol path tracer (ICMP / UDP / TCP SYN) with raw socket probes, parallel hop scanning and automatic TCP SYN → connect fallback when CAP_NET_RAW unavailable. |
