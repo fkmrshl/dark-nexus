@@ -361,19 +361,53 @@ if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || \
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         apt-get install -y -qq \
-            build-essential cmake ninja-build g++ libssl-dev liburing-dev \
+            build-essential cmake ninja-build g++ pkg-config ca-certificates \
+            libssl-dev liburing-dev \
             whois dnsutils traceroute iputils-ping git libcap2-bin libcap-dev curl \
             python3 python3-pip python3-venv
     '
-elif [[ "$OS" == "arch" || "$OS" == "blackarch" || "$OS_LIKE" == *"arch"* ]]; then
+elif [[ "$OS" == "arch" || "$OS" == "blackarch" || "$OS" == "manjaro" || \
+        "$OS" == "garuda" || "$OS_LIKE" == *"arch"* ]]; then
     run_step "${STEP_LABELS[0]}" bash -c '
         pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja openssl liburing whois bind traceroute iputils git libcap curl \
+            base-devel cmake ninja pkgconf ca-certificates openssl liburing \
+            whois bind traceroute iputils git libcap curl \
             python python-pip
+    '
+elif [[ "$OS" == "fedora" || "$OS" == "rhel" || "$OS" == "centos" || \
+        "$OS" == "rocky" || "$OS" == "almalinux" || "$OS_LIKE" == *"fedora"* || \
+        "$OS_LIKE" == *"rhel"* ]]; then
+    run_step "${STEP_LABELS[0]}" bash -c '
+        PM=""
+        if command -v dnf >/dev/null 2>&1; then
+            PM="dnf"
+        elif command -v yum >/dev/null 2>&1; then
+            PM="yum"
+        else
+            echo "[error] neither dnf nor yum found"
+            exit 1
+        fi
+        "$PM" install -y \
+            gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config ca-certificates \
+            openssl-devel liburing-devel \
+            whois bind-utils traceroute iputils git libcap libcap-devel curl \
+            python3 python3-pip
+    '
+elif [[ "$OS" == "opensuse" || "$OS" == "opensuse-leap" || "$OS" == "opensuse-tumbleweed" || \
+        "$OS" == "sles" || "$OS_LIKE" == *"suse"* ]]; then
+    run_step "${STEP_LABELS[0]}" bash -c '
+        zypper --non-interactive refresh
+        zypper --non-interactive install --no-recommends \
+            gcc gcc-c++ make cmake ninja pkg-config ca-certificates \
+            libopenssl-devel liburing-devel \
+            whois bind-utils traceroute iputils git libcap-progs libcap-devel curl \
+            python3 python3-pip
     '
 else
     ui_show_cursor
-    ui_msg "${RED}[!] Unsupported OS. Please install dependencies manually.${RESET}"
+    ui_msg "${RED}[!] Unsupported OS: ${WHITE}${DISTRO_LABEL}${RESET}"
+    ui_msg "${WHITE}    Supported families: Debian/Ubuntu/Kali, Arch/BlackArch/Manjaro, Fedora/RHEL/Rocky/Alma, openSUSE.${RESET}"
+    ui_msg "${DIM}    Log: ${LOG}${RESET}"
     exit 1
 fi
 
@@ -454,7 +488,15 @@ run_step "${STEP_LABELS[5]}" bash -c '
     rm -f /usr/local/bin/dark-nexus
     cp build/dark_nexus /usr/local/bin/dark-nexus
     chmod 755 /usr/local/bin/dark-nexus
-    setcap cap_net_raw=eip /usr/local/bin/dark-nexus
+    if command -v setcap >/dev/null 2>&1; then
+        if setcap cap_net_raw=eip /usr/local/bin/dark-nexus; then
+            echo "[info] setcap cap_net_raw=eip applied"
+        else
+            echo "[warn] setcap failed; raw-socket modules may require sudo"
+        fi
+    else
+        echo "[warn] setcap not found; raw-socket modules may require sudo"
+    fi
     mkdir -p /usr/share/wordlists/dark-nexus
     if [ -f "best-dns-wordlist.txt" ]; then
         cp best-dns-wordlist.txt /usr/share/wordlists/dark-nexus/
