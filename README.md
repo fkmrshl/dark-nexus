@@ -16,7 +16,6 @@
 </div>
 
 
----
 ## Dark Nexus Project:
  
 **A modular, multi-threaded C++17 toolkit for network reconnaissance, service analysis, and infrastructure mapping.**
@@ -26,7 +25,6 @@ Dark Nexus replaces dozens of disjointed utilities. Written in C++17, it compile
 Under the hood, it leverages aggressive multi-threading, custom network engines (Raw Sockets, c-ares + io_uring + Thread Pool), and 11 powerful modules: ranging from ultra-fast subdomain scanning with Takeover validation, to in-depth OSINT gathering and heuristic OS fingerprinting.
 
 
----
 
 
 ## Modules
@@ -46,7 +44,6 @@ Under the hood, it leverages aggressive multi-threading, custom network engines 
 | 11 | **Site → IP** | Strips protocol/path from any URL, resolves to IP, runs full intel on it |
 | 12 | **Export JSON** | Saves the last scan result to a structured JSON file
 
----
 
 ## Requirements and Installation
 
@@ -75,11 +72,177 @@ dark-nexus
 dark-nexus [options] <target>
 ```
 
-**Options:**
-- `-h, --help`               Show help menu
+## Command Line Options
 
----
+**•** Port scan:
 
+```bash
+--portscan <target> [ports]
+```
+
+Examples for ports: `0` = top 1000 ports, `0-1` = top 100 ports, `80-443`, `22,80`, `0U` = UDP.
+
+**•** Port scan timing profile:
+
+```bash
+-T<0-5>
+```
+
+`0` = Paranoid, `5` = Insane. Default: `3`.
+
+**•** Resolve and scan IPv4 only:
+
+```bash
+--ipv4
+```
+
+Uses A records.
+
+**•** Resolve and scan IPv6 only:
+
+```bash
+--ipv6
+```
+
+Uses AAAA records.
+
+**•** Exclude ports from port scan:
+
+```bash
+--exclude <ports>
+```
+
+Comma-separated ports to skip.
+
+**•** Run network scan:
+
+```bash
+--netscan <subnet>
+```
+
+Example: `192.168.1.1`.
+
+**•** Run OS detection:
+
+```bash
+--os-detect <ip>
+```
+
+**•** Run full IP intelligence:
+
+```bash
+--ip-intel <ip>
+```
+
+**•** Run DNS lookup:
+
+```bash
+--dns <domain>
+```
+
+**•** Run WHOIS lookup:
+
+```bash
+--whois <target>
+```
+
+**•** Convert site URL to IP and run intelligence:
+
+```bash
+--site <url>
+```
+
+**•** Run OSINT on a username, email address, or phone number:
+
+```bash
+--osint <target>
+```
+
+**•** Run traceroute:
+
+```bash
+--traceroute <ip>
+```
+
+**•** Run full IP recon:
+
+```bash
+--recon <ip>
+```
+
+**•** Run subdomain scan:
+
+```bash
+--subdomain <domain>
+```
+
+**•** Set subdomain scan mode:
+
+```bash
+--mode <F|D>
+```
+
+`F` = Fast, `D` = Deep.
+
+**•** Export result to file:
+
+```bash
+--output <file>
+```
+
+Format is auto-detected from the file extension.
+
+**•** Export result to JSON:
+
+```bash
+--json <file>
+```
+
+Alias for `--output`.
+
+**•** Show the help menu:
+
+```bash
+-h, --help
+```
+
+## Examples
+
+**•** Fast subdomain scan with JSON export:
+
+```bash
+dark-nexus --subdomain google.com --mode F --output result.json
+```
+
+**•** Port scan top 1000 ports with aggressive timing and excluded ports:
+
+```bash
+dark-nexus --portscan 192.168.1.1 0 -T4 --exclude 80,443
+```
+
+**•** IPv4-only port scan for selected ports:
+
+```bash
+dark-nexus --portscan scanme.nmap.org 22,80 --ipv4
+```
+
+**•** IPv6-only port scan:
+
+```bash
+dark-nexus --portscan example.com 443 --ipv6
+```
+
+**•** UDP scan mode:
+
+```bash
+dark-nexus --portscan 192.168.1.1 0U
+```
+
+**•** OSINT scan for an email address:
+
+```bash
+dark-nexus --osint user@mail.com
+```
 
 ## Legal
 
@@ -87,7 +250,6 @@ For **educational purposes** and **authorized penetration testing only**.
 Do not use against systems you do not own or have explicit written permission to test.  
 The author is not responsible for any misuse or damage caused by this tool.
 
----
 
 ## Author
 By - Marshal
