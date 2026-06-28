@@ -1,6 +1,4 @@
-# Subdomain DNS Pipeline
 
-This document describes the current DNS execution path used by the subdomain scanner.
 # Subdomain DNS Pipeline
 
 This document describes the current DNS execution path used by the subdomain scanner.
