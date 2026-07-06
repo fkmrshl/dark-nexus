@@ -254,4 +254,4 @@ The author is not responsible for any misuse or damage caused by this tool.
 ## Author
 By - Marshal
 
-Bugs & feedback welcome - [t.me/fuckmarshal](https://t.me/fuckmarshal) 
+Bugs & feedback welcome - [t.me/serophobe](https://t.me/serophobe)
