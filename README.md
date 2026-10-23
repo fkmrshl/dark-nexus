@@ -8,7 +8,17 @@ Explicit flags, module-specific help, and JSON, CSV, or text reports. Run one mo
 
 ## Install
 
-Clone the repository, then choose a local build or a system-wide installation:
+Install or update with one command (Linux, with `curl` and `sudo`):
+
+```sh
+curl -fsSLm120 https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh | sudo bash
+```
+
+Then run `dark-nexus --help`. The installer downloads the source, installs missing dependencies, builds the application and DNS wordlist, and attempts to configure raw socket capabilities. It shows live output and prints a log path. Optional OSINT helpers are attempted after the main application is installed; helper failures do not block it.
+
+On Arch/CachyOS, the installer uses existing package databases and installs only missing packages. It does not launch a full system upgrade. See [installation troubleshooting](docs/install.md) for mirror errors, package locks, time limits, or a minimal installation.
+
+For a local build or installation from a checkout:
 
 ```sh
 git clone https://github.com/fkmrshl/dark-nexus.git
@@ -56,7 +66,7 @@ sudo bash install.sh
 dark-nexus --help
 ```
 
-The installer installs system dependencies and optional OSINT helpers, builds the project, installs `dark-nexus` to `/usr/local/bin`, and attempts to grant `CAP_NET_RAW` for raw socket probes. It supports Debian/Ubuntu, Arch, Fedora/RHEL, and openSUSE families and provisions the DNS wordlist. Some modules also use `dig`, `host`, `whois`, `ping`, `curl`, or the `openssl` executable at runtime. See the [dependency notes](docs/cli.md#dependencies-and-results).
+The installer installs `dark-nexus` to `/usr/local/bin` and provisions the DNS wordlist. It supports Debian/Ubuntu, Arch/CachyOS, Fedora/RHEL, and openSUSE families. A failed download or build leaves the existing executable in place. Some modules also use `dig`, `host`, `whois`, `ping`, `curl`, or the `openssl` executable at runtime. See the [dependency notes](docs/cli.md#dependencies-and-results).
 
 ### Check the build
 

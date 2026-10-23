@@ -8,6 +8,11 @@ option(DARK_NEXUS_BUILD_APP "Build the network toolkit (requires network librari
 include(CTest)
 
 if(BUILD_TESTING)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME installer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/installer_tests.py)
+    endif()
     add_executable(cli_tests src/cli.cpp tests/cli_tests.cpp)
     target_include_directories(cli_tests PRIVATE include)
     target_compile_options(cli_tests PRIVATE -Wall -Wextra -Wpedantic)
@@ -91,7 +96,6 @@ if(BUILD_TESTING)
     target_include_directories(output_tests PRIVATE include)
     target_link_libraries(output_tests PRIVATE c-ares::cares_static nlohmann_json::nlohmann_json)
     add_test(NAME report_output COMMAND output_tests)
-    find_package(Python3 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         add_test(NAME cli_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_integration.py $<TARGET_FILE:dark_nexus>)

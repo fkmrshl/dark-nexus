@@ -1,525 +1,329 @@
 #!/usr/bin/env bash
+# Sourceable for regression tests; no system changes happen until dnx_main runs.
 
-[ -t 0 ] || exec 0</dev/null
+set -Eeuo pipefail
 
-set -e
-trap '' PIPE
+dnx_message() { printf '%s\n' "$*"; }
+dnx_warn() { printf 'Warning: %s\n' "$*" >&2; }
+dnx_die() { printf 'Error: %s\n' "$1" >&2; return "${2:-1}"; }
 
-RED=$'\033[31m'
-R2=$'\033[38;5;196m'
-R3=$'\033[38;5;160m'
-R4=$'\033[38;5;124m'
-WHITE=$'\033[97m'
-GRAY=$'\033[90m'
-BOLD=$'\033[1m'
-DIM=$'\033[2m'
-RESET=$'\033[0m'
+dnx_help() {
+    cat <<'HELP'
+Dark Nexus installer
+Usage: sudo bash install.sh [options]
 
-LOG="/tmp/dark-nexus-install.log"
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="/tmp/dark-nexus-build"
-REPO_URL="https://github.com/fkmrshl/dark-nexus.git"
-BAR_WIDTH=40
+  --prefix DIR    Install under DIR (default: /usr/local)
+  --source DIR    Build a local checkout instead of downloading source
+  --skip-deps     Use existing system dependencies; do not run a package manager
+  --skip-helpers  Skip optional OSINT helpers
+  -h, --help      Show this help
 
-STEP_ENDS=(20 30 40 50 92 100)
-STEP_LABELS=(
-    "Installing dependencies..."
-    "Installing OSINT helper tools..."
-    "Preparing local source..."
-    "Configuring build (CMake)..."
-    "Compiling (Ninja)..."
-    "Installing binary, setcap, wordlist..."
-)
-
-CURRENT_STEP=0
-DISPLAY_PCT=0
-UI_READY=0
-SIMPLE_UI=0
-DISTRO_LABEL=""
-BUILD_NUM=0
-BUILD_DEN=0
-JOBS=1
-export SOURCE_DIR BUILD_DIR REPO_URL
-
-SPIN_FRAMES=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
-SPIN_COUNT=${#SPIN_FRAMES[@]}
-
-ui_put() {
-    [ "$SIMPLE_UI" -eq 1 ] && return 0
-    printf '%b' "$@" || true
+Download, dependency and build operations have time limits. Output is shown live
+and saved to the log path printed at startup. Existing installations are replaced
+only after the new binary has built and passed its version check.
+HELP
 }
 
-ui_msg() {
-    printf '%b\n' "$@" || true
-}
-
-log_mark() {
-    printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" >>"$LOG" 2>/dev/null || true
-}
-
-get_jobs() {
-    local cpus mem_kb max_by_ram jobs
-    if [[ "${DARK_NEXUS_JOBS:-}" =~ ^[0-9]+$ ]] && (( DARK_NEXUS_JOBS > 0 )); then
-        echo "$DARK_NEXUS_JOBS"
-        return 0
+dnx_jobs() {
+    local cpus memory jobs
+    if [[ -n "${DARK_NEXUS_JOBS:-}" ]]; then
+        [[ "$DARK_NEXUS_JOBS" =~ ^[1-9][0-9]{0,2}$ ]] && (( DARK_NEXUS_JOBS <= 128 )) ||
+            { dnx_die 'DARK_NEXUS_JOBS must be an integer from 1 to 128'; return 1; }
+        printf '%s\n' "$DARK_NEXUS_JOBS"
+        return
     fi
-    cpus=$(nproc 2>/dev/null || echo 2)
-    mem_kb=$(awk '/MemAvailable/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 2097152)
-    if (( mem_kb < 1500000 )); then
-        echo 1
-        return 0
+    cpus=$(nproc 2>/dev/null || printf '1')
+    memory=$(awk '/MemAvailable/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)
+    jobs=$(( ${memory:-1000000} / 1000000 ))
+    (( jobs >= 1 )) || jobs=1
+    (( jobs <= cpus )) || jobs=$cpus
+    (( jobs <= 2 )) || jobs=2
+    printf '%s\n' "$jobs"
+}
+
+dnx_cleanup() {
+    local status=$?
+    trap - EXIT
+    if (( status != 0 )); then
+        printf '\nInstallation failed (exit %s). Log: %s\n' "$status" "${DNX_LOG:-not created}" >&2
     fi
-    max_by_ram=$(( mem_kb / 1000000 ))
-    if (( max_by_ram < 1 )); then max_by_ram=1; fi
-    jobs=$cpus
-    if (( jobs > max_by_ram )); then jobs=$max_by_ram; fi
-    if (( jobs > 2 )); then jobs=2; fi
-    if (( jobs < 1 )); then jobs=1; fi
-    echo "$jobs"
-}
-
-distro_label() {
-    if [ -n "${PRETTY_NAME:-}" ]; then
-        DISTRO_LABEL="$PRETTY_NAME"
-    elif [ -n "${OS:-}" ]; then
-        DISTRO_LABEL="${OS^}"
-    else
-        DISTRO_LABEL="unknown"
+    if [[ -n "${DNX_PENDING_BINARY:-}" ]]; then rm -f -- "$DNX_PENDING_BINARY"; fi
+    if [[ -n "${DNX_PENDING_WORDLIST:-}" ]]; then rm -f -- "$DNX_PENDING_WORDLIST"; fi
+    if [[ -n "${DNX_WORK:-}" && "$DNX_WORK" == */dark-nexus-build.* && ! -L "$DNX_WORK" ]]; then
+        rm -rf -- "$DNX_WORK"
     fi
+    return "$status"
 }
 
-ui_hide_cursor() {
-    [ "$SIMPLE_UI" -eq 1 ] && return 0
-    ui_put '\033[?25l'
-}
-
-ui_show_cursor() {
-    [ "$SIMPLE_UI" -eq 1 ] && return 0
-    ui_put '\033[?25h'
-}
-
-ui_clear_line() {
-    [ "$SIMPLE_UI" -eq 1 ] && return 0
-    ui_put '\033[K'
-}
-
-ui_goto() {
-    [ "$SIMPLE_UI" -eq 1 ] && return 0
-    ui_put "\033[${1};0H"
-}
-
-step_start_pct() {
-    if [ "$CURRENT_STEP" -eq 0 ]; then echo 0; else echo "${STEP_ENDS[$((CURRENT_STEP - 1))]}"; fi
-}
-
-step_end_pct() { echo "${STEP_ENDS[$CURRENT_STEP]}"; }
-
-clamp_pct() {
-    local v=$1
-    if (( v < 0 )); then v=0; fi
-    if (( v > 100 )); then v=100; fi
-    echo "$v"
-}
-
-set_display_pct() {
-    local next
-    next=$(clamp_pct "$1")
-    if (( next > DISPLAY_PCT )); then DISPLAY_PCT=$next; fi
-}
-
-render_bar() {
-    local pct=$1 tick=$2
-    local fill=$(( pct * BAR_WIDTH / 100 ))
-    if (( fill > BAR_WIDTH )); then fill=$BAR_WIDTH; fi
-    if (( fill < 0 )); then fill=0; fi
-
-    local i out=""
-    local pidx=$(( tick % 4 ))
-    local heads=('►' '▶' '►' '▶')
-    local head="${heads[$pidx]}"
-    local hcolors=("$R2" "$R3" "$R2" "$R4")
-    local hc="${hcolors[$pidx]}"
-
-    for ((i = 0; i < fill; i++)); do
-        local dist=$(( fill - 1 - i ))
-        if (( pct < 100 )); then
-            case $dist in
-                0) out+="${hc}${head}" ;;
-                *) out+="${RED}═" ;;
-            esac
-        else
-            out+="${R2}═"
-        fi
-    done
-
-    out+="${WHITE}"
-    for ((i = fill; i < BAR_WIDTH; i++)); do
-        out+="─"
-    done
-    out+="${RESET}"
-
-    printf '%s' "$out"
-}
-
-init_ui() {
-    if [ "$SIMPLE_UI" -eq 1 ]; then
-        ui_msg "${RED}${BOLD}Dark Nexus Installer${RESET}"
-        ui_msg "${WHITE}Distribution: ${RED}${DISTRO_LABEL}${RESET}"
-        UI_READY=1
-        return 0
+dnx_interrupt() {
+    local status=$1
+    trap '' INT TERM
+    if [[ -n "${DNX_ACTIVE_PID:-}" ]]; then
+        # timeout owns this group; never signal an unrelated package operation.
+        kill -TERM -- "-$DNX_ACTIVE_PID" 2>/dev/null || kill -TERM "$DNX_ACTIVE_PID" 2>/dev/null || true
+        wait "$DNX_ACTIVE_PID" 2>/dev/null || true
+        DNX_ACTIVE_PID=''
     fi
-
-    ui_put '\033[2J\033[H'
-    ui_put "${RED}${BOLD}  Dark Nexus Installer${RESET}\n"
-    ui_put "${RED}  ========================================${RESET}\n\n"
-    ui_put "${WHITE}[*] Detecting distribution... ${RED}${DISTRO_LABEL}${RESET}\n\n"
-    UI_READY=1
+    exit "$status"
 }
 
-update_ui() {
-    local label="$1" status="$2" tick="${3:-0}"
-
-    if [ "$UI_READY" -eq 0 ]; then init_ui; fi
-
-    if [ "$SIMPLE_UI" -eq 1 ]; then
-        ui_msg "${WHITE}[${DISPLAY_PCT}%] ${label} - ${status}${RESET}"
-        return 0
+# Keep the command PID so Ctrl-C/TERM stops its downloads before cleanup.
+# The separate tee is joined as well, preserving both exit codes and all output.
+dnx_run() {
+    local label=$1 limit=$2 rc=0 log_rc=0 output_fd tee_pid
+    shift 2
+    printf '\n[%s]\n' "$label" | tee -a "$DNX_LOG" || return
+    exec {output_fd}> >(tee -a "$DNX_LOG")
+    tee_pid=$!
+    timeout --signal=TERM --kill-after=30s "${limit}s" "$@" </dev/null >&"$output_fd" 2>&1 &
+    DNX_ACTIVE_PID=$!
+    wait "$DNX_ACTIVE_PID" || rc=$?
+    DNX_ACTIVE_PID=''
+    exec {output_fd}>&-
+    wait "$tee_pid" || log_rc=$?
+    (( rc != 0 )) || rc=$log_rc
+    if (( rc == 124 || rc == 137 )); then
+        dnx_warn "$label exceeded ${limit}s. Check the last output and network/mirror access; log: $DNX_LOG"
+    elif (( rc != 0 )); then
+        dnx_warn "$label failed (exit $rc); log: $DNX_LOG"
     fi
-
-    local bar spin
-    bar=$(render_bar "$DISPLAY_PCT" "$tick")
-    spin="${SPIN_FRAMES[$(( tick % SPIN_COUNT ))]}"
-
-    ui_goto 7;  ui_clear_line
-    ui_put "${WHITE}  ${label}${RESET}"
-
-    ui_goto 8;  ui_clear_line
-    ui_put "${RED}  [${bar}${RED}]  ${WHITE}${DISPLAY_PCT}%${RESET}"
-
-    ui_goto 9;  ui_clear_line
-    ui_put "${RED}  ${spin} ${DIM}${status}${RESET}"
-
-    ui_goto 10; ui_clear_line
-    ui_put "${DIM}  log: ${LOG}${RESET}"
-
-    ui_goto 11; ui_clear_line
+    return "$rc"
 }
 
-fail() {
-    log_mark "FAILED"
-    ui_show_cursor
-    ui_put '\033[2J\033[H'
-    ui_msg "${RED}${BOLD}  [!] Installation failed${RESET}"
-    ui_msg "${WHITE}  Log: ${LOG}${RESET}"
-    ui_msg "${DIM}  --- last lines ---${RESET}"
-    tail -n 25 "$LOG" 2>/dev/null | while IFS= read -r line; do ui_msg "${line}"; done
-    exit 1
+dnx_family() {
+    local id=$1 like=${2:-}
+    case " $id $like " in
+        *' debian '*|*' ubuntu '*|*' kali '*) printf 'debian\n' ;;
+        *' arch '*|*' cachyos '*|*' blackarch '*|*' manjaro '*|*' garuda '*) printf 'arch\n' ;;
+        *' fedora '*|*' rhel '*|*' centos '*|*' rocky '*|*' almalinux '*) printf 'fedora\n' ;;
+        *' opensuse '*|*' opensuse-leap '*|*' opensuse-tumbleweed '*|*' suse '*|*' sles '*) printf 'suse\n' ;;
+        *) dnx_die "Unsupported distribution: $id" ;;
+    esac
 }
 
-tick_subprogress() {
-    local tick=$1
-    local start end span sub target
-    start=$(step_start_pct)
-    end=$(step_end_pct)
-    span=$(( end - start ))
-
-    if [ "$BUILD_DEN" -gt 0 ]; then
-        sub=$(( BUILD_NUM * 100 / BUILD_DEN ))
-        if (( sub > 98 )); then sub=98; fi
-    else
-        sub=$(( tick * 2 ))
-        if (( sub > 88 )); then sub=88; fi
-    fi
-
-    target=$(( start + span * sub / 100 ))
-    set_display_pct "$target"
+dnx_installed() {
+    case "$DNX_FAMILY" in
+        debian) [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" == 'install ok installed' ]] ;;
+        arch) pacman -Q "$1" >/dev/null 2>&1 ;;
+        fedora|suse) rpm -q "$1" >/dev/null 2>&1 ;;
+    esac
 }
 
-poll_build_progress() {
-    local last
-    last=$(grep -oE '\[[0-9]+/[0-9]+\]' "$LOG" 2>/dev/null | tail -1 || true)
-    if [ -z "$last" ]; then return 0; fi
-    BUILD_NUM="${last#[}"
-    BUILD_NUM="${BUILD_NUM%/*}"
-    BUILD_DEN="${last#*/}"
-    BUILD_DEN="${BUILD_DEN%]*}"
-}
+dnx_pacman_busy() { [[ -e /var/lib/pacman/db.lck ]]; }
 
-run_step() {
-    local label="$1"
+dnx_packages() {
+    local label=$1 package
+    local -a missing=()
     shift
-    local tick=0
-
-    log_mark "STEP: ${label}"
-    BUILD_NUM=0
-    BUILD_DEN=0
-    set_display_pct "$(step_start_pct)"
-    update_ui "$label" "starting..." 0
-
-    "$@" >>"$LOG" 2>&1 &
-    local pid=$!
-
-    while kill -0 "$pid" 2>/dev/null; do
-        tick_subprogress "$tick"
-        update_ui "$label" "working" "$tick"
-        tick=$(( tick + 1 ))
-        sleep 0.12
+    for package in "$@"; do
+        if ! dnx_installed "$package"; then missing+=("$package"); fi
     done
-
-    if ! wait "$pid"; then fail; fi
-
-    set_display_pct "$(step_end_pct)"
-    update_ui "$label" "done" "$tick"
-    CURRENT_STEP=$(( CURRENT_STEP + 1 ))
-    log_mark "DONE: ${label}"
-    sleep 0.2
+    if (( ${#missing[@]} == 0 )); then
+        dnx_message "$label: dependencies already installed."
+        return 0
+    fi
+    dnx_message "$label: installing ${missing[*]}"
+    case "$DNX_FAMILY" in
+        debian)
+            export DEBIAN_FRONTEND=noninteractive
+            local -a apt_options=(-o DPkg::Lock::Timeout=60 -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+            dnx_run 'Refresh apt metadata (up to 5 minutes)' 300 apt-get "${apt_options[@]}" update || return
+            dnx_run "$label (up to 20 minutes)" 1200 apt-get "${apt_options[@]}" install -y "${missing[@]}" || return
+            ;;
+        arch)
+            if dnx_pacman_busy; then
+                dnx_die 'pacman is busy. Let the other package operation finish, then retry. Do not delete its lock file.'
+                return 1
+            fi
+            # Use existing synchronized databases. Never launch a full OS upgrade or
+            # refresh databases alone (partial Arch upgrades are unsupported).
+            if ! dnx_run "$label (up to 20 minutes)" 1200 pacman -S --needed --noconfirm "${missing[@]}"; then
+                dnx_warn 'If mirrors or package databases are stale, complete sudo pacman -Syu yourself, then rerun this installer.'
+                return 1
+            fi
+            ;;
+        fedora)
+            local manager=dnf
+            command -v dnf >/dev/null 2>&1 || manager=yum
+            dnx_run "$label (up to 20 minutes)" 1200 "$manager" -y --setopt=exit_on_lock=True --setopt=timeout=30 --setopt=retries=2 install "${missing[@]}" || return
+            ;;
+        suse)
+            dnx_run "$label (up to 20 minutes)" 1200 zypper --non-interactive install --no-recommends "${missing[@]}" || return
+            ;;
+    esac
 }
 
-run_build_step() {
-    local label="$1"
-    local tick=0
+dnx_dependencies() {
+    case "$DNX_FAMILY" in
+        debian) dnx_packages 'Core dependencies' build-essential cmake ninja-build pkg-config ca-certificates libssl-dev liburing-dev libcap2-bin libcap-dev git curl whois dnsutils iputils-ping ;;
+        arch) dnx_packages 'Core dependencies' base-devel cmake ninja pkgconf ca-certificates openssl liburing libcap git curl whois bind iputils ;;
+        fedora) dnx_packages 'Core dependencies' gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config ca-certificates openssl-devel liburing-devel libcap libcap-devel git curl whois bind-utils iputils ;;
+        suse) dnx_packages 'Core dependencies' gcc gcc-c++ make cmake ninja pkg-config ca-certificates libopenssl-devel liburing-devel libcap-progs libcap-devel git curl whois bind-utils iputils ;;
+    esac
+}
 
-    log_mark "STEP: ${label}"
-    BUILD_NUM=0
-    BUILD_DEN=0
-    set_display_pct "$(step_start_pct)"
-    update_ui "$label" "starting compile..." 0
-
-    (cd "$BUILD_DIR" && cmake --build build -j "$JOBS" >>"$LOG" 2>&1) &
-    local pid=$!
-
-    while kill -0 "$pid" 2>/dev/null; do
-        poll_build_progress
-        tick_subprogress "$tick"
-        local status_msg="compiling"
-        if [ "$BUILD_DEN" -gt 0 ]; then
-            status_msg="compiling ${BUILD_NUM}/${BUILD_DEN}"
+dnx_prepare_source() {
+    DNX_SOURCE="$DNX_WORK/source"
+    if [[ -n "$DNX_LOCAL_SOURCE" ]]; then
+        [[ -f "$DNX_LOCAL_SOURCE/CMakeLists.txt" && -d "$DNX_LOCAL_SOURCE/src" && -d "$DNX_LOCAL_SOURCE/include" ]] ||
+            { dnx_die "Not a project checkout: $DNX_LOCAL_SOURCE"; return 1; }
+        mkdir -p "$DNX_SOURCE"
+        # Copy only inputs to the application build, not old builds, nested clones,
+        # credentials or unrelated files from the user's checkout.
+        cp -a -- "$DNX_LOCAL_SOURCE/CMakeLists.txt" "$DNX_LOCAL_SOURCE/src" "$DNX_LOCAL_SOURCE/include" "$DNX_SOURCE/"
+        if [[ -f "$DNX_LOCAL_SOURCE/best-dns-wordlist.txt" ]]; then
+            cp -- "$DNX_LOCAL_SOURCE/best-dns-wordlist.txt" "$DNX_SOURCE/"
         fi
-        update_ui "$label" "$status_msg" "$tick"
-        tick=$(( tick + 1 ))
-        sleep 0.25
-    done
-
-    if ! wait "$pid"; then fail; fi
-
-    BUILD_NUM=0
-    BUILD_DEN=0
-    set_display_pct "$(step_end_pct)"
-    update_ui "$label" "compile done" "$tick"
-    CURRENT_STEP=$(( CURRENT_STEP + 1 ))
-    log_mark "DONE: ${label}"
-    sleep 0.2
-}
-
-trap 'ui_show_cursor' EXIT
-
-say() {
-    if [ -w /dev/tty ] 2>/dev/null; then
-        printf '%b\n' "$1" >/dev/tty
+        dnx_message "Using local source: $DNX_LOCAL_SOURCE"
     else
-        printf '%b\n' "$1" >&2
+        dnx_run 'Download source (up to 5 minutes)' 300 git clone --depth 1 https://github.com/fkmrshl/dark-nexus.git "$DNX_SOURCE" || return
     fi
 }
 
-if [ "$EUID" -ne 0 ]; then
-    say "${RED}[!] Please run the installer as root (use sudo)${RESET}"
-    exit 1
-fi
-
-if [ -w /dev/tty ] 2>/dev/null; then
-    exec >/dev/tty 2>&1
-else
-    SIMPLE_UI=1
-fi
-
-: >"$LOG" 2>/dev/null || true
-
-if [ -f /etc/os-release ]; then
-    # shellcheck source=/dev/null
-    . /etc/os-release
-    OS=$ID
-    OS_LIKE=$ID_LIKE
-else
-    ui_msg "${RED}[!] Cannot determine OS. Unsupported distribution.${RESET}"
-    exit 1
-fi
-
-distro_label
-JOBS=$(get_jobs)
-log_mark "START distro=${OS} label=${DISTRO_LABEL} jobs=${JOBS} simple=${SIMPLE_UI} tty=$([ -t 1 ] && echo yes || echo no)"
-
-ui_hide_cursor
-init_ui
-set_display_pct 0
-update_ui "Preparing installer..." "initializing..." 0
-log_mark "UI ready"
-sleep 0.35
-
-if [[ "$OS" == "debian" || "$OS" == "ubuntu" || "$OS" == "kali" || \
-      "$OS_LIKE" == *"debian"* || "$OS_LIKE" == *"ubuntu"* ]]; then
-    run_step "${STEP_LABELS[0]}" bash -c '
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq \
-            build-essential cmake ninja-build g++ pkg-config ca-certificates \
-            libssl-dev liburing-dev \
-            whois dnsutils traceroute iputils-ping git libcap2-bin libcap-dev curl \
-            python3 python3-pip python3-venv
-    '
-elif [[ "$OS" == "arch" || "$OS" == "blackarch" || "$OS" == "manjaro" || \
-        "$OS" == "garuda" || "$OS_LIKE" == *"arch"* ]]; then
-    run_step "${STEP_LABELS[0]}" bash -c '
-        pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja pkgconf ca-certificates openssl liburing \
-            whois bind traceroute iputils git libcap curl \
-            python python-pip
-    '
-elif [[ "$OS" == "fedora" || "$OS" == "rhel" || "$OS" == "centos" || \
-        "$OS" == "rocky" || "$OS" == "almalinux" || "$OS_LIKE" == *"fedora"* || \
-        "$OS_LIKE" == *"rhel"* ]]; then
-    run_step "${STEP_LABELS[0]}" bash -c '
-        PM=""
-        if command -v dnf >/dev/null 2>&1; then
-            PM="dnf"
-        elif command -v yum >/dev/null 2>&1; then
-            PM="yum"
-        else
-            echo "[error] neither dnf nor yum found"
-            exit 1
+dnx_install_binary() {
+    local bin_dir="$DNX_PREFIX/bin" wordlist_dir
+    if [[ "$DNX_PREFIX" == /usr/local ]]; then wordlist_dir=/usr/share/wordlists/dark-nexus
+    else wordlist_dir="$DNX_PREFIX/share/wordlists/dark-nexus"; fi
+    [[ -s "$DNX_SOURCE/best-dns-wordlist.txt" ]] || { dnx_die 'DNS wordlist is missing or empty'; return 1; }
+    dnx_run 'Check newly built executable' 15 "$DNX_SOURCE/build/dark_nexus" --version || return
+    install -d -m 755 -- "$bin_dir" "$wordlist_dir"
+    DNX_PENDING_BINARY=$(mktemp "$bin_dir/.dark-nexus.XXXXXX")
+    DNX_PENDING_WORDLIST=$(mktemp "$wordlist_dir/.wordlist.XXXXXX")
+    install -m 755 -- "$DNX_SOURCE/build/dark_nexus" "$DNX_PENDING_BINARY"
+    install -m 644 -- "$DNX_SOURCE/best-dns-wordlist.txt" "$DNX_PENDING_WORDLIST"
+    if (( EUID == 0 )) && command -v setcap >/dev/null 2>&1; then
+        if ! setcap cap_net_raw=eip "$DNX_PENDING_BINARY"; then
+            dnx_warn 'CAP_NET_RAW could not be granted; TCP connect mode still works.'
         fi
-        "$PM" install -y \
-            gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config ca-certificates \
-            openssl-devel liburing-devel \
-            whois bind-utils traceroute iputils git libcap libcap-devel curl \
-            python3 python3-pip
-    '
-elif [[ "$OS" == "opensuse" || "$OS" == "opensuse-leap" || "$OS" == "opensuse-tumbleweed" || \
-        "$OS" == "sles" || "$OS_LIKE" == *"suse"* ]]; then
-    run_step "${STEP_LABELS[0]}" bash -c '
-        zypper --non-interactive refresh
-        zypper --non-interactive install --no-recommends \
-            gcc gcc-c++ make cmake ninja pkg-config ca-certificates \
-            libopenssl-devel liburing-devel \
-            whois bind-utils traceroute iputils git libcap-progs libcap-devel curl \
-            python3 python3-pip
-    '
-else
-    ui_show_cursor
-    ui_msg "${RED}[!] Unsupported OS: ${WHITE}${DISTRO_LABEL}${RESET}"
-    ui_msg "${WHITE}    Supported families: Debian/Ubuntu/Kali, Arch/BlackArch/Manjaro, Fedora/RHEL/Rocky/Alma, openSUSE.${RESET}"
-    ui_msg "${DIM}    Log: ${LOG}${RESET}"
-    exit 1
-fi
-
-run_step "${STEP_LABELS[1]}" bash -c '
-    set +e
-    PY_ROOT=/opt/dark-nexus-osint
-    rm -rf "$PY_ROOT"
-    mkdir -p "$PY_ROOT"
-    python3 -m venv "$PY_ROOT"
-    if [ $? -ne 0 ]; then
-        echo "[warn] python venv unavailable, skipping OSINT helper tools"
-        exit 0
+    else
+        dnx_warn 'Raw socket capabilities were not configured; TCP connect mode still works.'
     fi
-    "$PY_ROOT/bin/python" -m pip install --upgrade pip wheel
-    for entry in "sherlock:sherlock-project" "maigret:maigret" "holehe:holehe" "theHarvester:theHarvester"; do
-        tool="${entry%%:*}"
-        package="${entry#*:}"
-        "$PY_ROOT/bin/python" -m pip install "$package"
-        if [ $? -ne 0 ]; then
-            echo "[warn] failed to install $tool package $package"
+    mv -f -- "$DNX_PENDING_WORDLIST" "$wordlist_dir/best-dns-wordlist.txt"
+    DNX_PENDING_WORDLIST=''
+    # Last operation: an existing executable stays intact if downloading/building fails.
+    mv -f -- "$DNX_PENDING_BINARY" "$bin_dir/dark-nexus"
+    DNX_PENDING_BINARY=''
+    dnx_message "Installed: $bin_dir/dark-nexus"
+    dnx_message "Wordlist: $wordlist_dir/best-dns-wordlist.txt"
+}
+
+dnx_link_helper() {
+    local executable=$1 destination="$DNX_PREFIX/bin/$2" existing
+    if [[ -e "$destination" || -L "$destination" ]]; then
+        existing=$(readlink "$destination" 2>/dev/null || true)
+        if [[ "$existing" != "$DNX_HELPERS/bin/"* ]]; then
+            dnx_warn "Keeping existing $destination"
+            return 0
         fi
-        if [ -x "$PY_ROOT/bin/$tool" ]; then
-            ln -sf "$PY_ROOT/bin/$tool" "/usr/local/bin/$tool"
-        else
-            echo "[warn] $tool executable not found in $PY_ROOT/bin"
+    fi
+    ln -sfn -- "$executable" "$destination"
+}
+
+dnx_helpers() {
+    local entry binary package python
+    if (( DNX_SKIP_HELPERS )); then dnx_message 'Optional OSINT helpers skipped.'; return 0; fi
+    if (( ! DNX_SKIP_DEPS )); then
+        case "$DNX_FAMILY" in
+            debian) dnx_packages 'Optional Python dependencies' python3 python3-pip python3-venv || { dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'; return 0; } ;;
+            arch) dnx_packages 'Optional Python dependencies' python python-pip || { dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'; return 0; } ;;
+            fedora|suse) dnx_packages 'Optional Python dependencies' python3 python3-pip || { dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'; return 0; } ;;
+        esac
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then dnx_warn 'Optional Python helpers skipped: python3 is not installed.'; return 0; fi
+    if [[ "$DNX_PREFIX" == /usr/local ]]; then DNX_HELPERS=/opt/dark-nexus-osint
+    else DNX_HELPERS="$DNX_PREFIX/share/dark-nexus/osint-venv"; fi
+    if [[ ! -x "$DNX_HELPERS/bin/python" ]]; then
+        if ! dnx_run 'Create optional OSINT environment' 60 python3 -m venv "$DNX_HELPERS"; then
+            dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'
+            return 0
         fi
-        if [ -x "/usr/local/bin/$tool" ]; then
-            echo "[info] verified $tool"
-        else
-            echo "[warn] $tool is not executable after install"
+    fi
+    python="$DNX_HELPERS/bin/python"
+    for entry in sherlock:sherlock-project maigret:maigret holehe:holehe theHarvester:theHarvester; do
+        binary=${entry%%:*}; package=${entry#*:}
+        if [[ ! -x "$DNX_HELPERS/bin/$binary" ]]; then
+            if ! dnx_run "Optional $binary (up to 5 minutes)" 300 "$python" -m pip install --disable-pip-version-check --no-input --retries 1 --timeout 30 "$package"; then
+                dnx_warn "Optional $binary skipped; continuing."
+                continue
+            fi
         fi
+        if [[ -x "$DNX_HELPERS/bin/$binary" ]]; then dnx_link_helper "$DNX_HELPERS/bin/$binary" "$binary" || dnx_warn "Could not link optional $binary"; fi
     done
-
-    if command -v go >/dev/null 2>&1; then
-        GOBIN=/usr/local/bin go install github.com/sundowndev/phoneinfoga/v2@latest
-        if [ $? -ne 0 ]; then
-            echo "[warn] optional phoneinfoga go install failed"
-        elif [ -x /usr/local/bin/phoneinfoga ]; then
-            echo "[info] verified phoneinfoga"
-        else
-            echo "[warn] optional phoneinfoga binary was not created"
-        fi
-    else
-        echo "[warn] go not found, skipping optional phoneinfoga"
+    if command -v go >/dev/null 2>&1 && ! command -v phoneinfoga >/dev/null 2>&1 && [[ ! -e "$DNX_PREFIX/bin/phoneinfoga" && ! -L "$DNX_PREFIX/bin/phoneinfoga" ]]; then
+        dnx_run 'Optional PhoneInfoga (up to 5 minutes)' 300 env GOBIN="$DNX_PREFIX/bin" go install github.com/sundowndev/phoneinfoga/v2@latest || dnx_warn 'Optional PhoneInfoga skipped.'
     fi
-    exit 0
-'
+    return 0
+}
 
-run_step "${STEP_LABELS[2]}" bash -c '
-    set -e
-    rm -rf "$BUILD_DIR"
-    if [ -f "$SOURCE_DIR/CMakeLists.txt" ] && [ -d "$SOURCE_DIR/src" ] && [ -d "$SOURCE_DIR/include" ]; then
-        mkdir -p "$BUILD_DIR"
-        cp -a "$SOURCE_DIR"/. "$BUILD_DIR"/
-        rm -rf "$BUILD_DIR/build" "$BUILD_DIR/.git"
-        echo "[info] using local source: $SOURCE_DIR"
-    else
-        if [ -z "${REPO_URL:-}" ]; then
-            echo "[error] REPO_URL is empty"
-            exit 1
-        fi
-        git clone --quiet --depth 1 "$REPO_URL" "$BUILD_DIR"
-        echo "[info] using remote source: $REPO_URL"
+dnx_main() {
+    local script_path=${BASH_SOURCE[0]:-} family_id='' family_like='' jobs argument
+    DNX_PREFIX=/usr/local
+    DNX_LOCAL_SOURCE=''
+    DNX_SKIP_DEPS=0
+    DNX_SKIP_HELPERS=0
+    DNX_WORK=''
+    DNX_LOG=''
+    DNX_PENDING_BINARY=''
+    DNX_PENDING_WORDLIST=''
+    DNX_ACTIVE_PID=''
+    while (( $# )); do
+        argument=$1
+        case "$argument" in
+            -h|--help) dnx_help; return 0 ;;
+            --skip-deps) DNX_SKIP_DEPS=1 ;;
+            --skip-helpers) DNX_SKIP_HELPERS=1 ;;
+            --prefix|--source)
+                (( $# >= 2 )) && [[ -n "$2" && "$2" != --* ]] || { dnx_die "$argument needs a value" 2; return 2; }
+                if [[ "$argument" == --prefix ]]; then DNX_PREFIX=$2; else DNX_LOCAL_SOURCE=$2; fi
+                shift ;;
+            *) dnx_die "Unknown option: $argument" 2; return 2 ;;
+        esac
+        shift
+    done
+    [[ "$DNX_PREFIX" == /* && "$DNX_PREFIX" != / ]] || { dnx_die '--prefix must be an absolute directory other than /' 2; return 2; }
+    DNX_PREFIX=$(realpath -m -- "$DNX_PREFIX")
+    [[ "$DNX_PREFIX" != / ]] || { dnx_die 'Cannot use / as the install prefix' 2; return 2; }
+    if (( EUID != 0 )) && { (( ! DNX_SKIP_DEPS )) || [[ "$DNX_PREFIX" == /usr/local ]]; }; then
+        dnx_die 'Run with sudo, or use --skip-deps --prefix /absolute/user/directory for a local installation.'
+        return 1
     fi
-'
-
-run_step "${STEP_LABELS[3]}" bash -c '
-    set -e
-    cd "$BUILD_DIR"
-    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-'
-
-run_build_step "${STEP_LABELS[4]}"
-
-run_step "${STEP_LABELS[5]}" bash -c '
-    set -e
-    cd "$BUILD_DIR"
-    rm -f /usr/local/bin/dark-nexus
-    cp build/dark_nexus /usr/local/bin/dark-nexus
-    chmod 755 /usr/local/bin/dark-nexus
-    if command -v setcap >/dev/null 2>&1; then
-        if setcap cap_net_raw=eip /usr/local/bin/dark-nexus; then
-            echo "[info] setcap cap_net_raw=eip applied"
-        else
-            echo "[warn] setcap failed; raw-socket modules may require sudo"
-        fi
-    else
-        echo "[warn] setcap not found; raw-socket modules may require sudo"
+    command -v timeout >/dev/null 2>&1 || { dnx_die 'GNU coreutils (timeout) is required'; return 1; }
+    jobs=$(dnx_jobs) || return
+    if [[ -z "$DNX_LOCAL_SOURCE" && -f "$script_path" ]]; then
+        local script_dir
+        script_dir=$(cd -- "$(dirname -- "$script_path")" && pwd)
+        if [[ -f "$script_dir/CMakeLists.txt" && -d "$script_dir/src" && -d "$script_dir/include" ]]; then DNX_LOCAL_SOURCE=$script_dir; fi
     fi
-    mkdir -p /usr/share/wordlists/dark-nexus
-    if [ -f "best-dns-wordlist.txt" ]; then
-        cp best-dns-wordlist.txt /usr/share/wordlists/dark-nexus/
-    else
-        curl -fsSL "https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/best-dns-wordlist.txt" \
-            -o /usr/share/wordlists/dark-nexus/best-dns-wordlist.txt
+    if [[ -n "$DNX_LOCAL_SOURCE" ]]; then DNX_LOCAL_SOURCE=$(realpath -- "$DNX_LOCAL_SOURCE"); fi
+    if (( ! DNX_SKIP_DEPS )); then
+        # Distribution metadata is supplied by the operating system.
+        if [[ ! -r /etc/os-release ]]; then dnx_die 'Cannot read /etc/os-release'; return 1; fi
+        family_id=$(. /etc/os-release; printf '%s' "$ID")
+        family_like=$(. /etc/os-release; printf '%s' "${ID_LIKE:-}")
+        DNX_FAMILY=$(dnx_family "$family_id" "$family_like") || return
     fi
-    chmod 644 /usr/share/wordlists/dark-nexus/best-dns-wordlist.txt
-'
+    umask 077
+    DNX_LOG=$(mktemp /tmp/dark-nexus-install.XXXXXX.log)
+    DNX_WORK=$(mktemp -d /tmp/dark-nexus-build.XXXXXX)
+    trap dnx_cleanup EXIT
+    trap 'dnx_interrupt 130' INT
+    trap 'dnx_interrupt 143' TERM
+    # Package managers and helpers cannot consume the script pipe or prompt on stdin.
+    exec </dev/null
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=http.lowSpeedLimit GIT_CONFIG_VALUE_0=1024 GIT_CONFIG_KEY_1=http.lowSpeedTime GIT_CONFIG_VALUE_1=60
+    dnx_message "Dark Nexus installer | workers: $jobs"
+    dnx_message "Log: $DNX_LOG"
+    if (( ! DNX_SKIP_DEPS )); then dnx_dependencies; else dnx_message 'Using existing system dependencies.'; fi
+    dnx_prepare_source
+    dnx_run 'Configure build and dependencies (up to 15 minutes)' 900 cmake -S "$DNX_SOURCE" -B "$DNX_SOURCE/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_TLS_VERIFY=ON
+    dnx_run 'Compile (up to 60 minutes)' 3600 cmake --build "$DNX_SOURCE/build" --parallel "$jobs"
+    dnx_install_binary
+    dnx_helpers
+    printf '\nInstallation complete. Run: %s/bin/dark-nexus --help\n' "$DNX_PREFIX"
+    dnx_message "Log: $DNX_LOG"
+}
 
-set_display_pct 100
-update_ui "Installation complete" "all steps finished" 0
-log_mark "FINISHED OK"
-ui_show_cursor
-
-if [ "$SIMPLE_UI" -eq 0 ]; then
-    ui_goto 13; ui_clear_line
-    ui_put "${RED}${BOLD}  [+] Installation Complete!${RESET}\n"
-    ui_goto 14; ui_clear_line
-    ui_put "${WHITE}  Run from anywhere (no sudo):${RESET}\n"
-    ui_goto 15; ui_clear_line
-    ui_put "${RED}  dark-nexus --help${RESET}\n\n"
-else
-    ui_msg "${RED}${BOLD}[+] Installation Complete!${RESET}"
-    ui_msg "${WHITE}Run: ${RED}dark-nexus --help${RESET}"
+if [[ "${BASH_SOURCE[0]:-}" == "$0" || -z "${BASH_SOURCE[0]:-}" ]]; then
+    dnx_main "$@"
 fi
