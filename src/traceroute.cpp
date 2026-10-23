@@ -8,6 +8,34 @@ public:
     explicit TracerouteEngine(const TraceConfig& cfg, ThreadPool& pool, CancellationToken& cancel_token)
     : cfg_(cfg), pool_(pool), cancel_token_(cancel_token) {}
 
+    static void configure_mtu(int socket, bool enabled) {
+#ifdef IP_MTU_DISCOVER
+        int mode = enabled ? IP_PMTUDISC_DO : IP_PMTUDISC_DONT;
+        setsockopt(socket, IPPROTO_IP, IP_MTU_DISCOVER, &mode, sizeof(mode));
+#else
+        (void)socket;
+        (void)enabled;
+#endif
+    }
+
+    // ICMP errors quote an IP header and at least eight transport bytes. Check
+    // every length before dereferencing and correlate the original destination.
+    static const char* quoted_transport(const char* packet, ssize_t length,
+                                        int outer_header_length, int protocol,
+                                        const std::string& target_ip) {
+        const int offset = outer_header_length + sizeof(struct icmphdr);
+        if (length < offset + static_cast<int>(sizeof(struct iphdr))) return nullptr;
+        const auto* original = reinterpret_cast<const struct iphdr*>(packet + offset);
+        if (original->version != 4 || original->ihl < 5 || original->protocol != protocol)
+            return nullptr;
+        const int original_length = original->ihl * 4;
+        if (length < offset + original_length + 8) return nullptr;
+        struct in_addr destination{};
+        if (inet_pton(AF_INET, target_ip.c_str(), &destination) != 1 ||
+            original->daddr != destination.s_addr) return nullptr;
+        return packet + offset + original_length;
+    }
+
     static uint16_t checksum(const void* data, int len) {
         auto p = reinterpret_cast<const uint16_t*>(data);
         uint32_t sum = 0;
@@ -130,6 +158,7 @@ public:
         if (sock_recv < 0) { close(sock_send); return pr; }
 
         setsockopt(sock_send, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+        configure_mtu(sock_send, cfg_.detect_mtu);
 
         struct sockaddr_in dest{};
         dest.sin_family = AF_INET;
@@ -159,12 +188,13 @@ public:
 
         auto deadline = t_start + std::chrono::milliseconds(cfg_.timeout_ms);
 
-        for (int attempts = 0; attempts < 3; attempts++) {
+        while (std::chrono::high_resolution_clock::now() < deadline) {
             if (cancel_token_.cancelled) break;
 
             auto now = std::chrono::high_resolution_clock::now();
             auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-            if (remaining_ms < 1) remaining_ms = 1;
+            if (remaining_ms < 1) break;
+            remaining_ms = std::min<decltype(remaining_ms)>(remaining_ms, 100);
 
             struct timeval tv;
             tv.tv_sec  = remaining_ms / 1000;
@@ -196,9 +226,9 @@ public:
 
             if (icmp_reply->type == ICMP_TIME_EXCEEDED && icmp_reply->code == ICMP_EXC_TTL) {
                 // Extract original IP + ICMP header
-                int orig_ip_hdr_len = ((struct iphdr*)(buf + ip_hdr_len + 8))->ihl * 4;
-                if (n >= ip_hdr_len + 8 + orig_ip_hdr_len + 8) {
-                    struct icmphdr* orig_icmp = (struct icmphdr*)(buf + ip_hdr_len + 8 + orig_ip_hdr_len);
+                const char* quoted = quoted_transport(buf, n, ip_hdr_len, IPPROTO_ICMP, target_ip);
+                if (quoted) {
+                    const auto* orig_icmp = reinterpret_cast<const struct icmphdr*>(quoted);
                     if (ntohs(orig_icmp->un.echo.id) == probe_id && ntohs(orig_icmp->un.echo.sequence) == seq) {
                         pr.addr = addr_str; pr.rtt_ms = rtt;
                         pr.icmp_type = icmp_reply->type; pr.icmp_code = icmp_reply->code;
@@ -207,16 +237,16 @@ public:
                     }
                 }
             } else if (icmp_reply->type == ICMP_ECHOREPLY) {
-                if (ntohs(icmp_reply->un.echo.id) == probe_id && ntohs(icmp_reply->un.echo.sequence) == seq) {
+                if (std::string(addr_str) == target_ip && ntohs(icmp_reply->un.echo.id) == probe_id && ntohs(icmp_reply->un.echo.sequence) == seq) {
                     pr.addr = addr_str; pr.rtt_ms = rtt;
                     pr.reached_target = true;
                     pr.icmp_type = icmp_reply->type; pr.reply_ttl = ip_hdr->ttl;
                     break;
                 }
             } else if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_FRAG_NEEDED) {
-                int orig_ip_hdr_len = ((struct iphdr*)(buf + ip_hdr_len + 8))->ihl * 4;
-                if (n >= ip_hdr_len + 8 + orig_ip_hdr_len + 8) {
-                    struct icmphdr* orig_icmp = (struct icmphdr*)(buf + ip_hdr_len + 8 + orig_ip_hdr_len);
+                const char* quoted = quoted_transport(buf, n, ip_hdr_len, IPPROTO_ICMP, target_ip);
+                if (quoted) {
+                    const auto* orig_icmp = reinterpret_cast<const struct icmphdr*>(quoted);
                     if (ntohs(orig_icmp->un.echo.id) == probe_id && ntohs(orig_icmp->un.echo.sequence) == seq) {
                         pr.addr = addr_str; pr.rtt_ms = rtt;
                         pr.icmp_type = icmp_reply->type; pr.icmp_code = icmp_reply->code;
@@ -228,7 +258,6 @@ public:
         }
 
         close(sock_send); close(sock_recv);
-        if (cfg_.resolve_dns && !pr.addr.empty()) pr.hostname = reverse_dns(pr.addr);
         return pr;
     }
 
@@ -245,8 +274,9 @@ public:
         if (sock_recv < 0) { close(sock_send); return pr; }
 
         setsockopt(sock_send, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+        configure_mtu(sock_send, cfg_.detect_mtu);
 
-        uint16_t dst_port = cfg_.dst_port + ttl + _probe_id;
+        uint16_t dst_port = static_cast<uint16_t>(1 + (cfg_.dst_port - 1 + ttl + _probe_id) % 65535);
 
         struct sockaddr_in dest{};
         dest.sin_family = AF_INET;
@@ -263,18 +293,25 @@ public:
                               (struct sockaddr*)&dest, sizeof(dest));
         if (sent <= 0) { close(sock_send); close(sock_recv); return pr; }
 
+        struct sockaddr_in local{};
+        socklen_t local_size = sizeof(local);
+        if (getsockname(sock_send, reinterpret_cast<struct sockaddr*>(&local), &local_size) != 0) {
+            close(sock_send); close(sock_recv); return pr;
+        }
+
         char buf[1500]; // MTU size to avoid truncation
         struct sockaddr_in from{};
         socklen_t fromlen = sizeof(from);
 
         auto deadline = t_start + std::chrono::milliseconds(cfg_.timeout_ms);
 
-        for (int attempts = 0; attempts < 3; attempts++) {
+        while (std::chrono::high_resolution_clock::now() < deadline) {
             if (cancel_token_.cancelled) break;
 
             auto now = std::chrono::high_resolution_clock::now();
             auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-            if (remaining_ms < 1) remaining_ms = 1;
+            if (remaining_ms < 1) break;
+            remaining_ms = std::min<decltype(remaining_ms)>(remaining_ms, 100);
 
             struct timeval tv;
             tv.tv_sec  = remaining_ms / 1000;
@@ -305,15 +342,16 @@ public:
             inet_ntop(AF_INET, &from.sin_addr, addr_str, sizeof(addr_str));
 
             // Extract original IP + UDP header
-            int orig_ip_hdr_len = ((struct iphdr*)(buf + ip_hdr_len + 8))->ihl * 4;
-            if (n >= ip_hdr_len + 8 + orig_ip_hdr_len + 8) {
-                struct udphdr* orig_udp = (struct udphdr*)(buf + ip_hdr_len + 8 + orig_ip_hdr_len);
-                if (ntohs(orig_udp->dest) == dst_port) {
+            if (icmp_reply->type != ICMP_TIME_EXCEEDED && icmp_reply->type != ICMP_DEST_UNREACH) continue;
+            const char* quoted = quoted_transport(buf, n, ip_hdr_len, IPPROTO_UDP, target_ip);
+            if (quoted) {
+                const auto* orig_udp = reinterpret_cast<const struct udphdr*>(quoted);
+                if (ntohs(orig_udp->dest) == dst_port && orig_udp->source == local.sin_port) {
                     pr.addr = addr_str; pr.rtt_ms = rtt;
                     pr.icmp_type = icmp_reply->type; pr.icmp_code = icmp_reply->code;
                     pr.reply_ttl = ip_hdr->ttl;
 
-                    if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_PORT_UNREACH)
+                    if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_PORT_UNREACH && pr.addr == target_ip)
                         pr.reached_target = true;
                     if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_FRAG_NEEDED)
                         pr.mtu_suggestion = ntohs(icmp_reply->un.frag.mtu);
@@ -323,11 +361,10 @@ public:
         }
 
         close(sock_send); close(sock_recv);
-        if (cfg_.resolve_dns && !pr.addr.empty()) pr.hostname = reverse_dns(pr.addr);
         return pr;
     }
 
-    ProbeResult probe_tcp_syn(int ttl, int _probe_id, const std::string& target_ip) {
+    ProbeResult probe_tcp_syn(int ttl, int /* probe_index */, const std::string& target_ip) {
         ProbeResult pr;
         pr.ttl = ttl;
 
@@ -347,61 +384,14 @@ public:
         int sock_recv = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
         if (sock_recv < 0) { close(sock_send); return pr; }
 
-        int on = 1;
-        setsockopt(sock_send, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on));
-
         struct sockaddr_in dest{};
         dest.sin_family = AF_INET;
-        dest.sin_port   = htons(cfg_.dst_port);
+        dest.sin_port = htons(cfg_.dst_port);
         inet_pton(AF_INET, target_ip.c_str(), &dest.sin_addr);
-
-        uint16_t src_port = cfg_.src_port + ttl + _probe_id;
-
-        char packet[40];
-        memset(packet, 0, sizeof(packet));
-
-        struct iphdr* iph = (struct iphdr*)packet;
-        struct tcphdr* tcph = (struct tcphdr*)(packet + sizeof(struct iphdr));
-
-        iph->ihl = 5;
-        iph->version = 4;
-        iph->tos = 0;
-        iph->tot_len = sizeof(struct iphdr) + sizeof(struct tcphdr);
-        iph->id = htons(probe_id);
-        iph->frag_off = 0;
-        iph->ttl = ttl;
-        iph->protocol = IPPROTO_TCP;
-        iph->check = 0;
-        iph->saddr = 0; // Kernel will fill this
-        iph->daddr = dest.sin_addr.s_addr;
-
-        tcph->source = htons(src_port);
-        tcph->dest = htons(cfg_.dst_port);
-        tcph->seq = htonl(probe_id * 1000 + ttl);
-        tcph->ack_seq = 0;
-        tcph->doff = 5;
-        tcph->fin=0; tcph->syn=1; tcph->rst=0; tcph->psh=0; tcph->ack=0; tcph->urg=0;
-        tcph->window = htons(5840);
-        tcph->check = 0;
-        tcph->urg_ptr = 0;
-
-        // Pseudo header for TCP checksum (simplified, assumes kernel fills some IP data if IP_HDRINCL allows)
-        // Without knowing our own IP reliably, IP_HDRINCL on TCP requires manual checksumming.
-        // We will fallback if raw TCP injection fails.
-        // For accurate RAW TCP we need to populate IP source address, which is complex in this context.
-        // Standard traceroute tools actually use SOCK_RAW with IPPROTO_TCP but *don't* set IP_HDRINCL, letting the kernel build the IP header. Let's do that!
-
-        close(sock_send);
-
-        // Re-open without IP_HDRINCL
-        sock_send = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
-        if (sock_send < 0) {
-            close(sock_recv);
-            use_tcp_fallback_ = true;
-            return probe_tcp_fallback(ttl, probe_id, target_ip);
-        }
-
+        const uint16_t src_port = static_cast<uint16_t>(1 +
+            (cfg_.src_port - 1 + probe_id) % 65535);
         setsockopt(sock_send, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+        configure_mtu(sock_send, cfg_.detect_mtu);
 
         struct tcphdr tcph_only{};
         tcph_only.source = htons(src_port);
@@ -461,12 +451,12 @@ public:
             pfds[1].fd = sock_send;
             pfds[1].events = POLLIN | POLLERR;
 
-            int res = poll(pfds, 2, remaining_ms);
+            int res = poll(pfds, 2, std::min(remaining_ms, 100));
             if (res < 0) {
                 if (errno == EINTR) continue;
                 break;
             } else if (res == 0) {
-                break; // Timeout
+                continue; // Re-check cancellation and the probe deadline.
             }
 
             if (pfds[0].revents & POLLIN) {
@@ -485,10 +475,10 @@ public:
                         inet_ntop(AF_INET, &from.sin_addr, addr_str, sizeof(addr_str));
 
                         // Extract original IP + TCP header
-                        int orig_ip_hdr_len = ((struct iphdr*)(buf + ip_hdr_len + 8))->ihl * 4;
-                        if (n >= ip_hdr_len + 8 + orig_ip_hdr_len + 8) {
-                            struct tcphdr* orig_tcp = (struct tcphdr*)(buf + ip_hdr_len + 8 + orig_ip_hdr_len);
-                            if (ntohs(orig_tcp->source) == src_port || ntohs(orig_tcp->dest) == cfg_.dst_port) {
+                        const char* quoted = quoted_transport(buf, n, ip_hdr_len, IPPROTO_TCP, target_ip);
+                        if (quoted && (icmp_reply->type == ICMP_TIME_EXCEEDED || icmp_reply->type == ICMP_DEST_UNREACH)) {
+                            const auto* orig_tcp = reinterpret_cast<const struct tcphdr*>(quoted);
+                            if (ntohs(orig_tcp->source) == src_port && ntohs(orig_tcp->dest) == cfg_.dst_port) {
                                 pr.addr = addr_str; pr.rtt_ms = rtt;
                                 pr.icmp_type = icmp_reply->type; pr.icmp_code = icmp_reply->code;
                                 pr.reply_ttl = ip_hdr->ttl;
@@ -513,7 +503,8 @@ public:
                         int ip_hdr_len = ip_hdr->ihl * 4;
                         if (n >= ip_hdr_len + (int)sizeof(struct tcphdr)) {
                         struct tcphdr* tcph = (struct tcphdr*)(buf + ip_hdr_len);
-                        if (ntohs(tcph->dest) == src_port) {
+                        if (ntohs(tcph->dest) == src_port && ntohs(tcph->source) == cfg_.dst_port &&
+                            from.sin_addr.s_addr == dest.sin_addr.s_addr && (tcph->rst || (tcph->syn && tcph->ack))) {
                             auto t_end = std::chrono::high_resolution_clock::now();
                             double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
@@ -533,16 +524,7 @@ public:
 
         close(sock_send); close(sock_recv);
 
-        if (!response_received) {
-            if (++tcp_timeouts_ >= 3) {
-                use_tcp_fallback_ = true;
-            }
-        } else {
-            tcp_timeouts_ = 0;
-            if (pr.addr == target_ip) pr.reached_target = true;
-        }
-
-        if (cfg_.resolve_dns && !pr.addr.empty()) pr.hostname = reverse_dns(pr.addr);
+        if (response_received && pr.addr == target_ip) pr.reached_target = true;
         return pr;
     }
 
@@ -556,6 +538,7 @@ public:
         if (sock_recv < 0) { close(sock_send); return pr; }
 
         setsockopt(sock_send, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+        configure_mtu(sock_send, cfg_.detect_mtu);
 
         struct sockaddr_in dest{};
         dest.sin_family = AF_INET;
@@ -568,6 +551,10 @@ public:
 
         auto t_start = std::chrono::high_resolution_clock::now();
         connect(sock_send, (struct sockaddr*)&dest, sizeof(dest));
+
+        struct sockaddr_in local{};
+        socklen_t local_size = sizeof(local);
+        getsockname(sock_send, reinterpret_cast<struct sockaddr*>(&local), &local_size);
 
         char buf[1500];
         struct sockaddr_in from{};
@@ -586,12 +573,12 @@ public:
             pfds[1].fd = sock_send;
             pfds[1].events = POLLOUT;
 
-            int res = poll(pfds, 2, remaining_ms);
+            int res = poll(pfds, 2, std::min(remaining_ms, 100));
             if (res < 0) {
                 if (errno == EINTR) continue;
                 break;
             } else if (res == 0) {
-                break; // Timeout
+                continue; // Re-check cancellation and the probe deadline.
             }
 
             if (pfds[0].revents & POLLIN) {
@@ -609,12 +596,16 @@ public:
                         char addr_str[INET_ADDRSTRLEN];
                         inet_ntop(AF_INET, &from.sin_addr, addr_str, sizeof(addr_str));
 
-                        // Accept ICMP related to our destination IP
+                        const char* quoted = quoted_transport(buf, n, ip_hdr_len, IPPROTO_TCP, target_ip);
+                        if (!quoted || (icmp_reply->type != ICMP_TIME_EXCEEDED && icmp_reply->type != ICMP_DEST_UNREACH)) continue;
+                        const auto* original = reinterpret_cast<const struct tcphdr*>(quoted);
+                        if (original->source != local.sin_port || ntohs(original->dest) != cfg_.dst_port) continue;
                         pr.addr = addr_str; pr.rtt_ms = rtt;
                         pr.icmp_type = icmp_reply->type; pr.icmp_code = icmp_reply->code;
                         pr.reply_ttl = ip_hdr->ttl;
 
-                        if (pr.addr == target_ip) pr.reached_target = true;
+                        if (icmp_reply->type == ICMP_DEST_UNREACH && icmp_reply->code == ICMP_FRAG_NEEDED)
+                            pr.mtu_suggestion = ntohs(icmp_reply->un.frag.mtu);
                         break;
                         }
                     }
@@ -625,25 +616,27 @@ public:
                 int err = 0;
                 socklen_t len = sizeof(err);
                 if (getsockopt(sock_send, SOL_SOCKET, SO_ERROR, &err, &len) == 0) {
-                    if (err == 0 || err == EISCONN) {
+                    if (err == 0 || err == EISCONN || err == ECONNREFUSED) {
                         auto t_end = std::chrono::high_resolution_clock::now();
                         double rtt = std::chrono::duration<double, std::milli>(t_end - t_start).count();
                         pr.addr = target_ip; pr.rtt_ms = rtt; pr.reached_target = true;
                         break;
                     }
+                    // A failed connection must not become a successful probe
+                    // on a later poll after SO_ERROR has been consumed.
+                    if (err != EINPROGRESS && err != EALREADY) break;
                 }
             }
         }
 
         close(sock_send); close(sock_recv);
-        if (cfg_.resolve_dns && !pr.addr.empty()) pr.hostname = reverse_dns(pr.addr);
         return pr;
     }
     std::vector<HopStats> run(const std::string& target_ip) {
         std::vector<HopStats> hops;
         bool reached = false;
 
-        for (int base = 1; base <= cfg_.max_hops && !reached; base += cfg_.parallel_hops) {
+        for (int base = 1; base <= cfg_.max_hops && !reached && !cancel_token_.cancelled; base += cfg_.parallel_hops) {
             int end   = std::min(base + cfg_.parallel_hops - 1, cfg_.max_hops);
             int count = end - base + 1;
 
@@ -672,12 +665,10 @@ public:
                 }
             }
 
-            auto wait_timeout = std::chrono::milliseconds((int)(cfg_.timeout_ms * 1.5));
-            for (auto& f : futs) {
-                if (f.wait_for(wait_timeout) == std::future_status::timeout) {
-                    LOG_WARN("traceroute", "A probe future timed out and was abandoned.");
-                }
-            }
+            // Never inspect shared results or destroy the engine while probes
+            // still hold references to them. Each probe owns a bounded timeout.
+            for (auto& future : futs) future.wait();
+            for (auto& future : futs) future.get();
 
             for (int h = 0; h < count; h++) {
                 HopStats hs;
@@ -702,6 +693,18 @@ public:
             }
         }
 
+        if (cfg_.resolve_dns && !cancel_token_.cancelled) {
+            std::unordered_map<std::string, std::string> cache;
+            for (auto& hop : hops) {
+                if (cancel_token_.cancelled) break;
+                if (hop.addr.empty()) continue;
+                auto existing = cache.find(hop.addr);
+                if (existing == cache.end())
+                    existing = cache.emplace(hop.addr, reverse_dns(hop.addr)).first;
+                hop.hostname = existing->second;
+            }
+        }
+
         if (cfg_.as_lookup && !cancel_token_.cancelled) {
             std::unordered_map<std::string, std::string> asn_cache;
             std::vector<std::string> unique_ips;
@@ -715,7 +718,7 @@ public:
             if (!unique_ips.empty()) {
                 std::vector<std::future<std::pair<std::string, std::string>>> asn_futs;
                 for (const auto& ip : unique_ips) {
-                    asn_futs.push_back(pool_.submit([this, ip]() {
+                    asn_futs.push_back(pool_.submit([ip]() {
                         return std::make_pair(ip, as_lookup(ip));
                     }));
                 }
@@ -742,271 +745,115 @@ private:
     const TraceConfig& cfg_;
     ThreadPool& pool_;
     CancellationToken& cancel_token_;
-    std::atomic<int> tcp_timeouts_{0};
     std::atomic<bool> use_tcp_fallback_{false};
 };
 
-static std::string rtt_bar(double rtt_ms) {
-    if (rtt_ms < 0) return std::string(BLOOD_RED) + "         " + RESET;
-    int buckets[] = {5, 15, 30, 60, 100, 200, 500, 1000, 2000};
-    int idx = 0;
-    for (int b : buckets) { if (rtt_ms < b) break; idx++; }
-    std::string bar = std::string(WHITE);
-    bar += std::string(std::min(idx + 1, 9), '|');
-    bar += std::string(std::max(0, 9 - idx - 1), ' ');
-    bar += RESET;
-    return bar;
-}
-
-static const char* proto_label(TraceConfig::Protocol p) {
-    switch (p) {
-        case TraceConfig::ICMP:    return "ICMP Echo";
-        case TraceConfig::UDP:     return "UDP";
-        case TraceConfig::TCP_SYN: return "TCP SYN :80";
+static const char* proto_label(TraceConfig::Protocol protocol) {
+    switch (protocol) {
+        case TraceConfig::ICMP: return "ICMP";
+        case TraceConfig::UDP: return "UDP";
+        case TraceConfig::TCP_SYN: return "TCP SYN";
     }
-    return "?";
+    return "unknown";
 }
-
-static CancellationToken* g_cancel_token_ptr = nullptr;
 
 void traceroute(const std::string& target) {
-    print_header("ADVANCED TRACEROUTE // " + target);
+    traceroute(target, TraceConfig{});
+}
 
-    CancellationToken token;
-    g_cancel_token_ptr = &token;
-
-    struct sigaction sa, old_sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = [](int) {
-        if (g_cancel_token_ptr) {
-            g_cancel_token_ptr->cancelled = true;
-            const char* msg = "\n\033[38;2;139;0;0m  [!] Received SIGINT, cancelling traceroute...\033[0m\n";
-            auto dummy = ::write(STDOUT_FILENO, msg, strlen(msg));
-            (void)dummy;
-        }
-    };
-    sigaction(SIGINT, &sa, &old_sa);
-
-    TraceConfig cfg;
+void traceroute(const std::string& target, const TraceConfig& config) {
+    TraceConfig cfg = config;
     cfg.target = target;
+    if (cfg.max_hops < 1 || cfg.max_hops > 255 ||
+        cfg.queries_per_hop < 1 || cfg.queries_per_hop > 10 ||
+        cfg.parallel_hops < 1 || cfg.parallel_hops > 32 ||
+        cfg.timeout_ms < 1 || cfg.timeout_ms > 600000 ||
+        cfg.dns_timeout_ms < 1 || cfg.dst_port < 1 || cfg.dst_port > 65535 ||
+        cfg.src_port < 1 || cfg.src_port > 65535 ||
+        (cfg.protocol != TraceConfig::ICMP && cfg.protocol != TraceConfig::UDP &&
+         cfg.protocol != TraceConfig::TCP_SYN))
+        throw std::invalid_argument("invalid traceroute configuration");
 
-    std::cout << BLOOD_RED << "\n  protocol: [0] ALL  [1] ICMP  [2] UDP  [3] TCP-SYN  (default=1): " << RESET;
-    std::string pc;
-    std::getline(std::cin >> std::ws, pc);
-    bool all_modes = (pc == "0");
-    if      (pc == "2") cfg.protocol = TraceConfig::UDP;
-    else if (pc == "3") cfg.protocol = TraceConfig::TCP_SYN;
-    else                cfg.protocol = TraceConfig::ICMP;
+    // Every protocol needs raw ICMP reception for intermediate hops. Fail once
+    // with a useful error instead of returning an entire table of false timeouts.
+    FdGuard permission_check(socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+    if (permission_check.get() < 0)
+        throw std::runtime_error("traceroute requires raw socket access (CAP_NET_RAW): " +
+                                 std::string(std::strerror(errno)));
 
-    std::cout << BLOOD_RED << "  probes/hop (default=5): " << RESET;
-    std::string qc;
-    std::getline(std::cin >> std::ws, qc);
-    if (!qc.empty()) {
-        try { cfg.queries_per_hop = std::max(1, std::min(10, std::stoi(qc))); } catch (...) {}
-    }
+    const std::string target_ip = resolve(target);
+    if (target_ip.empty())
+        throw std::runtime_error("could not resolve traceroute target: " + target);
 
-    std::string target_ip;
-    {
-        target_ip = resolve(target);
-        if (target_ip.empty()) {
-            if (inet_addr(target.c_str()) != INADDR_NONE)
-                target_ip = target;
-            else {
-                std::cout << BLOOD_RED << "  could not resolve " << WHITE << target << "\n" << RESET;
-                return;
-            }
-        }
-    }
+    print_header("Traceroute · " + target);
+    std::cout << "  " << target_ip << "  " << proto_label(cfg.protocol);
+    if (cfg.protocol != TraceConfig::ICMP) std::cout << "  port " << cfg.dst_port;
+    std::cout << "  " << cfg.max_hops << " hops  " << cfg.queries_per_hop
+              << " probes/hop  " << cfg.timeout_ms << " ms timeout\n\n";
+    std::cout << "  " << std::left << std::setw(5) << "HOP"
+              << std::setw(18) << "ADDRESS";
+    if (cfg.resolve_dns) std::cout << std::setw(27) << "HOSTNAME";
+    std::cout << std::setw(10) << "AVG ms" << std::setw(10) << "MIN ms"
+              << std::setw(10) << "MAX ms";
+    if (cfg.show_jitter) std::cout << std::setw(11) << "JITTER ms";
+    if (cfg.show_loss) std::cout << std::setw(8) << "LOSS";
+    if (cfg.as_lookup) std::cout << "AS";
+    std::cout << '\n';
 
-    auto run_pass = [&](TraceConfig::Protocol proto) -> std::vector<HopStats> {
-        TraceConfig pcfg = cfg;
-        pcfg.protocol = proto;
+    ThreadPool pool(std::min(cfg.parallel_hops, cfg.max_hops) * cfg.queries_per_hop);
+    TracerouteEngine engine(cfg, pool, g_cancel_token);
+    const auto hops = engine.run(target_ip);
+    bool reached = false;
+    int timeouts = 0;
 
-        std::cout << "\n" << BLOOD_RED << "  target:   " << WHITE << target_ip << "\n"
-        << BLOOD_RED << "  protocol: " << WHITE << BOLD << proto_label(proto) << "\n" << RESET
-        << BLOOD_RED << "  probes:   " << WHITE << pcfg.queries_per_hop << BLOOD_RED << "/hop\n"
-        << BLOOD_RED << "  max hops: " << WHITE << pcfg.max_hops << "\n"
-        << BLOOD_RED << "  parallel: " << WHITE << pcfg.parallel_hops << BLOOD_RED << " hops at once\n"
-        << RESET << "\n";
-
-        std::cout << BLOOD_RED << BOLD
-        << "  HOP  ADDRESS           HOSTNAME                  "
-        "AVG      MIN      MAX      JITTER   LOSS  AS INFO\n"
-        << "  " << std::string(110, '-') << "\n" << RESET;
-
-        ThreadPool pool(pcfg.parallel_hops * pcfg.queries_per_hop);
-        TracerouteEngine engine(pcfg, pool, token);
-        return engine.run(target_ip);
-    };
-
-    std::vector<std::pair<TraceConfig::Protocol, std::vector<HopStats>>> all_results;
-
-    if (all_modes) {
-        for (auto proto : {TraceConfig::ICMP, TraceConfig::UDP, TraceConfig::TCP_SYN}) {
-            print_section(std::string("PASS // ") + proto_label(proto));
-            all_results.push_back({proto, run_pass(proto)});
-        }
-    } else {
-        all_results.push_back({cfg.protocol, run_pass(cfg.protocol)});
-    }
-
-    auto hops = all_results[0].second;
-
-    for (auto& hs : hops) {
-        TraceHop th;
-        th.ttl = hs.ttl;
-        th.addr = hs.addr;
-        th.hostname = hs.hostname;
-        th.avg_rtt_ms = hs.avg_rtt;
-        th.loss_pct = hs.loss_pct;
-        th.asn = hs.asn_info;
-
+    for (const auto& hop : hops) {
+        TraceHop result;
+        result.ttl = hop.ttl;
+        result.addr = hop.addr;
+        result.hostname = hop.hostname;
+        result.avg_rtt_ms = hop.received ? hop.avg_rtt : -1.0;
+        result.loss_pct = hop.loss_pct;
+        result.asn = hop.asn_info;
         {
-            std::lock_guard<std::mutex> lk(g_result_mtx);
-            g_result.trace.push_back(th);
+            std::lock_guard<std::mutex> lock(g_result_mtx);
+            g_result.trace.push_back(result);
         }
-
-        std::cout << BLOOD_RED << "  " << WHITE << std::setw(3) << hs.ttl << "  ";
-
-        if (hs.received == 0) {
-            std::cout << WHITE << std::left << std::setw(18) << "*"
-            << BLOOD_RED << std::setw(27) << "request timeout"
-            << BLOOD_RED << std::string(36, ' ')
-            << WHITE   << "100%"
-            << RESET << "\n";
+        std::cout << "  " << std::left << std::setw(5) << hop.ttl;
+        if (!hop.received) {
+            ++timeouts;
+            std::cout << "*  request timeout\n";
             continue;
         }
-
-        std::string display_ip   = hs.addr;
-        std::string display_host = hs.hostname.empty() ? "" : hs.hostname;
-        if (display_host.size() > 26) display_host = display_host.substr(0, 23) + "...";
-
-        std::cout << WHITE
-        << std::left << std::setw(18) << display_ip
-        << WHITE     << std::setw(27) << sanitize(display_host);
-
-        auto fmt_ms = [](double ms) -> std::string {
-            if (ms < 0) return "*       ";
-            std::ostringstream ss;
-            ss << std::fixed << std::setprecision(1) << ms << "ms";
-            return ss.str();
+        std::cout << std::setw(18) << hop.addr;
+        if (cfg.resolve_dns) {
+            const std::string hostname = sanitize(hop.hostname);
+            std::cout << std::setw(27) << (hostname.size() > 26 ?
+                         hostname.substr(0, 23) + "..." : hostname);
+        }
+        auto ms = [](double value) {
+            std::ostringstream output;
+            output << std::fixed << std::setprecision(1) << value;
+            return output.str();
         };
-
-        std::cout << WHITE << std::setw(9) << fmt_ms(hs.avg_rtt)
-        << WHITE << std::setw(9) << fmt_ms(hs.min_rtt)
-        << WHITE << std::setw(9) << fmt_ms(hs.max_rtt);
-
-        if (cfg.show_jitter)
-            std::cout << WHITE << std::setw(9) << fmt_ms(hs.jitter);
-
-        if (cfg.show_loss) {
-            std::string loss_str = std::to_string((int)hs.loss_pct) + "%";
-            std::cout << WHITE << std::setw(6) << loss_str;
-        }
-
-        if (hs.mtu > 0)
-            std::cout << BLOOD_RED << "  MTU:" << WHITE << hs.mtu;
-
-        if (!hs.asn_info.empty())
-            std::cout << WHITE << "  " << hs.asn_info.substr(0, 28);
-
-        std::cout << "  " << rtt_bar(hs.avg_rtt);
-        std::cout << RESET << "\n";
-
-        if (hs.is_target)
-            std::cout << "\n" << BLOOD_RED << BOLD << "  [+] " << WHITE << "destination reached in " << hs.ttl << BLOOD_RED << " hops\n" << RESET;
+        std::cout << std::setw(10) << ms(hop.avg_rtt)
+                  << std::setw(10) << ms(hop.min_rtt)
+                  << std::setw(10) << ms(hop.max_rtt);
+        if (cfg.show_jitter) std::cout << std::setw(11) << ms(hop.jitter);
+        if (cfg.show_loss) std::cout << std::setw(8) << (std::to_string(static_cast<int>(hop.loss_pct)) + "%");
+        if (cfg.as_lookup) std::cout << sanitize(hop.asn_info);
+        if (cfg.detect_mtu && hop.mtu > 0) std::cout << "  MTU " << hop.mtu;
+        std::cout << '\n';
+        reached = reached || hop.is_target;
     }
 
-    print_section("TRACE SUMMARY");
-
-    if (!hops.empty()) {
-        double total_latency = 0;
-        int    total_loss    = 0;
-        int    total_hops    = hops.size();
-        int    timeout_hops  = 0;
-        double max_jitter    = 0;
-        std::string worst_hop;
-
-        for (auto& hs : hops) {
-            if (hs.received == 0) { timeout_hops++; continue; }
-            total_latency += hs.avg_rtt;
-            if (hs.loss_pct > 0) total_loss++;
-            if (hs.jitter > max_jitter) { max_jitter = hs.jitter; worst_hop = hs.addr; }
-        }
-
-        auto& last = hops.back();
-        std::cout << BLOOD_RED << "  [hops]          " << WHITE << total_hops << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [total RTT]     " << WHITE << std::fixed << std::setprecision(1)
-        << total_latency << "ms\n" << RESET;
-        std::cout << BLOOD_RED << "  [timeout hops]  " << WHITE << timeout_hops << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [hops w/ loss]  " << WHITE << total_loss << "\n" << RESET;
-        if (max_jitter > 0)
-            std::cout << BLOOD_RED << "  [worst jitter]  " << WHITE
-            << std::fixed << std::setprecision(1) << max_jitter << "ms  "
-            << BLOOD_RED << "@ " << WHITE << worst_hop << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [reached]       " << WHITE
-        << (last.is_target ? "yes" : "no (TTL exhausted)")
-        << "\n" << RESET;
-
-        std::cout << "\n";
-        double avg_rtt = (total_hops > 0) ? total_latency / total_hops : 0;
-        if      (avg_rtt < 20 && total_loss == 0 && timeout_hops == 0)
-            std::cout << BLOOD_RED << BOLD << "  [quality] " << WHITE << "EXCELLENT -- low latency, no loss\n" << RESET;
-        else if (avg_rtt < 80 && total_loss <= 1)
-            std::cout << BLOOD_RED << "  [quality] " << WHITE << "GOOD -- acceptable path\n" << RESET;
-        else if (avg_rtt < 200 || total_loss <= 2)
-            std::cout << BLOOD_RED << "  [quality] " << WHITE << "FAIR -- some congestion or loss detected\n" << RESET;
-        else
-            std::cout << BLOOD_RED << "  [quality] " << WHITE << "POOR -- high latency or significant loss\n" << RESET;
-    }
-
-    if (all_modes && all_results.size() > 1) {
-        print_section("PROTOCOL COMPARISON");
-        std::cout << "\n" << BLOOD_RED << BOLD
-        << "  " << std::left << std::setw(12) << "PROTOCOL"
-        << std::setw(8)  << "HOPS"
-        << std::setw(12) << "TOTAL RTT"
-        << std::setw(10) << "AVG/HOP"
-        << std::setw(10) << "TIMEOUTS"
-        << std::setw(8)  << "REACHED"
-        << "QUALITY\n"
-        << "  " << std::string(80, '-') << "\n" << RESET;
-
-        for (auto& [proto, ph] : all_results) {
-            double total_rtt = 0; int timeouts = 0; bool reached = false; int valid = 0;
-            for (auto& h : ph) {
-                if (h.received == 0) { timeouts++; continue; }
-                total_rtt += h.avg_rtt; valid++;
-                if (h.is_target) reached = true;
-            }
-            double avg_per_hop = valid > 0 ? total_rtt / valid : 0;
-            std::string quality;
-            if      (avg_per_hop < 20 && timeouts == 0) { quality = "EXCELLENT"; }
-            else if (avg_per_hop < 80 && timeouts <= 1)  { quality = "GOOD"; }
-            else if (avg_per_hop < 200 || timeouts <= 2) { quality = "FAIR"; }
-            else                                          { quality = "POOR"; }
-
-            std::cout << "  " << BLOOD_RED << std::left << std::setw(12) << proto_label(proto)
-            << WHITE << std::setw(8)  << ph.size()
-            << WHITE << std::setw(12) << (std::to_string((int)total_rtt) + "ms")
-            << WHITE << std::setw(10) << (std::to_string((int)avg_per_hop) + "ms")
-            << WHITE << std::setw(10) << timeouts
-            << WHITE << std::setw(8) << (reached ? "yes" : "no")
-            << WHITE << quality << RESET << "\n";
-        }
-    }
-
+    std::cout << "\n  " << hops.size() << " hops  " << timeouts << " timeouts  "
+              << (g_cancel_token.cancelled ? "interrupted" :
+                  reached ? "destination reached" : "destination not reached") << '\n';
     LOG_INFO("traceroute", "done target=" + target + " hops=" + std::to_string(hops.size()));
-
-    sigaction(SIGINT, &old_sa, nullptr);
-    g_cancel_token_ptr = nullptr;
 }
 
 void full_recon(const std::string& ip) {
-    std::cout << "\n" << BLOOD_RED << BOLD
-    << "  +" << std::string(56,'=') << "+\n"
-    << "  |  " << WHITE << "FULL RECON // " << std::left << std::setw(40) << ip << BLOOD_RED << "|\n"
-    << "  +" << std::string(56,'=') << "+\n" << RESET;
+    print_header("Recon · " + ip);
     ip_intel(ip);
     dns_lookup(ip);
     os_detect(ip);

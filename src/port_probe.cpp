@@ -109,39 +109,29 @@ bool port_tcp_connect_to(const std::string& ip, int port, int timeout_ms, int fd
     return port_tcp_connect_wait(fd, timeout_ms);
 }
 
-AdaptiveConfig calibrate_port_target(const std::string& ip) {
-    AdaptiveConfig cfg;
+AdaptiveConfig calibrate_port_target(const std::string& ip,
+                                    const std::vector<int>& allowed_ports,
+                                    int timeout_ms) {
+    AdaptiveConfig cfg{1500, 3000, 2, 50, -1};
     std::vector<int> rtts;
-    int cal_ports[] = {80,443,22,8080,53};
 
-    for (int p : cal_ports) {
+    // Calibration is part of the requested scan: never touch unselected ports.
+    const auto count = std::min<std::size_t>(5, allowed_ports.size());
+    for (std::size_t index = 0; index < count; ++index) {
+        if (g_cancel_token.cancelled) break;
+        const int p = allowed_ports[index];
+        if (p < 1 || p > 65535) continue;
         auto t0 = std::chrono::high_resolution_clock::now();
         FdGuard fd(port_tcp_socket(ip));
         if (fd.get() < 0) continue;
-        sockaddr_storage ss{};
-        socklen_t slen = 0;
-        if (!port_scan_fill_endpoint(ip, p, ss, slen)) continue;
-        fcntl(fd.get(), F_SETFL, O_NONBLOCK);
-        connect(fd.get(), reinterpret_cast<sockaddr*>(&ss), slen);
-        struct pollfd pfd{};
-        pfd.fd = fd.get();
-        pfd.events = POLLOUT;
-        int r = poll(&pfd, 1, 800);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        if (r > 0) {
+        if (port_tcp_connect_to(ip, p, std::max(1, timeout_ms), fd.get())) {
+            auto t1 = std::chrono::high_resolution_clock::now();
             int ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-            rtts.push_back(ms);
+            rtts.push_back(std::max(1, ms));
         }
     }
 
-    if (rtts.empty()) {
-        cfg.connect_ms = 1500;
-        cfg.banner_ms = 3000;
-        cfg.retry_count = 2;
-        cfg.pool_size = 50;
-        cfg.median_rtt = -1;
-        return cfg;
-    }
+    if (rtts.empty()) return cfg;
 
     std::sort(rtts.begin(), rtts.end());
     cfg.median_rtt = rtts[rtts.size() / 2];

@@ -25,16 +25,18 @@ public:
                         if (stop_ && tasks_.empty()) return;
                         task = std::move(tasks_.front());
                         tasks_.pop();
+                        active_++;
                     }
-                    active_++;
                     struct ActiveGuard {
-                        std::atomic<int>& active;
+                        int& active;
+                        std::mutex& mutex;
                         std::condition_variable& cv;
                         ~ActiveGuard() {
+                            std::lock_guard<std::mutex> lock(mutex);
                             active--;
                             cv.notify_all();
                         }
-                    } guard{active_, done_cv_};
+                    } guard{active_, mtx_, done_cv_};
                     task();
                 }
             });
@@ -71,5 +73,5 @@ private:
     mutable std::mutex mtx_;
     std::condition_variable cv_, done_cv_;
     std::atomic<bool> stop_;
-    std::atomic<int>  active_{0};
+    int active_{0};
 };

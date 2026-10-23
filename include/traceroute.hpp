@@ -23,6 +23,9 @@ struct TraceConfig {
     enum Protocol { ICMP, UDP, TCP_SYN } protocol = ICMP;
 };
 
+void traceroute(const std::string& target);
+void traceroute(const std::string& target, const TraceConfig& config);
+
 struct ProbeResult {
     int ttl              = 0;
     int probe_id         = 0;
@@ -51,9 +54,9 @@ struct HopStats {
 
     void compute() {
         if (rtts.empty()) { loss_pct = 100.0; return; }
-        std::sort(rtts.begin(), rtts.end());
-        min_rtt = rtts.front();
-        max_rtt = rtts.back();
+        const auto limits = std::minmax_element(rtts.begin(), rtts.end());
+        min_rtt = *limits.first;
+        max_rtt = *limits.second;
         avg_rtt = std::accumulate(rtts.begin(), rtts.end(), 0.0) / rtts.size();
         double var = 0;
         for (auto r : rtts) var += (r - avg_rtt) * (r - avg_rtt);
@@ -64,6 +67,6 @@ struct HopStats {
                 j += std::abs(rtts[i] - rtts[i-1]);
             jitter = j / (rtts.size() - 1);
         }
-        loss_pct = 100.0 * (1.0 - (double)received / sent);
+        loss_pct = sent > 0 ? 100.0 * (1.0 - (double)received / sent) : 0.0;
     }
 };

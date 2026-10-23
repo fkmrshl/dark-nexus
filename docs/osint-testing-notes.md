@@ -15,7 +15,7 @@ The OSINT module is a local terminal workflow. Do not run live scans in automate
 For a manual username check:
 
 ```sh
-./build/dark_nexus osint example_user
+./build/dark_nexus --osint example_user
 ```
 
 Use a handle you own or a harmless test value. Do not scan third-party targets without authorization.
@@ -33,7 +33,7 @@ Expected terminal areas may include:
 For a manual email check:
 
 ```sh
-./build/dark_nexus osint user@example.com
+./build/dark_nexus --osint user@example.com
 ```
 
 Use an address you control or a clearly fake test address. Email tests may generate username candidates from the local part. Those candidates should remain hypotheses unless later evidence supports them.
@@ -43,7 +43,7 @@ Use an address you control or a clearly fake test address. Email tests may gener
 For a manual phone check:
 
 ```sh
-./build/dark_nexus osint +15551234567
+./build/dark_nexus --osint +15551234567
 ```
 
 Use a test number or a number you are authorized to check. Phone-format variants should appear as hypotheses, not confirmed accounts.
@@ -53,8 +53,8 @@ Use a test number or a number you are authorized to check. Phone-format variants
 External helper tools are optional. During a quick local check:
 
 - Do not install missing tools unless the test is specifically about installation.
-- In non-interactive runs, missing tools should be skipped.
-- If prompted interactively, answering no should skip only the missing tools.
+- Missing tools should be skipped in every run, including from an interactive terminal.
+- The CLI must not prompt for input or install helpers at runtime.
 - Installed sibling tools should still run when another helper is missing.
 
 For controlled tests, prefer fake helper scripts on a temporary `PATH` rather than real network-facing tools.

@@ -318,7 +318,8 @@ void subdomain_scan(const std::string& domain,
                     int max_threads,
                     bool run_permutations,
                     bool deep_passive,
-                    bool do_enrich)
+                    bool do_enrich,
+                    bool use_deep_passive_sources)
 {
     std::string scan_domain = domain;
     std::transform(scan_domain.begin(), scan_domain.end(), scan_domain.begin(),
@@ -358,20 +359,14 @@ void subdomain_scan(const std::string& domain,
     std::ifstream wordlist_stream;
     bool stream_file_wordlist = false;
     if (!wordlist_path.empty()) {
-        if (!InputGuard::is_safe_path(wordlist_path)) {
-            std::cout << BLOOD_RED << "  [!] unsafe wordlist path, using builtin list: "
-                      << WHITE << wordlist_path << "\n" << RESET;
-        } else {
             wordlist_stream.open(wordlist_path);
             if (wordlist_stream.is_open()) {
                 stream_file_wordlist = true;
                 std::cout << BLOOD_RED << "  [*] streaming: " << WHITE
                           << wordlist_path << "\n" << RESET;
             } else {
-                std::cout << BLOOD_RED << "  [!] cannot open wordlist, using builtin list: "
-                          << WHITE << wordlist_path << "\n" << RESET;
+                throw std::runtime_error("cannot read wordlist: " + wordlist_path);
             }
-        }
     }
     if (!stream_file_wordlist) {
         std::cout << BLOOD_RED << "  [*] builtin (" << WHITE << builtin_wordlist().size()
@@ -467,7 +462,7 @@ void subdomain_scan(const std::string& domain,
     passive_crtsh(scan_domain, passive_subs);
     std::cout << BLOOD_RED << "  [+] crt.sh +" << WHITE << passive_subs.size() << "\n" << RESET;
 
-    if (deep_passive) {
+    if (deep_passive && use_deep_passive_sources) {
 
         struct PassiveTask { std::string name; std::function<void(std::set<std::string>&)> fn; };
         std::vector<PassiveTask> tasks = {

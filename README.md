@@ -8,17 +8,38 @@ Explicit flags, module-specific help, and JSON, CSV, or text reports. Run one mo
 
 ## Install
 
-Clone the repository and run the installer:
+Clone the repository, then choose a local build or a system-wide installation:
 
 ```sh
 git clone https://github.com/fkmrshl/dark-nexus.git
 cd dark-nexus
-sudo bash install.sh
 ```
 
-The installer installs system dependencies and optional OSINT helpers, builds the project, installs `dark-nexus` to `/usr/local/bin`, and attempts to grant `CAP_NET_RAW` for raw socket probes. It supports Debian/Ubuntu, Arch, Fedora/RHEL, and openSUSE families.
+### Build locally
 
-To build without installing, use a C++17 compiler, CMake 3.15+, Git, pkg-config, and the OpenSSL, liburing, and libcap development packages:
+Use a C++17 compiler, CMake 3.15+, Git, pkg-config, and the OpenSSL, liburing, and libcap development packages. Internet access is needed to fetch dependencies during configuration.
+
+<details>
+<summary>Build dependencies on Debian/Ubuntu and Arch</summary>
+
+Debian/Ubuntu:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential cmake git pkg-config ca-certificates libssl-dev liburing-dev libcap-dev libcurl4-openssl-dev nlohmann-json3-dev
+```
+
+Arch:
+
+```sh
+sudo pacman -S --needed base-devel cmake git pkgconf ca-certificates openssl liburing libcap curl nlohmann-json
+```
+
+These commands install development dependencies. Runtime helpers for individual modules are listed in the [CLI reference](docs/cli.md#dependencies-and-results).
+
+</details>
+
+From the cloned repository:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
@@ -26,7 +47,26 @@ cmake --build build --parallel 2
 ./build/dark_nexus --help
 ```
 
-CMake fetches c-ares and prefers installed curl and nlohmann/json packages, fetching them if needed. The installer provisions the DNS wordlist; source builds can use `--wordlist` or the built-in list. Some modules also use `dig`, `host`, `whois`, `ping`, `curl`, or the `openssl` executable at runtime. See the [dependency notes](docs/cli.md#dependencies-and-results).
+CMake fetches c-ares and prefers installed curl and nlohmann/json packages, fetching them if needed. A local build runs as `./build/dark_nexus`; use that path in place of `dark-nexus` in the examples below. No system installation is needed to view help or use TCP connect scans. Source builds can use `--wordlist` or the built-in list.
+
+### Install system-wide
+
+```sh
+sudo bash install.sh
+dark-nexus --help
+```
+
+The installer installs system dependencies and optional OSINT helpers, builds the project, installs `dark-nexus` to `/usr/local/bin`, and attempts to grant `CAP_NET_RAW` for raw socket probes. It supports Debian/Ubuntu, Arch, Fedora/RHEL, and openSUSE families and provisions the DNS wordlist. Some modules also use `dig`, `host`, `whois`, `ping`, `curl`, or the `openssl` executable at runtime. See the [dependency notes](docs/cli.md#dependencies-and-results).
+
+### Check the build
+
+```sh
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
+```
+
+The automated tests use local fixtures and fake network helpers; they do not scan external targets. The optional real-socket loopback test is documented in the [CLI reference](docs/cli.md#offline-checks).
 
 ## Usage
 

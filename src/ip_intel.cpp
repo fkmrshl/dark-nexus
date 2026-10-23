@@ -114,6 +114,10 @@ void ip_intel(const std::string& ip) {
         {
             std::lock_guard<std::mutex> lk(g_result_mtx);
             g_result.open_ports.push_back({p,s});
+            PortEntry entry;
+            entry.port = p; entry.protocol = "tcp"; entry.service = s;
+            entry.banner = b; entry.risk = r_lbl;
+            g_result.ports.push_back(std::move(entry));
         }
     }
     if(!any) std::cout<<BLOOD_RED<<"  top ports closed\n"<<RESET;

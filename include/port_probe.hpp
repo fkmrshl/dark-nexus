@@ -15,7 +15,10 @@ struct AdaptiveConfig {
 bool port_scan_is_v6(const std::string& ip);
 FdGuard port_tcp_socket(const std::string& ip);
 bool port_tcp_connect_to(const std::string& ip, int port, int timeout_ms, int fd);
-AdaptiveConfig calibrate_port_target(const std::string& ip);
+// Probe at most the first five allowed ports; an empty list performs no I/O.
+AdaptiveConfig calibrate_port_target(const std::string& ip,
+                                    const std::vector<int>& allowed_ports,
+                                    int timeout_ms = 800);
 std::pair<int,bool> port_probe_connect(const std::string& ip, int port, int timeout_ms, int retries);
 std::pair<int,bool> port_probe_syn(const std::string& ip, int port, int timeout_ms, int retries);
 std::pair<int,bool> port_probe_udp_smart(const std::string& ip, int port, int timeout_ms);

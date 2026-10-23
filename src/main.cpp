@@ -1,639 +1,203 @@
-#include "../include/dark_nexus.hpp"
-#include "../include/security.hpp"
-#include "../include/output.hpp"
+#include "cli.hpp"
+#include "dark_nexus.hpp"
+#include "osint.hpp"
+#include "output.hpp"
+#include "security.hpp"
+#include "terminal.hpp"
+#include <csignal>
 #include <filesystem>
-#include <cctype>
+#include <limits>
 
-static void print_banner() {
-    if (write(STDOUT_FILENO, "\033[2J\033[H", 7)) {}
+namespace {
+volatile std::sig_atomic_t interrupted = 0;
 
-    std::cout << "\n" << BLOOD_RED << BOLD;
-    std::cout << "\n" << BLOOD_RED << BOLD;
-    std::cout << "  ██████╗  █████╗ ██████╗ ██╗  ██╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗\n";
-    std::cout << "  ██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝\n";
-    std::cout << "  ██║  ██║███████║██████╔╝█████╔╝     ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗\n";
-    std::cout << "  ██║  ██║██╔══██║██╔══██╗██╔═██╗     ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║\n";
-    std::cout << "  ██████╔╝██║  ██║██║  ██║██║  ██╗    ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║\n";
-    std::cout << "  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝\n";
-    std::cout << RESET;
-
-    std::cout << WHITE << BOLD << "  NETWORK INTELLIGENCE TOOL\n" << RESET;
-    std::cout << BLOOD_RED << "  " << std::string(80, '=') << "\n" << RESET;
-    std::cout << "\n";
+void interrupt_scan(int) {
+    if (interrupted) _exit(130);
+    interrupted = 1;
+    g_cancel_token.cancelled.store(true, std::memory_order_relaxed);
 }
 
-static void print_menu() {
-    auto sep = []() {
-        std::cout << BLOOD_RED
-                  << "  +------+--------------------+----------------------------------+\n"
-                  << RESET;
-    };
+class NullBuffer : public std::streambuf {
+    int_type overflow(int_type c) override { return traits_type::not_eof(c); }
+};
 
-    std::cout << "\n";
-    sep();
-
-    std::cout << BLOOD_RED << "  | "
-              << BLOOD_RED << BOLD << std::left << std::setw(4) << "NUM"
-              << BLOOD_RED << " | " << std::setw(18) << "MODULE"
-              << BLOOD_RED << " | " << std::setw(32) << "EXAMPLE"
-              << BLOOD_RED << "   |\n" << RESET;
-
-    sep();
-
-    auto row = [&](const std::string& n, const std::string& m, const std::string& e) {
-        std::cout << BLOOD_RED << "  | "
-                  << BLOOD_RED << BOLD << std::left << std::setw(4) << n
-                  << BLOOD_RED << " | "
-                  << BLOOD_RED << std::setw(18) << m
-                  << BLOOD_RED << " | "
-                  << WHITE << std::setw(34) << e
-                  << BLOOD_RED << " |\n" << RESET;
-    };
-
-    row(" [1]", "SUBDOMAIN SCAN", "google.com");
-    row(" [2]", "OSINT",          "user / user@mail.com / +7900...");
-    row(" [3]", "PORT SCAN",      "192.168.1.1   0=top1000 (add U for UDP)");
-    row(" [4]", "TRACEROUTE",     "8.8.8.8");
-    row(" [5]", "OS DETECTION",   "192.168.1.1");
-    row(" [6]", "NETWORK SCAN",   "192.168.1.1");
-    row(" [7]", "DNS LOOKUP",     "google.com");
-    row(" [8]", "WHOIS LOOKUP",   "google.com / 8.8.8.8");
-    row(" [9]", "IP FULL INTEL",  "8.8.8.8");
-    row("[10]", "FULL IP RECON",  "8.8.8.8");
-    row("[11]", "SITE --> IP",    "https://google.com");
-    row("[12]", "EXPORT JSON",    "save last scan");
-    row(" [0]", "EXIT",           "");
-
-    sep();
-
-    std::cout << "\n" << BLOOD_RED << BOLD << "  DARK NEXUS~# " << RESET;
-}
-
-static void print_help() {
-    print_banner();
-    std::cout << WHITE << BOLD << "  USAGE:\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus [options] <target>\n\n" << RESET;
-    std::cout << WHITE << BOLD << "  OPTIONS:\n" << RESET;
-    std::cout << BLOOD_RED << "    --portscan <target> [ports] " << WHITE << "Port scan (0=top1000, 0-1=top100, 80-443, 22,80, 0U=UDP)\n" << RESET;
-    std::cout << BLOOD_RED << "    -T<0-5>                     " << WHITE << "Timing (0=Paranoid .. 5=Insane, default 3)\n" << RESET;
-    std::cout << BLOOD_RED << "    --ipv4                      " << WHITE << "Resolve/scan IPv4 only (A records)\n" << RESET;
-    std::cout << BLOOD_RED << "    --ipv6                      " << WHITE << "Resolve/scan IPv6 only (AAAA records)\n" << RESET;
-    std::cout << BLOOD_RED << "    --exclude <ports>           " << WHITE << "Comma-separated ports to skip\n" << RESET;
-    std::cout << BLOOD_RED << "    --netscan <subnet>      " << WHITE << "Run network scan (e.g. 192.168.1.1)\n" << RESET;
-    std::cout << BLOOD_RED << "    --os-detect <ip>        " << WHITE << "Run OS detection\n" << RESET;
-    std::cout << BLOOD_RED << "    --ip-intel <ip>         " << WHITE << "Run full IP intelligence\n" << RESET;
-    std::cout << BLOOD_RED << "    --dns <domain>          " << WHITE << "Run DNS lookup\n" << RESET;
-    std::cout << BLOOD_RED << "    --whois <target>        " << WHITE << "Run WHOIS lookup\n" << RESET;
-    std::cout << BLOOD_RED << "    --site <url>            " << WHITE << "Convert site URL to IP and run intel\n" << RESET;
-    std::cout << BLOOD_RED << "    --osint <target>        " << WHITE << "Run OSINT on username/email/phone\n" << RESET;
-    std::cout << BLOOD_RED << "    --traceroute <ip>       " << WHITE << "Run traceroute\n" << RESET;
-    std::cout << BLOOD_RED << "    --recon <ip>            " << WHITE << "Run full IP recon\n" << RESET;
-    std::cout << BLOOD_RED << "    --subdomain <domain>    " << WHITE << "Run subdomain scan\n" << RESET;
-    std::cout << BLOOD_RED << "    --mode <F|D>            " << WHITE << "Subdomain scan mode (Fast or Deep)\n" << RESET;
-    std::cout << BLOOD_RED << "    --output <file>         " << WHITE << "Export result to file (auto-detects format from ext)\n" << RESET;
-    std::cout << BLOOD_RED << "    --json <file>           " << WHITE << "Alias for --output\n" << RESET;
-    std::cout << BLOOD_RED << "    -h, --help              " << WHITE << "Show this help menu\n\n" << RESET;
-    std::cout << WHITE << BOLD << "  EXAMPLES:\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --subdomain google.com --mode F --output result.json\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0 -T4 --exclude 80,443\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --portscan scanme.nmap.org 22,80 --ipv4\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --portscan example.com 443 --ipv6\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --portscan 192.168.1.1 0U\n" << RESET;
-    std::cout << BLOOD_RED << "    dark-nexus --osint user@mail.com\n\n" << RESET;
-}
-
-static std::string sanitize_filename(std::string s) {
-    if (s.empty()) return "scan";
-    for (char& c : s) {
-        unsigned char uc = static_cast<unsigned char>(c);
-        if (std::iscntrl(uc) || c == '/' || c == '\\' || c == ':' || c == '*' ||
-            c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
-            c = '_';
-        }
+// Keep reports on stdout separate from the existing module status output.
+class ScanOutput {
+public:
+    explicit ScanOutput(const cli::Options& options) : previous_(std::cout.rdbuf()) {
+        if (options.quiet) std::cout.rdbuf(&sink_);
+        else if (options.output == "-") std::cout.rdbuf(std::cerr.rdbuf());
     }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '.' || s.back() == '_')) {
-        s.pop_back();
-    }
-    return s.empty() ? "scan" : s;
+    ~ScanOutput() { std::cout.flush(); std::cout.rdbuf(previous_); }
+private:
+    NullBuffer sink_;
+    std::streambuf* previous_;
+};
+
+ScanAddrFamily family_for(cli::Family family) {
+    if (family == cli::Family::IPv4) return ScanAddrFamily::IPv4;
+    if (family == cli::Family::IPv6) return ScanAddrFamily::IPv6;
+    return ScanAddrFamily::Auto;
 }
 
-static bool save_scan_json(const std::string& path) {
-    try {
-        std::filesystem::path p(path);
-        if (p.has_parent_path()) {
-            std::error_code ec;
-            std::filesystem::create_directories(p.parent_path(), ec);
-        }
+void require_helper(const std::string& helper) {
+    const char* path = std::getenv("PATH");
+    std::istringstream directories(path ? path : "");
+    std::string directory;
+    while (std::getline(directories, directory, ':')) {
+        const auto candidate = std::filesystem::path(directory.empty() ? "." : directory) / helper;
+        std::error_code error;
+        if (std::filesystem::is_regular_file(candidate, error) && access(candidate.c_str(), X_OK) == 0) return;
+    }
+    throw std::runtime_error("required helper not found on PATH: " + helper);
+}
 
-        OutputWriter::write(g_result, p.string());
-
-        std::error_code ec;
-        return std::filesystem::exists(p, ec) && std::filesystem::file_size(p, ec) > 0;
-    } catch (...) {
-        return false;
+void validate_target(const cli::Options& options) {
+    if (options.module == "osint") {
+        if (osint::detect_input_type(options.target) == osint::InputType::Unknown)
+            throw cli::Error("OSINT target must be a username, email address or phone number");
+    } else if (options.module == "site") {
+        if (!InputGuard::is_safe_url(options.target) && !valid_target(options.target))
+            throw cli::Error("site target must be a hostname or an http(s) URL");
+    } else if (!valid_target(options.target)) {
+        throw cli::Error("invalid hostname or IP address: " + options.target);
+    }
+    if (options.module == "subdomain" &&
+        (InputGuard::is_valid_ipv4(options.target) || InputGuard::is_valid_ipv6(options.target)))
+        throw cli::Error("subdomain scanning requires a domain name");
+    if (!options.wordlist.empty()) {
+        std::ifstream wordlist(options.wordlist);
+        if (!wordlist) throw cli::Error("cannot read wordlist: " + options.wordlist);
     }
 }
+
+void run_module(const cli::Options& options) {
+    const auto& module = options.module;
+    const auto& target = options.target;
+    g_result.scan_type = module == "portscan" ? "port_scan" : module;
+
+    // Domain modules keep the original domain: MX/TXT/WHOIS are not IP queries.
+    if (module == "dns") return dns_lookup(target);
+    if (module == "whois") return whois_lookup(target);
+    if (module == "osint") return osint_scan(target);
+    if (module == "site") return site_lookup(target);
+    if (module == "subdomain") {
+        std::string wordlist = options.wordlist;
+        if (wordlist.empty() && options.deep) wordlist = auto_find_wordlist();
+        return subdomain_scan(target, wordlist, options.threads ? options.threads : 200,
+                              options.deep && !options.no_permutations,
+                              options.deep, !options.no_enrich, !options.no_deep_passive);
+    }
+
+    const auto family = family_for(options.family);
+    const auto ip = resolve_for_scan(target, family);
+    if (ip.empty()) throw std::runtime_error("cannot resolve target in the requested address family: " + target);
+    g_result.resolved_ip = ip;
+    if (module != "portscan" && !InputGuard::is_valid_ipv4(ip))
+        throw std::runtime_error(module + " currently requires an IPv4 target");
+
+    if (module == "portscan") {
+        PortScanOverrides overrides;
+        overrides.threads = options.threads;
+        overrides.timeout_ms = options.timeout_ms;
+        overrides.banner_timeout_ms = options.banner_timeout_ms;
+        overrides.retries = options.retries;
+        overrides.connect = options.connect;
+        overrides.tls = !options.no_tls;
+        overrides.http = !options.no_http;
+        port_scan(ip, 0, options.top_ports == 100 ? 1 : 0, options.udp, options.timing,
+                  options.exclude_ports, family, options.ports, overrides);
+    } else if (module == "netscan") {
+        net_scan(ip.substr(0, ip.rfind('.')));
+    } else if (module == "os-detect") {
+        os_detect(ip);
+    } else if (module == "ip-intel") {
+        ip_intel(ip);
+    } else if (module == "recon") {
+        full_recon(ip);
+    } else if (module == "traceroute") {
+        TraceConfig config;
+        config.max_hops = options.max_hops;
+        config.queries_per_hop = options.probes;
+        config.timeout_ms = options.timeout_ms ? options.timeout_ms : 2000;
+        config.parallel_hops = options.parallel_hops;
+        config.dst_port = options.destination_port;
+        config.resolve_dns = !options.no_rdns;
+        config.as_lookup = !options.no_asn;
+        config.detect_mtu = !options.no_mtu;
+        config.protocol = options.protocol == "tcp" ? TraceConfig::TCP_SYN :
+                          options.protocol == "udp" ? TraceConfig::UDP : TraceConfig::ICMP;
+        traceroute(ip, config);
+    }
+}
+} // namespace
 
 int main(int argc, char** argv) {
-    Logger::get().init("dark_nexus.log", LogLevel::INFO);
-    if (!drop_privileges()) {
-        std::cerr << "  [!] failed to drop privileges\n";
-        return 1;
-    }
-
-    static std::atomic<int> sigint_count{0};
-    static auto sigint_time = std::chrono::steady_clock::now();
-
-    signal(SIGINT, [](int) {
-        auto now = std::chrono::steady_clock::now();
-        if (sigint_count++ == 0) {
-            sigint_time = now;
-            g_cancel_token.cancelled = true;
-            const char* msg = "\n\033[38;2;139;0;0m  [!] Scan interrupted - partial results may follow.\033[0m\n";
-            auto dummy = ::write(STDOUT_FILENO, msg, strlen(msg));
-            (void)dummy;
-        } else {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - sigint_time).count();
-            if (elapsed < 2) std::exit(1);
-        }
-    });
-
-    LOG_INFO("main", "dark nexus started");
-
-    if (argc > 1) {
-        std::vector<std::string> args;
-        for (int i = 1; i < argc; i++) args.push_back(argv[i]);
-
-        std::string mode, target, extra, output_path;
-        char sub_mode = 'F';
-        int timing_profile = 3;
-        std::set<int> exclude_ports;
-        ScanAddrFamily addr_family = ScanAddrFamily::Auto;
-
-        for (size_t i = 0; i < args.size(); i++) {
-            if (args[i] == "-h" || args[i] == "--help") {
-                print_help();
-                return 0;
-            } else if (args[i] == "--ipv4") {
-                addr_family = ScanAddrFamily::IPv4;
-            } else if (args[i] == "--ipv6") {
-                addr_family = ScanAddrFamily::IPv6;
-            } else if (args[i].size() == 3 && args[i][0] == '-' && args[i][1] == 'T') {
-                try {
-                    timing_profile = std::stoi(args[i].substr(2));
-                } catch (...) {}
-            } else if (args[i] == "--exclude" && i + 1 < args.size()) {
-                std::string excl_str = args[++i];
-                std::stringstream ss(excl_str);
-                std::string item;
-                while (std::getline(ss, item, ',')) {
-                    try {
-                        exclude_ports.insert(std::stoi(item));
-                    } catch (...) {}
-                }
-            } else if ((args[i] == "--json" || args[i] == "--output") && i + 1 < args.size()) {
-                output_path = args[++i];
-            } else if (args[i] == "--mode" && i + 1 < args.size()) {
-                sub_mode = toupper(args[++i][0]);
-                if (sub_mode != 'F' && sub_mode != 'D') sub_mode = 'F';
-            } else if (args[i].substr(0, 2) == "--") {
-                mode = args[i].substr(2);
-                if (i + 1 < args.size() && args[i + 1].substr(0, 2) != "--") {
-                    target = args[++i];
-                }
-                if (mode == "portscan" && i + 1 < args.size() && args[i + 1].substr(0, 2) != "--") {
-                    extra = args[++i];
-                }
-            }
+    try {
+        const cli::Options options = cli::parse({argv + 1, argv + argc});
+        const auto color = options.color == cli::Color::Always ? terminal::ColorMode::Always :
+                           options.color == cli::Color::Never ? terminal::ColorMode::Never :
+                           terminal::ColorMode::Auto;
+        terminal::configure(color);
+        if (options.help) { std::cout << cli::help(options.module); return 0; }
+        if (options.version) { std::cout << "dark-nexus 2.0.0\n"; return 0; }
+        if (options.list_modules) { std::cout << cli::modules(); return 0; }
+        validate_target(options);
+        if (!drop_privileges()) throw std::runtime_error("failed to drop privileges");
+        if (options.module == "dns") require_helper("dig");
+        if (options.module == "whois") require_helper("whois");
+        if (!options.no_log && !options.log_file.empty()) {
+            if (!Logger::get().init(options.log_file))
+                throw std::runtime_error("cannot open log file: " + options.log_file);
         }
 
-        if (mode.empty() || target.empty()) {
-            std::cerr << BLOOD_RED << "  [!] missing module or target\n" << RESET;
-            print_help();
-            return 1;
+        struct sigaction action{};
+        action.sa_handler = interrupt_scan;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGINT, &action, nullptr);
+        sigaction(SIGTERM, &action, nullptr);
+        signal(SIGPIPE, SIG_IGN);
+        g_cancel_token.cancelled = false;
+        g_result.target = options.target;
+        const auto start = std::chrono::steady_clock::now();
+        const auto start_text = now_str();
+        LOG_INFO("main", "started module=" + options.module + " target=" + options.target);
+        {
+            ScanOutput output(options);
+            run_module(options);
         }
-
-        print_banner();
-
-        g_result.target = target;
-        g_result.start_time = now_str();
-
-        if (mode == "osint") {
-            g_result.scan_type = "osint";
-            osint_scan(target);
-        } else if (mode == "site") {
-            g_result.scan_type = "site";
-            site_lookup(target);
-        } else if (mode == "subdomain") {
-            g_result.scan_type = "subdomain";
-            if (!valid_target(target)) {
-                std::cout << BLOOD_RED << "  invalid domain\n" << RESET;
-                return 1;
-            }
-
-            std::string wl = auto_find_wordlist();
-            if (sub_mode == 'F') {
-                subdomain_scan(target, "", 200, false, false, true);
-            } else {
-                if (wl.empty()) {
-                    std::cout << BLOOD_RED << "  [*] DEEP wordlist: " << WHITE << "builtin fallback\n" << RESET;
-                } else {
-                    std::cout << BLOOD_RED << "  [*] DEEP wordlist: " << WHITE << wl << "\n" << RESET;
-                }
-
-                subdomain_scan(target, wl, 200, true, true, true);
-            }
-        } else {
-            if (!valid_target(target)) {
-                std::cout << WHITE << "  invalid input\n" << RESET;
-                return 1;
-            }
-
-            ScanAddrFamily resolve_family = (mode == "portscan") ? addr_family : ScanAddrFamily::Auto;
-            std::string ip_res = resolve_for_scan(target, resolve_family);
-            if (ip_res.empty()) {
-                ip_res = target;
-            } else if (ip_res != target) {
-                std::cout << BLOOD_RED << "  resolved: " << target << " -> " << ip_res << "\n" << RESET;
-            }
-
-            g_result.resolved_ip = ip_res;
-
-            if (mode == "portscan") {
-                g_result.scan_type = "port_scan";
-
-                bool udp = false;
-                if (!extra.empty() && (extra.back() == 'U' || extra.back() == 'u')) {
-                    udp = true;
-                    extra.pop_back();
-                }
-
-                int s = 0;
-                int e = 0;
-                std::vector<int> selected_ports;
-
-                if (!extra.empty()) {
-                    if (extra.find(',') != std::string::npos) {
-                        std::stringstream ss(extra);
-                        std::string item;
-                        while (std::getline(ss, item, ',')) {
-                            try {
-                                int p = std::stoi(item);
-                                if (valid_port(p)) selected_ports.push_back(p);
-                            } catch (...) {}
-                        }
-                    } else if (auto dash = extra.find('-'); dash != std::string::npos) {
-                        try {
-                            s = std::stoi(extra.substr(0, dash));
-                            e = std::stoi(extra.substr(dash + 1));
-                        } catch (...) {}
-                    } else {
-                        try {
-                            s = std::stoi(extra);
-                            e = s;
-                        } catch (...) {}
-
-                        if (s == 0) e = 0;
-                    }
-                }
-
-                port_scan(ip_res, s, e, udp, timing_profile, exclude_ports, addr_family, selected_ports);
-            } else if (mode == "netscan") {
-                g_result.scan_type = "netscan";
-                net_scan(ip_res.substr(0, ip_res.rfind('.')));
-            } else if (mode == "os-detect") {
-                g_result.scan_type = "os_detect";
-                os_detect(ip_res);
-            } else if (mode == "ip-intel") {
-                g_result.scan_type = "ip_intel";
-                ip_intel(ip_res);
-            } else if (mode == "dns") {
-                g_result.scan_type = "dns";
-                dns_lookup(ip_res);
-            } else if (mode == "whois") {
-                g_result.scan_type = "whois";
-                whois_lookup(ip_res);
-            } else if (mode == "traceroute") {
-                g_result.scan_type = "traceroute";
-                traceroute(ip_res);
-            } else if (mode == "recon") {
-                g_result.scan_type = "recon";
-                full_recon(ip_res);
-            } else {
-                std::cout << BLOOD_RED << "  unknown module: " << mode << "\n" << RESET;
-                return 1;
-            }
-        }
-
+        // Command metadata describes the full run, including chained modules.
+        g_result.target = options.target;
+        g_result.start_time = start_text;
         g_result.end_time = now_str();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        g_result.duration_ms = static_cast<int>(std::min<long long>(elapsed, std::numeric_limits<int>::max()));
 
-        std::tm tm_start = {};
-        std::tm tm_end = {};
-        std::istringstream ss_start(g_result.start_time);
-        std::istringstream ss_end(g_result.end_time);
-
-        ss_start >> std::get_time(&tm_start, "%Y-%m-%d %H:%M:%S");
-        ss_end >> std::get_time(&tm_end, "%Y-%m-%d %H:%M:%S");
-
-        if (!ss_start.fail() && !ss_end.fail()) {
-            auto time_start = std::mktime(&tm_start);
-            auto time_end = std::mktime(&tm_end);
-            g_result.duration_ms = (int)std::difftime(time_end, time_start) * 1000;
-        }
-
-        if (!output_path.empty()) {
-            if (!save_scan_json(output_path)) {
-                std::cerr << BLOOD_RED << "  [!] failed to save output: " << WHITE << output_path << RESET << "\n";
+        if (!options.output.empty()) {
+            const std::string format = OutputWriter::format_for(options.output, options.format);
+            if (options.output == "-") {
+                std::ostream report(terminal::stdout_buffer());
+                if (!OutputWriter::write_stream(g_result, report, format))
+                    throw std::runtime_error("failed to write report to stdout");
+            } else {
+                const std::filesystem::path path(options.output);
+                if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
+                if (!OutputWriter::write(g_result, options.output, format))
+                    throw std::runtime_error("failed to write report: " + options.output);
+                if (!options.quiet) std::cerr << "Report saved: " << options.output << '\n';
             }
         }
-
+        if (interrupted) {
+            std::cerr << "dark-nexus: interrupted; results may be incomplete\n";
+            return 130;
+        }
         return 0;
+    } catch (const cli::Error& error) {
+        std::cerr << "dark-nexus: " << error.what() << "\nTry 'dark-nexus --help'.\n";
+        return 2;
+    } catch (const std::exception& error) {
+        std::cerr << "dark-nexus: " << error.what() << '\n';
+        return interrupted ? 130 : 1;
     }
-
-    print_banner();
-
-    while (true) {
-        print_menu();
-
-        std::string cs;
-        std::cin >> cs;
-
-        int choice = -1;
-        try {
-            choice = std::stoi(cs);
-        } catch (...) {}
-
-        if (choice == 0) break;
-
-        if (choice == 12) {
-            std::string fn = "dark_nexus_" + sanitize_filename(g_result.target) + ".json";
-
-            if (save_scan_json(fn)) {
-                std::cout << BLOOD_RED << "  [*] saved: " << WHITE << fn << RESET << "\n";
-            } else {
-                std::cout << BLOOD_RED << "  [!] save failed: " << WHITE << fn << RESET << "\n";
-            }
-
-            print_sep();
-            std::cout << "  press enter...";
-            std::cin.ignore();
-            std::cin.get();
-            print_banner();
-            continue;
-        }
-
-        g_result = ScanResult();
-        g_result.start_time = now_str();
-
-        if (choice == 2) {
-            g_result.scan_type = "osint";
-
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-            std::string u;
-            std::cout << WHITE << "\n  osint target: " << RESET;
-            std::getline(std::cin, u);
-
-            while (!u.empty() && (u.front() == ' ' || u.front() == '\t')) u.erase(u.begin());
-            while (!u.empty() && (u.back() == ' ' || u.back() == '\t')) u.pop_back();
-
-            if (u.empty()) {
-                std::cout << BLOOD_RED << "  empty input\n" << RESET;
-            } else {
-                g_result.target = u;
-                osint_scan(u);
-            }
-        } else if (choice == 11) {
-            g_result.scan_type = "site";
-
-            std::string s;
-            std::cout << BLOOD_RED << "\n  site: " << RESET;
-            std::cin >> s;
-
-            g_result.target = s;
-            site_lookup(s);
-        } else if (choice == 1) {
-            g_result.scan_type = "subdomain";
-
-            std::string d;
-            std::cout << WHITE << "\n  domain: " << RESET;
-            std::cin >> d;
-
-            if (!valid_target(d)) {
-                std::cout << BLOOD_RED << "  invalid domain\n" << RESET;
-            } else {
-                g_result.target = d;
-
-                std::string wl = auto_find_wordlist();
-
-                std::cout << "\n" << BLOOD_RED << "  +----------------------------------------------------------+----------+\n" << RESET;
-                std::cout << BLOOD_RED << "  | " << WHITE << BOLD << std::left << std::setw(56) << "SUBDOMAIN SCAN" << BLOOD_RED << " | " << std::setw(8) << "INFO" << BLOOD_RED << " |\n" << RESET;
-                std::cout << BLOOD_RED << "  +----------------------------------------------------------+----------+\n" << RESET;
-
-                if (wl.empty()) {
-                    std::cout << BLOOD_RED << "  | " << WHITE << std::left << std::setw(56) << "wordlist: not found, using builtin ~300 words" << BLOOD_RED << " |          |\n" << RESET;
-                } else {
-                    std::string wl_short = wl.size() > 54 ? "..." + wl.substr(wl.size() - 51) : wl;
-                    std::cout << BLOOD_RED << "  | " << WHITE << std::left << std::setw(56) << ("[*] wordlist: " + wl_short) << BLOOD_RED << " |          |\n" << RESET;
-                }
-
-                std::cout << BLOOD_RED << "  +----------------------------------------------------------+----------+\n" << RESET;
-
-                std::cout << "\n" << BLOOD_RED << "  +-----+----------------------------------------------------+----------+\n" << RESET;
-                std::cout << BLOOD_RED << "  | " << WHITE << BOLD << std::left << std::setw(3) << "MOD" << RESET << BLOOD_RED << " | " << WHITE << BOLD << std::left << std::setw(50) << "DESCRIPTION" << BLOOD_RED << " | " << std::setw(8) << "ETA" << BLOOD_RED << " |\n" << RESET;
-                std::cout << BLOOD_RED << "  +-----+----------------------------------------------------+----------+\n" << RESET;
-                std::cout << BLOOD_RED << "  | " << BLOOD_RED << BOLD << " F" << RESET << BLOOD_RED << "  | " << WHITE << std::left << std::setw(50) << "FAST  - builtin 300 words + passive + enrich" << BLOOD_RED << " | " << WHITE << "~2-3 min  " << BLOOD_RED << " |\n" << RESET;
-                std::cout << BLOOD_RED << "  | " << BLOOD_RED << BOLD << " D" << RESET << BLOOD_RED << "  | " << WHITE << std::left << std::setw(50) << "DEEP  - full wordlist + all sources + takeover scan" << BLOOD_RED << " | " << WHITE << "~30 min  " << BLOOD_RED << " |\n" << RESET;
-                std::cout << BLOOD_RED << "  +-----+----------------------------------------------------+----------+\n" << RESET;
-
-                std::cout << BLOOD_RED << "  select mode [F/D]: " << RESET;
-
-                std::string mode_in;
-                std::cin >> mode_in;
-
-                char mode = mode_in.empty() ? 'F' : (char)toupper(mode_in[0]);
-                if (mode != 'F' && mode != 'D') {
-                    mode = 'F';
-                    std::cout << WHITE << "  [!] defaulting to FAST\n" << RESET;
-                }
-
-                if (mode == 'F') {
-                    std::cout << WHITE << "  [*] FAST: crt.sh + builtin wordlist + lightweight HTTP enrich\n" << RESET;
-                    subdomain_scan(d, "", 200, false, false, true);
-                } else {
-                    std::cout << WHITE << "  [*] DEEP: full wordlist + all sources + enrich + takeover validation\n" << RESET;
-                    subdomain_scan(d, wl, 200, true, true, true);
-                }
-            }
-        } else {
-            std::string target;
-            std::cout << WHITE << "\n  target: " << RESET;
-            std::cin >> target;
-
-            if (!valid_target(target)) {
-                std::cout << WHITE << "  invalid input\n" << RESET;
-                continue;
-            }
-
-            std::string ip_res = resolve(target);
-            if (ip_res.empty()) {
-                ip_res = target;
-            } else if (ip_res != target) {
-                std::cout << BLOOD_RED << "  resolved: " << target << " -> " << ip_res << "\n" << RESET;
-            }
-
-            g_result.target = target;
-            g_result.resolved_ip = ip_res;
-
-            switch (choice) {
-                case 3: {
-                    g_result.scan_type = "port_scan";
-
-                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-                    std::string s_in;
-                    std::cout << BLOOD_RED << "  start port (0=top1000) [add U for UDP, e.g. 0U]: " << RESET;
-                    std::getline(std::cin, s_in);
-
-                    bool udp = false;
-                    if (!s_in.empty() && (s_in.back() == 'U' || s_in.back() == 'u')) {
-                        udp = true;
-                        s_in.pop_back();
-                        std::cout << BLOOD_RED << "  [*] UDP mode selected\n" << RESET;
-                    }
-
-                    int s = 0;
-                    try {
-                        s = std::stoi(s_in);
-                    } catch (...) {}
-
-                    int e = 0;
-                    if (s != 0) {
-                        std::string e_in;
-                        std::cout << BLOOD_RED << "  end port [empty for single port, or 1024 for UDP default]: " << RESET;
-                        std::getline(std::cin, e_in);
-
-                        if (!e_in.empty()) {
-                            try {
-                                e = std::stoi(e_in);
-                            } catch (...) {}
-                        } else if (udp) {
-                            e = 1024;
-                        }
-
-                        if (e != 0 && (s > e || !valid_port(s) || !valid_port(e))) {
-                            std::cout << BLOOD_RED << "  invalid range\n" << RESET;
-                            break;
-                        }
-                    }
-
-                    std::string t_in;
-                    std::cout << BLOOD_RED << "  timing profile (0-5) [empty = default 3]: " << RESET;
-                    std::getline(std::cin, t_in);
-
-                    int timing = 3;
-                    if (!t_in.empty()) {
-                        try {
-                            timing = std::stoi(t_in);
-                        } catch (...) {}
-                    }
-
-                    std::string excl_in;
-                    std::cout << BLOOD_RED << "  exclude ports (comma separated) [empty = none]: " << RESET;
-                    std::getline(std::cin, excl_in);
-
-                    std::set<int> exclude_ports;
-                    if (!excl_in.empty()) {
-                        std::stringstream ss(excl_in);
-                        std::string item;
-                        while (std::getline(ss, item, ',')) {
-                            try {
-                                exclude_ports.insert(std::stoi(item));
-                            } catch (...) {}
-                        }
-                    }
-
-                    ScanAddrFamily menu_af = ScanAddrFamily::Auto;
-
-                    std::string af_in;
-                    std::cout << BLOOD_RED << "  address family (4/6/empty=auto): " << RESET;
-                    std::getline(std::cin, af_in);
-
-                    if (af_in == "4") {
-                        menu_af = ScanAddrFamily::IPv4;
-                    } else if (af_in == "6") {
-                        menu_af = ScanAddrFamily::IPv6;
-                    }
-
-                    port_scan(target, s, e, udp, timing, exclude_ports, menu_af);
-                    break;
-                }
-
-                case 6:
-                    g_result.scan_type = "netscan";
-                    net_scan(ip_res.substr(0, ip_res.rfind('.')));
-                    break;
-
-                case 5:
-                    g_result.scan_type = "os_detect";
-                    os_detect(ip_res);
-                    break;
-
-                case 9:
-                    g_result.scan_type = "ip_intel";
-                    ip_intel(ip_res);
-                    break;
-
-                case 7:
-                    g_result.scan_type = "dns";
-                    dns_lookup(ip_res);
-                    break;
-
-                case 8:
-                    g_result.scan_type = "whois";
-                    whois_lookup(ip_res);
-                    break;
-
-                case 4:
-                    g_result.scan_type = "traceroute";
-                    traceroute(ip_res);
-                    break;
-
-                case 10:
-                    g_result.scan_type = "recon";
-                    full_recon(ip_res);
-                    break;
-
-                default:
-                    std::cout << BLOOD_RED << "  invalid option\n" << RESET;
-            }
-        }
-
-        g_result.end_time = now_str();
-
-        std::tm tm_start = {};
-        std::istringstream ss_start(g_result.start_time);
-        ss_start >> std::get_time(&tm_start, "%Y-%m-%d %H:%M:%S");
-
-        std::tm tm_end = {};
-        std::istringstream ss_end(g_result.end_time);
-        ss_end >> std::get_time(&tm_end, "%Y-%m-%d %H:%M:%S");
-
-        if (!ss_start.fail() && !ss_end.fail()) {
-            auto time_start = std::mktime(&tm_start);
-            auto time_end = std::mktime(&tm_end);
-            g_result.duration_ms = (int)std::difftime(time_end, time_start) * 1000;
-        }
-
-        print_sep();
-        std::cout << "  press enter to continue...";
-        std::cin.ignore();
-        std::cin.get();
-        print_banner();
-    }
-
-    LOG_INFO("main", "session ended");
-    std::cout << "\n" << BLOOD_RED << BOLD << "  goodbye.\n\n" << RESET;
-
-    return 0;
 }

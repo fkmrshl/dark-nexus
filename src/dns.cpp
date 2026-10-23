@@ -10,6 +10,8 @@ void dns_lookup(const std::string& domain) {
     auto fut_aaaa = std::async(std::launch::async, dig_short, domain, "AAAA", 6);
     auto a_ips    = split_lines(fut_a.get());
     auto aaaa_ips = split_lines(fut_aaaa.get());
+    for (const auto& ip : a_ips) g_result.dns_records.push_back(domain + " A " + ip);
+    for (const auto& ip : aaaa_ips) g_result.dns_records.push_back(domain + " AAAA " + ip);
 
     for(auto& ip:a_ips){
         std::string ptr=ptr_lookup(ip);
@@ -31,6 +33,7 @@ void dns_lookup(const std::string& domain) {
     std::cout<<BLOOD_RED<<"\n  -- Records --\n"<<RESET;
     for(auto& f:futs){
         auto [t,out]=f.get();
+        for (const auto& record : split_lines(out)) g_result.dns_records.push_back(record);
         std::cout<<"\n"<<BLOOD_RED<<"  ["<<WHITE<<t<<BLOOD_RED<<"]:\n"<<RESET;
         if(out.empty()) std::cout<<BLOOD_RED<<"  none\n"<<RESET;
         else std::cout<<WHITE<<sanitize(out)<<RESET;
@@ -58,12 +61,15 @@ void dns_lookup(const std::string& domain) {
 
     std::cout<<BLOOD_RED<<"\n  -- DMARC --\n"<<RESET;
     auto dmarc=dig_full("_dmarc."+domain,"TXT",5);
+    for (const auto& record : split_lines(dmarc)) g_result.dns_records.push_back(record);
     if(dmarc.empty()) std::cout<<BLOOD_RED<<"  [-] no DMARC\n"<<RESET;
     else std::cout<<WHITE<<sanitize(dmarc)<<RESET;
 
     std::cout<<BLOOD_RED<<"\n  -- DNSSEC --\n"<<RESET;
     auto ds=dig_short(domain,"DS",5);
     auto dnskey=dig_short(domain,"DNSKEY",5);
+    for (const auto& record : split_lines(ds)) g_result.dns_records.push_back(domain + " DS " + record);
+    for (const auto& record : split_lines(dnskey)) g_result.dns_records.push_back(domain + " DNSKEY " + record);
     if(!ds.empty()||!dnskey.empty()) std::cout<<BLOOD_RED<<"  [+] "<<WHITE<<"DNSSEC enabled\n"<<RESET;
     else std::cout<<BLOOD_RED<<"  [-] DNSSEC not detected\n"<<RESET;
 
@@ -93,7 +99,7 @@ void whois_lookup(const std::string& target) {
     };
     dns_rl.acquire();
     auto raw=safe_exec({"whois",target},10);
-    if(raw.empty()){std::cout<<BLOOD_RED<<"  install: sudo apt install whois\n"<<RESET;return;}
+    if(raw.empty()) throw std::runtime_error("WHOIS returned no data; check the helper, target and network connection");
     std::istringstream ss(raw); std::string line;
     while(std::getline(ss,line)){
         if(line.empty()||line[0]=='%'||line[0]=='#') continue;
@@ -121,7 +127,9 @@ void site_lookup(const std::string& raw) {
         if(!valid_target(s)){std::cout<<BLOOD_RED<<"  invalid input\n"<<RESET;return;}
         std::cout<<BLOOD_RED<<"  resolving "<<WHITE<<s<<BLOOD_RED<<"...\n"<<RESET;
         std::string ip=resolve(s);
-        if(ip.empty()){std::cout<<BLOOD_RED<<"  could not resolve\n"<<RESET;return;}
+        if(ip.empty()) throw std::runtime_error("could not resolve site hostname: " + s);
+        if (!InputGuard::is_valid_ipv4(ip)) throw std::runtime_error("site intelligence currently requires IPv4");
+        g_result.resolved_ip = ip;
         std::cout<<BLOOD_RED<<"  "<<WHITE<<s<<BLOOD_RED<<" -> "<<WHITE<<ip<<"\n"<<RESET;
         ip_intel(ip);
 }

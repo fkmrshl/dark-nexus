@@ -75,8 +75,12 @@ bool tcp_probe(const std::string& ip, int port, int ms) {
     pfd.fd = fd;
     pfd.events = POLLOUT;
     int r = poll(&pfd, 1, ms);
+    int error = 0;
+    socklen_t error_size = sizeof(error);
+    const bool connected = r > 0 && (pfd.revents & POLLOUT) &&
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_size) == 0 && error == 0;
     close(fd);
-    return r > 0;
+    return connected;
 }
 
 static int tcp_socket_for(const std::string& ip) {

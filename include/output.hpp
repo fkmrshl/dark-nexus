@@ -7,7 +7,9 @@ using json = nlohmann::json;
 
 class OutputWriter {
 public:
-    static bool write(const ScanResult& r, const std::string& path);
+    static bool write(const ScanResult& r, const std::string& path, const std::string& format = "");
+    static std::string format_for(const std::string& path, const std::string& requested = "");
+    static bool write_stream(const ScanResult& r, std::ostream& stream, const std::string& format);
     static bool write_json(const ScanResult& r, const std::string& path);
     static bool write_csv(const ScanResult& r, const std::string& path);
     static std::string to_json_str(const ScanResult& r);

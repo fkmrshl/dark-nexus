@@ -7,36 +7,12 @@
 #include "../include/os_fingerprint.hpp"
 #include "../include/port_enrich.hpp"
 #include "../include/port_probe.hpp"
+#include "../include/port_presets.hpp"
 #include "../include/port_vuln.hpp"
 
 static RateLimiter port_rl(10000.0);
-static const std::vector<int> TOP1000 = {
-    1,3,4,6,7,9,13,17,19,20,21,22,23,24,25,26,30,32,33,37,42,43,49,53,
-    70,79,80,81,82,83,84,85,88,89,90,99,100,106,109,110,111,113,119,125,
-    135,139,143,144,146,161,163,179,199,211,212,222,254,255,256,259,264,
-    280,301,306,311,340,366,389,406,407,416,417,425,427,443,444,445,458,
-    464,465,481,497,500,512,513,514,515,524,541,543,544,545,548,554,555,
-    563,587,593,616,617,625,631,636,646,648,666,667,668,683,687,691,700,
-    705,711,714,720,722,726,749,765,777,783,787,800,801,808,843,873,880,
-    888,898,900,901,902,903,911,912,981,987,990,992,993,995,999,1000,1001,
-    1002,1007,1009,1010,1011,1021,1022,1023,1024,1025,1026,1027,1028,1029,
-    1030,1031,1032,1033,1034,1035,1036,1037,1038,1039,1040,1041,1042,1043,
-    1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,
-    1058,1059,1060,1061,1062,1063,1064,1065,1066,1067,1068,1069,1070,1071,
-    1072,1073,1074,1075,1076,1077,1078,1079,1080,1110,1234,1433,1434,1521,
-    1720,1723,1755,1900,2000,2001,2049,2121,2181,2375,2376,3000,3128,3306,
-    3389,3690,4444,4445,4899,5000,5432,5900,5901,6000,6001,6379,6443,7001,
-    7443,8000,8008,8080,8081,8443,8888,9000,9090,9200,9300,10000,11211,
-    27017,50070
-};
-
-static const std::vector<int> TOP100 = {
-    21,22,23,25,53,80,110,111,135,139,143,443,445,
-    993,995,1723,3306,3389,5900,8080,8443,8888,
-    27017,6379,5432,2375,2376,6443,9200,9300,
-    11211,5672,5671,4369,15672,3000,8000,9000,
-    1433,1521,5000,5001,5985,5986,47001,49152
-};
+using port_presets::TOP1000;
+using port_presets::TOP100;
 
 static std::string port_display_clip(std::string value, size_t limit) {
     value = sanitize(value);
@@ -82,6 +58,11 @@ HttpInfo PortScanEngine::probe_http(int port) {
 }
 
 std::string PortScanEngine::smart_banner(int port) {
+    // The generic banner helper actively sends HTTP requests on common web ports.
+    // Disabling HTTP enrichment must also disable that path.
+    // Port 8000 is also probed as HTTP by the legacy helper, although it is
+    // absent from the enrichment engine's HTTP candidate table.
+    if (!cfg_.http_probe && (port_is_http_candidate(port) || port == 8000)) return {};
     return ::smart_banner(cfg_.ip, port, cfg_.banner_ms, port_is_tls_candidate(port) != 0);
 }
 
@@ -183,7 +164,7 @@ ScanResults PortScanEngine::run() {
         int deep_total = results.open_ports.size();
         std::mutex results_mtx;
 
-        ThreadPool dpool(std::min(20, deep_total));
+        ThreadPool dpool(std::max(1, std::min({cfg_.pool_size, 20, deep_total})));
         std::vector<std::future<void>> dfuts;
         for (int i = 0; i < deep_total; i++) {
             dfuts.push_back(dpool.submit([&, i] {
@@ -453,7 +434,7 @@ void PortScanEngine::print_results(const ScanResults& r) {
 
 void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, int timing_profile,
                const std::set<int>& exclude_ports, ScanAddrFamily addr_family,
-               const std::vector<int>& selected_ports) {
+               const std::vector<int>& selected_ports, const PortScanOverrides& overrides) {
     std::string scan_ip = resolve_for_scan(ip, addr_family);
     if (scan_ip.empty()) scan_ip = ip;
 
@@ -462,9 +443,9 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     PortScanConfig cfg{};
     cfg.ip = scan_ip;
     cfg.udp_scan = scan_udp;
-    cfg.syn_scan = true;
-    cfg.tls_inspect = true;
-    cfg.http_probe = true;
+    cfg.syn_scan = !overrides.connect;
+    cfg.tls_inspect = overrides.tls;
+    cfg.http_probe = overrides.http;
     cfg.aggressive = true;
 
     if (addr_family == ScanAddrFamily::IPv4)
@@ -494,13 +475,15 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
                   << BLOOD_RED << " (" << WHITE << cfg.ports.size() << BLOOD_RED << " ports)\n" << RESET;
     } else if (start == 0 && end_port == 0) {
         cfg.ports = TOP1000;
-        std::cout << BLOOD_RED << "  mode: " << WHITE << "top-1000 ports\n" << RESET;
+        std::cout << BLOOD_RED << "  mode: " << WHITE << "legacy preset 1000 ("
+                  << cfg.ports.size() << " ports)\n" << RESET;
     } else if (start > 0 && end_port == 0) {
         cfg.ports = {start};
         std::cout << BLOOD_RED << "  mode: " << WHITE << "single port → " << start << "\n" << RESET;
     } else if (start == 0 && end_port > 0) {
         cfg.ports = TOP100;
-        std::cout << BLOOD_RED << "  mode: " << WHITE << "top-100 ports\n" << RESET;
+        std::cout << BLOOD_RED << "  mode: " << WHITE << "legacy preset 100 ("
+                  << cfg.ports.size() << " ports)\n" << RESET;
     } else {
         int lo = std::max(1, start);
         int hi = std::min(65535, end_port);
@@ -510,6 +493,13 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
                   << BLOOD_RED << " (" << WHITE << cfg.ports.size() << BLOOD_RED << " ports)\n" << RESET;
     }
 
+    cfg.ports.erase(std::remove_if(cfg.ports.begin(), cfg.ports.end(), [&](int port) {
+        return cfg.exclude_ports.count(port) != 0;
+    }), cfg.ports.end());
+    if (cfg.ports.empty()) {
+        throw std::invalid_argument("no ports remain after applying --exclude");
+    }
+
     if (cfg.udp_scan) {
         std::cout << BLOOD_RED << "\n  [*] UDP SCAN SELECTED - sending protocol-aware probes\n"
                   << "      note: open|filtered = no ICMP unreachable received (normal for UDP)\n"
@@ -517,7 +507,10 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
     }
 
     print_section("PHASE 0 // CALIBRATION");
-    std::cout << BLOOD_RED << "  measuring target latency...\n" << RESET;
+    std::cout << BLOOD_RED
+              << (cfg.udp_scan ? "  using UDP timing defaults; TCP calibration skipped\n"
+                               : "  measuring latency on selected ports...\n")
+              << RESET;
 
     int port_count = (int)cfg.ports.size();
 
@@ -540,21 +533,9 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
             break;
     }
 
-    auto acfg = calibrate_port_target(ip);
-
-    {
-        struct rlimit rl;
-        getrlimit(RLIMIT_NOFILE, &rl);
-        int available_fds = (int)rl.rlim_cur - 50;
-        int needed_fds    = acfg.pool_size * 3;
-        if (needed_fds > available_fds) {
-            int safe_pool = available_fds / 3;
-            std::cout << BLOOD_RED << "  [!] FD limit " << available_fds
-                      << " < needed " << needed_fds
-                      << " - reducing pool to " << safe_pool << "\n" << RESET;
-            acfg.pool_size = std::max(10, safe_pool);
-        }
-    }
+    const auto acfg = cfg.udp_scan ? AdaptiveConfig{1500, 3000, 0, 50, -1}
+        : calibrate_port_target(cfg.ip, cfg.ports,
+                                overrides.timeout_ms > 0 ? overrides.timeout_ms : 800);
 
     cfg.median_rtt = acfg.median_rtt;
 
@@ -631,7 +612,27 @@ void port_scan(const std::string& ip, int start, int end_port, bool scan_udp, in
             break;
     }
 
-    cfg.pool_size = std::min(cfg.pool_size, 600);
+    cfg.pool_size = std::clamp(cfg.pool_size, 1, 600);
+
+    // Explicit CLI values take precedence over calibration and timing heuristics.
+    if (overrides.threads > 0) cfg.pool_size = overrides.threads;
+    if (overrides.timeout_ms > 0) cfg.connect_ms = overrides.timeout_ms;
+    if (overrides.banner_timeout_ms > 0) cfg.banner_ms = overrides.banner_timeout_ms;
+    if (overrides.retries >= 0) cfg.retry_count = overrides.retries;
+
+    // Apply the descriptor limit last, including after an explicit worker override.
+    struct rlimit descriptor_limit{};
+    if (getrlimit(RLIMIT_NOFILE, &descriptor_limit) == 0 &&
+        descriptor_limit.rlim_cur != RLIM_INFINITY) {
+        const rlim_t available = descriptor_limit.rlim_cur > 50
+                                     ? descriptor_limit.rlim_cur - 50 : 0;
+        const rlim_t safe_workers = std::max<rlim_t>(1, available / 3);
+        if (static_cast<rlim_t>(cfg.pool_size) > safe_workers) {
+            cfg.pool_size = static_cast<int>(safe_workers);
+            std::cout << BLOOD_RED << "  [!] file descriptor limit reduces workers to "
+                      << WHITE << cfg.pool_size << RESET << "\n";
+        }
+    }
 
     std::cout << BLOOD_RED << "  rtt: " << WHITE
               << (cfg.median_rtt >= 0 ? std::to_string(cfg.median_rtt) + "ms" : "n/a")

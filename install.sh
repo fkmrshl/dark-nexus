@@ -477,7 +477,7 @@ run_step "${STEP_LABELS[2]}" bash -c '
 run_step "${STEP_LABELS[3]}" bash -c '
     set -e
     cd "$BUILD_DIR"
-    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 '
 
 run_build_step "${STEP_LABELS[4]}"

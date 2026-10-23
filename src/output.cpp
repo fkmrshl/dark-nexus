@@ -1,188 +1,126 @@
-#include "../include/output.hpp"
-#include "../include/security.hpp"
-#include <iostream>
-#include <iomanip>
+#include "output.hpp"
+#include "security.hpp"
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
 
-static std::string escape_csv(const std::string& s) {
-    if (s.find(',') == std::string::npos &&
-        s.find('"') == std::string::npos &&
-        s.find('\n') == std::string::npos &&
-        s.find('\r') == std::string::npos) {
-        return s;
-    }
-    std::string escaped = "\"";
-    for (char c : s) {
-        if (c == '"') escaped += "\"\"";
-        else escaped += c;
-    }
-    escaped += "\"";
-    return escaped;
+namespace {
+std::string csv(const std::string& value) {
+    if (value.find_first_of(",\"\r\n") == std::string::npos) return value;
+    std::string result = "\"";
+    for (const char c : value) result += c == '"' ? "\"\"" : std::string(1, c);
+    return result + '"';
 }
 
-static std::string join_strings(const std::vector<std::string>& vec, const std::string& delim = " ") {
-    std::string res;
-    for (size_t i = 0; i < vec.size(); ++i) {
-        if (i > 0) res += delim;
-        res += vec[i];
-    }
-    return res;
+void csv_row(std::ostream& out, const std::string& type, const ScanResult& result,
+             const std::string& identifier, const std::string& value, const json& details) {
+    out << csv(type) << ',' << csv(result.target) << ',' << csv(identifier) << ','
+        << csv(value) << ',' << csv(details.dump(-1, ' ', false, json::error_handler_t::replace)) << '\n';
 }
 
-bool OutputWriter::write(const ScanResult& r, const std::string& path) {
-    if (path.empty()) return false;
-
-    if (path.find(".json") == path.length() - 5) {
-        return write_json(r, path);
-    } else if (path.find(".csv") == path.length() - 4) {
-        return write_csv(r, path);
-    } else {
-        std::ofstream f(path);
-        if (!f.is_open()) return false;
-        f << "Scan Report: " << r.target << "\n";
-        f << "Type: " << r.scan_type << "\n";
-        f << "Started: " << r.start_time << "\n";
-        f << "Ended: " << r.end_time << "\n";
-        f << "Duration (ms): " << r.duration_ms << "\n";
-        f << "Resolved IP: " << r.resolved_ip << "\n\n";
-
-        if (!r.geo_country.empty() || !r.geo_city.empty()) {
-            f << "=== Geo ===\n";
-            f << "Country: " << r.geo_country << "\n";
-            f << "City: " << r.geo_city << "\n";
-            f << "ISP: " << r.geo_isp << "\n";
-            f << "AS: " << r.geo_as << "\n";
-            f << "Proxy: " << (r.proxy ? "true" : "false") << "\n";
-            f << "Hosting: " << (r.hosting ? "true" : "false") << "\n\n";
-        }
-
-        if (!r.os_guess.empty()) {
-            f << "=== OS ===\n";
-            f << r.os_guess << "\n\n";
-        }
-
-        if (!r.ports.empty()) {
-            f << "=== Open Ports ===\n";
-            for (const auto& p : r.ports) {
-                f << p.port << "/" << p.protocol << " " << p.service << " (" << p.version << ") " << p.banner << "\n";
-            }
-            f << "\n";
-        }
-
-        if (!r.subdomains.empty()) {
-            f << "=== Subdomains ===\n";
-            for (const auto& s : r.subdomains) {
-                f << s.sub << " " << join_strings(s.ips, ",") << " " << s.title << "\n";
-            }
-            f << "\n";
-        }
-
-        if (!r.osint.empty()) {
-            f << "=== OSINT ===\n";
-            for (const auto& o : r.osint) {
-                f << o.platform << " (" << o.certainty << ") " << o.url << "\n";
-            }
-            f << "\n";
-        }
-
-        if (!r.trace.empty()) {
-            f << "=== Trace ===\n";
-            for (const auto& t : r.trace) {
-                f << t.ttl << " " << t.addr << " (" << t.hostname << ") " << t.avg_rtt_ms << "ms\n";
-            }
-            f << "\n";
-        }
-
-        if (!r.dns_records.empty()) {
-            f << "=== DNS Records ===\n";
-            for (const auto& d : r.dns_records) {
-                f << d << "\n";
-            }
-            f << "\n";
-        }
-
-        std::cout << BLOOD_RED << "  [+] saved txt: " << WHITE << path << "\n" << RESET;
-        return true;
-    }
+void write_csv_report(const ScanResult& result, std::ostream& out) {
+    out << "record_type,target,identifier,value,details\n";
+    csv_row(out, "metadata", result, result.scan_type, result.tool_version,
+            {{"schema_version", result.schema_version}, {"resolved_ip", result.resolved_ip},
+             {"start_time", result.start_time}, {"end_time", result.end_time},
+             {"duration_ms", result.duration_ms}});
+    if (!result.geo_country.empty() || !result.geo_city.empty())
+        csv_row(out, "geo", result, result.resolved_ip, result.geo_country,
+                {{"city", result.geo_city}, {"isp", result.geo_isp}, {"as", result.geo_as},
+                 {"proxy", result.proxy}, {"hosting", result.hosting}});
+    if (!result.os_guess.empty()) csv_row(out, "os", result, result.resolved_ip, result.os_guess, json::object());
+    for (const auto& port : result.ports)
+        csv_row(out, "port", result, std::to_string(port.port), port.service, json(port));
+    for (const auto& subdomain : result.subdomains)
+        csv_row(out, "subdomain", result, subdomain.sub, subdomain.title, json(subdomain));
+    for (const auto& hit : result.osint)
+        csv_row(out, "osint", result, hit.platform, hit.url, json(hit));
+    for (const auto& hop : result.trace)
+        csv_row(out, "trace", result, std::to_string(hop.ttl), hop.addr, json(hop));
+    for (const auto& record : result.dns_records)
+        csv_row(out, "dns", result, "", record, json::object());
 }
 
-std::string OutputWriter::to_json_str(const ScanResult& r) {
-    json j = r;
-    return j.dump(2);
-}
-
-bool OutputWriter::write_json(const ScanResult& r, const std::string& path) {
-    std::ofstream f(path);
-    if (!f.is_open()) return false;
-    f << to_json_str(r) << "\n";
-    std::cout << BLOOD_RED << "  [+] saved json: " << WHITE << path << "\n" << RESET;
-    return true;
-}
-
-bool OutputWriter::write_csv(const ScanResult& r, const std::string& path) {
-    std::string base_path = path;
-    if (base_path.find(".csv") == base_path.length() - 4) {
-        base_path = base_path.substr(0, base_path.length() - 4);
-    }
-
+void write_text_report(const ScanResult& r, std::ostream& out) {
+    out << "Dark Nexus / " << sanitize(r.scan_type) << '\n'
+        << "Target: " << sanitize(r.target) << '\n'
+        << "Resolved IP: " << sanitize(r.resolved_ip) << '\n'
+        << "Started: " << r.start_time << "\nEnded: " << r.end_time
+        << "\nDuration: " << r.duration_ms << " ms\n";
+    if (!r.geo_country.empty() || !r.geo_city.empty())
+        out << "\nLocation: " << sanitize(r.geo_country) << ", " << sanitize(r.geo_city)
+            << "\nISP: " << sanitize(r.geo_isp) << "\nAS: " << sanitize(r.geo_as) << '\n';
+    if (!r.os_guess.empty()) out << "\nOS: " << sanitize(r.os_guess) << '\n';
     if (!r.ports.empty()) {
-        std::string ports_path = base_path + "_ports.csv";
-        std::ofstream fp(ports_path);
-        if (fp.is_open()) {
-            fp << "port,protocol,service,version,risk,latency_ms,tls,tls_version,banner,vulns\r\n";
-            for (const auto& p : r.ports) {
-                fp << p.port << ","
-                   << escape_csv(p.protocol) << ","
-                   << escape_csv(p.service) << ","
-                   << escape_csv(p.version) << ","
-                   << escape_csv(p.risk) << ","
-                   << p.latency_ms << ","
-                   << (p.tls ? "true" : "false") << ","
-                   << escape_csv(p.tls_version) << ","
-                   << escape_csv(p.banner) << ","
-                   << escape_csv(join_strings(p.vulns, ";")) << "\r\n";
-            }
-            std::cout << BLOOD_RED << "  [+] saved csv: " << WHITE << ports_path << "\n" << RESET;
-        }
+        out << "\nPorts\n";
+        for (const auto& p : r.ports)
+            out << p.port << '/' << sanitize(p.protocol) << "  " << sanitize(p.service)
+                << "  " << sanitize(p.version) << "  " << sanitize(p.banner) << '\n';
     }
-
     if (!r.subdomains.empty()) {
-        std::string sub_path = base_path + "_subdomains.csv";
-        std::ofstream fs(sub_path);
-        if (fs.is_open()) {
-            fs << "subdomain,ips,cname,http_code,server,waf,language,cms,source,title,takeover\r\n";
-            for (const auto& s : r.subdomains) {
-                fs << escape_csv(s.sub) << ","
-                   << escape_csv(join_strings(s.ips, " ")) << ","
-                   << escape_csv(s.cname) << ","
-                   << escape_csv(s.http_code) << ","
-                   << escape_csv(s.server) << ","
-                   << escape_csv(s.waf) << ","
-                   << escape_csv(s.language) << ","
-                   << escape_csv(s.cms) << ","
-                   << escape_csv(s.source) << ","
-                   << escape_csv(s.title) << ","
-                   << (s.takeover_possible ? "true" : "false") << "\r\n";
-            }
-            std::cout << BLOOD_RED << "  [+] saved csv: " << WHITE << sub_path << "\n" << RESET;
+        out << "\nSubdomains\n";
+        for (const auto& s : r.subdomains) {
+            out << sanitize(s.sub);
+            for (const auto& ip : s.ips) out << "  " << sanitize(ip);
+            out << "  " << sanitize(s.title) << '\n';
         }
     }
-
     if (!r.osint.empty()) {
-        std::string osint_path = base_path + "_osint.csv";
-        std::ofstream fo(osint_path);
-        if (fo.is_open()) {
-            fo << "platform,url,category,certainty,confidence,evidence,source\r\n";
-            for (const auto& o : r.osint) {
-                fo << escape_csv(o.platform) << ","
-                   << escape_csv(o.url) << ","
-                   << escape_csv(o.category) << ","
-                   << escape_csv(o.certainty) << ","
-                   << o.confidence << ","
-                   << escape_csv(o.evidence) << ","
-                   << escape_csv(o.source) << "\r\n";
-            }
-            std::cout << BLOOD_RED << "  [+] saved csv: " << WHITE << osint_path << "\n" << RESET;
-        }
+        out << "\nOSINT\n";
+        for (const auto& hit : r.osint)
+            out << sanitize(hit.platform) << "  " << sanitize(hit.certainty) << "  " << sanitize(hit.url) << '\n';
     }
-    return true;
+    if (!r.trace.empty()) {
+        out << "\nTrace\n";
+        for (const auto& hop : r.trace)
+            out << hop.ttl << "  " << sanitize(hop.addr) << "  " << sanitize(hop.hostname)
+                << "  " << hop.avg_rtt_ms << " ms\n";
+    }
+    if (!r.dns_records.empty()) {
+        out << "\nDNS\n";
+        for (const auto& record : r.dns_records) out << sanitize(record) << '\n';
+    }
+}
+} // namespace
+
+std::string OutputWriter::format_for(const std::string& path, const std::string& requested) {
+    if (!requested.empty()) {
+        if (requested != "json" && requested != "csv" && requested != "txt")
+            throw std::invalid_argument("unsupported report format: " + requested);
+        return requested;
+    }
+    if (path == "-") return "json";
+    auto extension = std::filesystem::path(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (extension == ".json") return "json";
+    if (extension == ".csv") return "csv";
+    return "txt";
+}
+
+std::string OutputWriter::to_json_str(const ScanResult& result) {
+    return json(result).dump(2, ' ', false, json::error_handler_t::replace);
+}
+
+bool OutputWriter::write_stream(const ScanResult& result, std::ostream& out, const std::string& format) {
+    if (format == "json") out << to_json_str(result) << '\n';
+    else if (format == "csv") write_csv_report(result, out);
+    else if (format == "txt") write_text_report(result, out);
+    else return false;
+    out.flush();
+    return out.good();
+}
+
+bool OutputWriter::write(const ScanResult& result, const std::string& path, const std::string& format) {
+    if (path.empty()) return false;
+    std::ofstream out(path);
+    return out && write_stream(result, out, format_for(path, format));
+}
+
+bool OutputWriter::write_json(const ScanResult& result, const std::string& path) {
+    return write(result, path, "json");
+}
+
+bool OutputWriter::write_csv(const ScanResult& result, const std::string& path) {
+    return write(result, path, "csv");
 }

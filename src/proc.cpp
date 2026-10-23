@@ -105,6 +105,10 @@ static ProcResult proc_run(const std::vector<std::string>& args,
         dup2(pout[1], STDOUT_FILENO); dup2(perr[1], STDERR_FILENO);
         close(pout[1]); close(perr[1]);
         if (has_stdin) { close(pin[1]); dup2(pin[0],STDIN_FILENO); close(pin[0]); }
+        else {
+            int null_input = open("/dev/null", O_RDONLY);
+            if (null_input >= 0) { dup2(null_input, STDIN_FILENO); close(null_input); }
+        }
         setpgid(0,0);
         execvp(argv[0], argv.data());
         _exit(127);

@@ -14,7 +14,7 @@ class Logger {
 public:
     static Logger& get() { static Logger l; return l; }
 
-    void init(const std::string& path, LogLevel min = LogLevel::INFO) {
+    bool init(const std::string& path, LogLevel min = LogLevel::INFO) {
         std::lock_guard<std::mutex> lk(mtx_);
         if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
 
@@ -22,6 +22,7 @@ public:
                      O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
                      0600);
         min_ = min;
+        return fd_ >= 0;
     }
 
     void log(LogLevel lv, const std::string& mod, const std::string& msg) {
