@@ -1,257 +1,181 @@
-<p align="center">
-  <img src="assets/dark_nexus.svg" width="100%" style="max-width: 1000px; height: auto; display: block; margin: 0 auto;" alt="Dark Nexus">
-</p>
- 
-</div>
+# Dark Nexus
 
-<br>
+Network reconnaissance and infrastructure analysis from a single C++17 command-line tool for Linux.
 
-**Dark Nexus** - modular **C++17** framework for network reconnaissance and infrastructure analysis.
+Explicit flags, module-specific help, and JSON, CSV, or text reports. Run one module per invocation; running without arguments shows help.
 
-  ![Language](https://img.shields.io/badge/language-C%2B%2B17-dc143c?style=flat-square)
-  ![Platform](https://img.shields.io/badge/platform-Linux-dc143c?style=flat-square)
-  ![Modules](https://img.shields.io/badge/modules-12-dc143c?style=flat-square)
+[CLI reference](docs/cli.md) · [Module guide](#modules) · [License](LICENSE)
 
+## Install
 
-</div>
+Clone the repository and run the installer:
 
-
-## Dark Nexus Project:
- 
-**A modular, multi-threaded C++17 toolkit for network reconnaissance, service analysis, and infrastructure mapping.**
-
-Dark Nexus replaces dozens of disjointed utilities. Written in C++17, it compiles into a single standalone executable that requires no complex environment setup or dependency management. Everything is controlled through an intuitive hybrid CLI, supporting both an interactive menu and direct arguments
-
-Under the hood, it leverages aggressive multi-threading, custom network engines (Raw Sockets, c-ares + io_uring + Thread Pool), and 11 powerful modules: ranging from ultra-fast subdomain scanning with Takeover validation, to in-depth OSINT gathering and heuristic OS fingerprinting.
-
-
-
-
-## Modules
-
-| # | Module | What it does |
-|---|--------|--------------|
-| 1 | **Subdomain Scan** | Passive recon from 11 sources + async DNS pipeline, DoH fallback, takeover + language detect, permutation engine and JS scraping|
-| 2 | **OSINT** | OSINT Intelligence & Identity Graph: Multi-vector Identity Graph (User/Email/Phone) with detect input type, bayes score verification, cross_reference orchestration (Sherlock, Maigret, Holehe, PhoneInfoga), Breach Intelligence. |
-| 3 | **Port Scan** |Dual-mode TCP/UDP scanner · raw SYN + connect fallback · T0–T5 timing · TLS/HTTP inspect · CVE hints · OS fingerprint · adaptive IpV4 + IpV6 scan. |
-| 4 | **Traceroute** | Multi-protocol path tracer (ICMP / UDP / TCP SYN) with raw socket probes, parallel hop scanning and automatic TCP SYN → connect fallback when CAP_NET_RAW unavailable. |
-| 5 | **OS Detection** | Multi-signal fingerprinting via TCP SYN/ACK window analysis, SMB native OS probe, ICMP TTL (init TTL → hop count), HTTP header heuristics and weighted port scoring. |
-| 6 | **Network Scan** | 2-phase /24 subnet sweep: ICMP + TCP host discovery across all 254 hosts, then parallel port scan of alive hosts with OS fingerprinting |
-| 7 | **DNS Lookup** | Parallel queries for A/AAAA/MX/NS/TXT/CNAME/SOA/CAA/SRV + SPF chain expansion, DMARC, DNSSEC detection, AXFR zone transfer attempt against all NS servers|
-| 8 | **WHOIS Lookup** | Full WHOIS data for a domain or IP with structured field extraction |
-| 9 | **IP Full Intel** | Full IP profile via ip-api.com geolocation, BGP/ASN lookup via RADB, abuse contacts, 4 DNSBL blacklist checks and quick top-20 port sweep with banners. |
-| 10 | **Full IP Recon** | Chains geo, DNS lookup, OS detection and port scan into one full run |
-| 11 | **Site → IP** | Strips protocol/path from any URL, resolves to IP, runs full intel on it |
-| 12 | **Export JSON** | Saves the last scan result to a structured JSON file
-
-
-## Requirements and Installation
-
-Dark Nexus is heavily automated. You can install it on any Debian, Ubuntu, Kali, Arch, or BlackArch system with a single command. It will automatically detect your OS, install the correct dependencies, build the project with CMake, and configure Linux capabilities so you can run it without sudo.
-
-### Quick Install
-```
-curl -fsSL https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
-```
-
-### Re-run the install command to update
-```
+```sh
+git clone https://github.com/fkmrshl/dark-nexus.git
+cd dark-nexus
 sudo bash install.sh
 ```
 
+The installer installs system dependencies and optional OSINT helpers, builds the project, installs `dark-nexus` to `/usr/local/bin`, and attempts to grant `CAP_NET_RAW` for raw socket probes. It supports Debian/Ubuntu, Arch, Fedora/RHEL, and openSUSE families.
+
+To build without installing, use a C++17 compiler, CMake 3.15+, Git, pkg-config, and the OpenSSL, liburing, and libcap development packages:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --build build --parallel 2
+./build/dark_nexus --help
+```
+
+CMake fetches c-ares and prefers installed curl and nlohmann/json packages, fetching them if needed. The installer provisions the DNS wordlist; source builds can use `--wordlist` or the built-in list. Some modules also use `dig`, `host`, `whois`, `ping`, `curl`, or the `openssl` executable at runtime. See the [dependency notes](docs/cli.md#dependencies-and-results).
+
 ## Usage
-Dark Nexus supports both an interactive menu and command-line arguments. It is globally installed to `/usr/local/bin`, so you can run it from anywhere.
 
-**Interactive Mode:**
-```
-dark-nexus
-```
-
-**Command Line Mode:**
-```
-dark-nexus [options] <target>
+```sh
+dark-nexus --help
+dark-nexus --list-modules
+dark-nexus --help portscan
+dark-nexus --portscan 127.0.0.1 --ports 22,80,443 --connect
+dark-nexus --portscan 127.0.0.1 --ports 8000-8010 --output scan.json
+dark-nexus --portscan 127.0.0.1 --ports 8080 --output - --format json
 ```
 
-## Command Line Options
+Use `--quiet` to suppress the human-readable report, `--no-color` for plain output, and `--output` to save a result. With `--output -`, stdout contains only the selected report format. The [CLI reference](docs/cli.md) covers all flags, defaults, compatibility syntax, and exit codes.
 
-**•** Port scan:
+## Modules
 
-```bash
---portscan <target> [ports]
+Expand a module for its purpose, behavior, and an example. Domain examples use reserved names; replace them with an authorized target for live work.
+
+<details>
+<summary><strong>Port scan</strong> — TCP/UDP ports and service inspection</summary>
+
+Find reachable ports using TCP SYN probes with a connect fallback, explicit TCP connect mode, or UDP probes. Select ports, concurrency, timeouts, retries, address family, and optional TLS/HTTP inspection. Service banners, OS guesses, and CVE hints help prioritize manual investigation; version-based hints do not establish a vulnerability, and unanswered UDP probes remain ambiguous.
+
+```sh
+dark-nexus --portscan 127.0.0.1 --ports 22,80,8000-8010 --connect --timeout 500
 ```
 
-Examples for ports: `0` = top 1000 ports, `0-1` = top 100 ports, `80-443`, `22,80`, `0U` = UDP.
+[Port scan options](docs/cli.md#port-scan)
 
-**•** Port scan timing profile:
+</details>
 
-```bash
--T<0-5>
+<details>
+<summary><strong>Subdomains</strong> — domain discovery and web metadata</summary>
+
+Combine certificate transparency results with wordlist DNS resolution and wildcard filtering. Deep mode adds more passive sources, permutations, CNAME/AAAA checks, web technology hints, JavaScript discovery, and takeover signature checks. Fast mode uses fewer sources and lighter HTTP enrichment. Neither mode is passive-only: both send DNS queries and, by default, HTTP requests. Takeover matches need manual verification.
+
+```sh
+dark-nexus --subdomain example.test --mode fast --wordlist ./hosts.txt --no-enrich
 ```
 
-`0` = Paranoid, `5` = Insane. Default: `3`.
+[Subdomain options](docs/cli.md#subdomains)
 
-**•** Resolve and scan IPv4 only:
+</details>
 
-```bash
---ipv4
+<details>
+<summary><strong>DNS</strong> — records and domain configuration</summary>
+
+Query A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, and SRV records, inspect SPF includes and DMARC, check for DS/DNSKEY records, and attempt AXFR against discovered name servers. This is a configuration review, including active zone transfer requests; DS/DNSKEY presence is not full DNSSEC validation. Requires `dig`.
+
+```sh
+dark-nexus --dns example.test
 ```
 
-Uses A records.
+</details>
 
-**•** Resolve and scan IPv6 only:
+<details>
+<summary><strong>WHOIS</strong> — registration and allocation records</summary>
 
-```bash
---ipv6
+Read WHOIS information for a domain or IP address and display selected registration, organization, network, and contact fields. Available fields depend on the registry response and its privacy policy. Requires `whois`.
+
+```sh
+dark-nexus --whois example.com
 ```
 
-Uses AAAA records.
+</details>
 
-**•** Exclude ports from port scan:
+<details>
+<summary><strong>Network scan</strong> — IPv4 /24 host discovery</summary>
 
-```bash
---exclude <ports>
+Check hosts `.1` through `.254` in an IPv4 /24 using ICMP and common TCP ports, then inspect a fixed set of ports on responding hosts. Reports hostnames, banners, and an OS estimate. This is a fixed /24 workflow, not a general CIDR scanner; filtered hosts may be missed.
+
+```sh
+dark-nexus --netscan 127.0.0.1
 ```
 
-Comma-separated ports to skip.
+</details>
 
-**•** Run network scan:
+<details>
+<summary><strong>OS detection</strong> — operating system estimates</summary>
 
-```bash
---netscan <subnet>
+Combine selected open ports, banners, SMB and HTTP signals, ICMP TTL, and TCP fingerprints into an OS estimate. Raw socket access improves the available signals. Firewalls, proxies, and load balancers can make a result incomplete or misleading.
+
+```sh
+dark-nexus --os-detect 127.0.0.1
 ```
 
-Example: `192.168.1.1`.
+</details>
 
-**•** Run OS detection:
+<details>
+<summary><strong>Traceroute</strong> — network paths and hop timing</summary>
 
-```bash
---os-detect <ip>
+Trace IPv4 paths using ICMP, UDP, or TCP probes. Configure hop limits, probes, concurrency, destination port, and timeouts; optionally disable reverse DNS, ASN lookups, and MTU detection. All protocols require `CAP_NET_RAW` to receive intermediate-hop ICMP replies. Reports hop timing and probe loss; missing replies do not establish packet loss for application traffic.
+
+```sh
+dark-nexus --traceroute 127.0.0.1 --protocol tcp --destination-port 8080 --max-hops 5 --no-asn
 ```
 
-**•** Run full IP intelligence:
+[Traceroute options](docs/cli.md#traceroute)
 
-```bash
---ip-intel <ip>
+</details>
+
+<details>
+<summary><strong>IP intelligence</strong> — address context and a quick service check</summary>
+
+Gather geolocation, reverse DNS, ASN/BGP and abuse contact information, DNS blocklist responses, a fixed TCP port check, and certificate details where available. Uses public services and local helper programs; lookups may be unavailable or rate limited. Results describe an address and its infrastructure, not a person's location or identity. The current blocklist workflow is IPv4-oriented.
+
+```sh
+dark-nexus --ip-intel 127.0.0.1
 ```
 
-**•** Run DNS lookup:
+</details>
 
-```bash
---dns <domain>
+<details>
+<summary><strong>Site lookup</strong> — URL host resolution and IP context</summary>
+
+Extract a hostname from an HTTP(S) URL, resolve it, and run the IP intelligence workflow. This performs active port checks as well as external lookups. It describes the resolved address, which may belong to a CDN or shared host, rather than auditing the web application.
+
+```sh
+dark-nexus --site https://example.test/
 ```
 
-**•** Run WHOIS lookup:
+</details>
 
-```bash
---whois <target>
+<details>
+<summary><strong>OSINT</strong> — public account observations and identity hypotheses</summary>
+
+Detect username, email, or phone input and collect public observations, related candidates, confidence scores, and an identity graph summary. Available Sherlock, Maigret, Holehe, theHarvester, and PhoneInfoga helpers provide additional observations; missing helpers are skipped. Generated candidates are hypotheses, and confidence labels are heuristic. The module does not provide authenticated breach-database access by default.
+
+```sh
+dark-nexus --osint user@example.test
 ```
 
-**•** Convert site URL to IP and run intelligence:
+[Identity graph notes](docs/osint-identity-graph.md)
 
-```bash
---site <url>
+</details>
+
+<details>
+<summary><strong>Recon</strong> — combined IP investigation</summary>
+
+Run IP intelligence, DNS lookup, OS detection, and the default port scan sequentially for one resolved IP. The component defaults apply; port scan and traceroute tuning flags belong to their standalone modules. This workflow makes active probes and external lookups and does not replace a full asset inventory or security assessment.
+
+```sh
+dark-nexus --recon 127.0.0.1 --output recon.json
 ```
 
-**•** Run OSINT on a username, email address, or phone number:
+</details>
 
-```bash
---osint <target>
-```
+## Project
 
-**•** Run traceroute:
+By Marshal · [Feedback](https://t.me/serophobe) · [GNU AGPL v3](LICENSE)
 
-```bash
---traceroute <ip>
-```
-
-**•** Run full IP recon:
-
-```bash
---recon <ip>
-```
-
-**•** Run subdomain scan:
-
-```bash
---subdomain <domain>
-```
-
-**•** Set subdomain scan mode:
-
-```bash
---mode <F|D>
-```
-
-`F` = Fast, `D` = Deep.
-
-**•** Export result to file:
-
-```bash
---output <file>
-```
-
-Format is auto-detected from the file extension.
-
-**•** Export result to JSON:
-
-```bash
---json <file>
-```
-
-Alias for `--output`.
-
-**•** Show the help menu:
-
-```bash
--h, --help
-```
-
-## Examples
-
-**•** Fast subdomain scan with JSON export:
-
-```bash
-dark-nexus --subdomain google.com --mode F --output result.json
-```
-
-**•** Port scan top 1000 ports with aggressive timing and excluded ports:
-
-```bash
-dark-nexus --portscan 192.168.1.1 0 -T4 --exclude 80,443
-```
-
-**•** IPv4-only port scan for selected ports:
-
-```bash
-dark-nexus --portscan scanme.nmap.org 22,80 --ipv4
-```
-
-**•** IPv6-only port scan:
-
-```bash
-dark-nexus --portscan example.com 443 --ipv6
-```
-
-**•** UDP scan mode:
-
-```bash
-dark-nexus --portscan 192.168.1.1 0U
-```
-
-**•** OSINT scan for an email address:
-
-```bash
-dark-nexus --osint user@mail.com
-```
-
-## Legal
-
-For **educational purposes** and **authorized penetration testing only**.  
-Do not use against systems you do not own or have explicit written permission to test.  
-The author is not responsible for any misuse or damage caused by this tool.
-
-
-## Author
-By - Marshal
-
-Bugs & feedback welcome - [t.me/serophobe](https://t.me/serophobe)
+Use only on systems you own or have permission to assess. Public-source queries are subject to each provider's terms and availability.
