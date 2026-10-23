@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Installer regressions: fake package managers/CMake, no sudo or network."""
 import os
+import errno
+import fcntl
+import pty
+import re
+import select
+import struct
+import termios
 from pathlib import Path
 import shlex
 import signal
@@ -50,6 +57,10 @@ if os.environ.get('DNX_TEST_SLOW'):
 if '--build' in sys.argv:
     if os.environ.get('DNX_TEST_BUILD_FAIL'): sys.exit(9)
     build = Path(sys.argv[sys.argv.index('--build') + 1])
+    if os.environ.get('DNX_TEST_PROGRESS'):
+        for i in range(1, 5):
+            print(f'[{i}/4] Building object {i}', flush=True)
+            time.sleep(0.12)
     target = build / 'dark_nexus'
     target.write_text('#!/usr/bin/env bash\\nif [[ "${DNX_TEST_VERSION_FAIL:-}" == 1 ]]; then exit 8; fi\\nprintf "dark-nexus 2.0.0\\\\n"\\n')
     target.chmod(0o755)
@@ -260,6 +271,128 @@ dnx_helpers''')
 DNX_HELPERS={shlex.quote(str(self.root / 'helpers'))}
 dnx_link_helper /other/bin/sherlock sherlock''')
         self.assertEqual(target.read_text(), 'user-tool')
+
+    def terminal_install(self, *, changes=None, args=None, code=0, columns=80, cancel=False):
+        source, env = self.fixture()
+        env.pop('NO_COLOR', None)
+        env.update(TERM='xterm-256color', LANG='C.UTF-8', DNX_TEST_PROGRESS='1')
+        env.update(changes or {})
+        prefix = self.root / 'terminal-install'
+        (prefix / 'bin').mkdir(parents=True)
+        (prefix / 'bin/dark-nexus').write_text('old executable')
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, columns, 0, 0))
+        marker = self.root / 'terminal-active'
+        if cancel:
+            env['DNX_TEST_SLOW'] = str(marker)
+        process = subprocess.Popen(['bash', str(INSTALLER), '--skip-deps', '--skip-helpers',
+                                    '--prefix', str(prefix), '--source', str(source), *(args or [])],
+                                   stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, env=env)
+        os.close(slave)
+        output = bytearray()
+        deadline = time.monotonic() + 15
+        cancelled = False
+        try:
+            while time.monotonic() < deadline:
+                if cancel and marker.exists() and not cancelled:
+                    process.send_signal(signal.SIGTERM)
+                    cancelled = True
+                ready, _, _ = select.select([master], [], [], 0.05)
+                if ready:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError as error:
+                        if error.errno != errno.EIO: raise
+                        break
+                    if not chunk: break
+                    output.extend(chunk)
+                elif process.poll() is not None:
+                    break
+            process.wait(timeout=2)
+            text = output.decode(errors='replace')
+            self.assertEqual(process.returncode, code, text)
+            log = next((line[5:].strip() for line in text.splitlines()
+                        if line.startswith('Log: /tmp/dark-nexus-install.')), None)
+            full_log = Path(log).read_text() if log else ''
+            if log: Path(log).unlink(missing_ok=True)
+            return text, full_log, prefix
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            os.close(master)
+
+    def test_terminal_panel_has_real_counts_and_completes(self):
+        output, log, prefix = self.terminal_install()
+        self.assertIn('4/6 Compile', output)
+        self.assertIn('4/4 tasks', output)
+        self.assertIn('6/6 Complete', output)
+        self.assertIn('\x1b[?25l', output)
+        self.assertIn('\x1b[?25h', output)
+        self.assertIn('\x1b[36m', output)
+        self.assertIn('[1/4] Building object 1', log)
+        self.assertIn('[4/4] Building object 4', log)
+        self.assertIn('2.0.0', (prefix / 'bin/dark-nexus').read_text())
+
+    def test_terminal_panel_no_color(self):
+        output, _, _ = self.terminal_install(changes={'NO_COLOR': ''})
+        self.assertNotIn('\x1b[36m', output)
+        self.assertIn('6/6 Complete', output)
+        self.assertIn('\x1b[?25h', output)
+
+    def test_terminal_plain_option(self):
+        output, _, _ = self.terminal_install(args=['--no-progress'])
+        self.assertNotIn('\x1b', output)
+        self.assertIn('fixture CMake: visible output', output)
+
+    def test_dumb_terminal_keeps_plain_logs(self):
+        output, _, _ = self.terminal_install(changes={'TERM': 'dumb'})
+        self.assertNotIn('\x1b', output)
+        self.assertIn('Installation complete', output)
+
+    def test_narrow_terminal_panel(self):
+        output, _, _ = self.terminal_install(columns=36)
+        self.assertIn('Installation complete', output)
+        for frame in re.findall(r'\x1b\[2K(?:\x1b\[36m)?([^\r\n\x1b]+)', output):
+            self.assertLessEqual(len(frame), 35, repr(frame))
+
+    def test_terminal_failure_shows_diagnostics_and_restores_cursor(self):
+        output, _, prefix = self.terminal_install(changes={'DNX_TEST_BUILD_FAIL': '1'}, code=9)
+        self.assertIn('Recent output:', output)
+        self.assertIn('failed (exit 9)', output)
+        self.assertIn('\x1b[?25h', output)
+        self.assertNotIn('6/6 Complete', output)
+        self.assertEqual((prefix / 'bin/dark-nexus').read_text(), 'old executable')
+
+    def test_terminal_cancel_restores_cursor(self):
+        output, _, prefix = self.terminal_install(cancel=True, code=143)
+        self.assertIn('\x1b[?25h', output)
+        self.assertNotIn('6/6 Complete', output)
+        self.assertEqual((prefix / 'bin/dark-nexus').read_text(), 'old executable')
+
+    def test_progress_does_not_advance_with_elapsed_time(self):
+        output = self.shell('''DNX_COLUMNS=80 DNX_PHASE=3 DNX_PHASES=6
+DNX_TASK_DONE=0 DNX_TASK_TOTAL=0 DNX_STAGE_TITLE=Configure DNX_OPERATION=Waiting
+DNX_UI_COLOR='' DNX_UI_RESET='' DNX_UI_UNICODE=0 DNX_STAGE_SECONDS=$SECONDS
+dnx_ui_draw 0
+DNX_STAGE_SECONDS=$((SECONDS - 120))
+dnx_ui_draw 99''').stdout
+        bars = re.findall(r'\[([=\-]+)\]', output)
+        self.assertEqual(len(bars), 2)
+        self.assertEqual(bars[0], bars[1])
+
+    def test_terminal_batches_logs_and_preserves_partial_lines(self):
+        command = "printf partial; sleep 0.2; printf '%s\\n' '-result'; for ((i=1;i<=1000;i++)); do echo \"compiler line $i\"; done"
+        result = self.shell('''DNX_UI=1 DNX_UI_COLOR='' DNX_UI_RESET='' DNX_UI_UNICODE=0
+DNX_PHASE=4 DNX_PHASES=6 DNX_STAGE_TITLE=Compile DNX_STAGE_SECONDS=$SECONDS
+dnx_run fixture 5 bash -c ''' + shlex.quote(command))
+        log = self.log.read_text()
+        self.assertIn('partial-result', log)
+        self.assertIn('compiler line 1000', log)
+        self.assertLess(len(result.stdout), len(log), 'terminal should summarize a burst instead of redrawing each log line')
 
 
 if __name__ == '__main__':

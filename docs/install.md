@@ -7,7 +7,11 @@ curl -fsSLm120 https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install
 dark-nexus --help
 ```
 
-The bootstrap download has a 120-second limit. The installer displays actual package-manager, download and compiler output, with a separate time limit for each operation. It never presents an estimated percentage as download progress.
+The command installs missing dependencies, downloads source, configures CMake, compiles and installs the executable, and installs the DNS wordlist. After successful completion, run `dark-nexus --help`; no manual compilation is needed. Network access, runtime helpers and raw socket permissions still depend on the selected module.
+
+The bootstrap download has a 120-second limit. In a terminal the installer shows a compact two-line progress panel: completed stages, a current-operation indicator, elapsed time and the latest activity. Compilation includes Ninja's real completed/total task count. The bar represents completed stages and known compilation work, rather than an estimate of remaining time or download bytes. Unknown-size downloads use an animated indicator without an invented percentage.
+
+UTF-8 terminals use a thin cyan bar; other locales use ASCII. `NO_COLOR` disables colors. Pipes, `TERM=dumb` and CI without a terminal receive plain live output. Full command output is always saved to the printed log path, and failures show recent log lines. The cursor is restored on completion, failure or cancellation.
 
 ## Previously stopped at 17%
 
@@ -37,9 +41,12 @@ From a checkout:
 ```sh
 sudo bash install.sh --help
 sudo bash install.sh --skip-helpers
+sudo bash install.sh --no-progress
 ```
 
 `--skip-helpers` installs the core toolkit and its dependencies without optional OSINT Python/Go tools. The core installation still includes the DNS wordlist.
+
+`--no-progress` shows all live command output instead of the terminal panel. `DARK_NEXUS_PROGRESS=0` also disables animation when running the local script.
 
 With dependencies already installed, build into a user-owned directory without running a package manager:
 
@@ -52,6 +59,6 @@ bash install.sh --skip-deps --skip-helpers --prefix "$HOME/.local" --source "$PW
 
 ## Verification
 
-`python3 tests/installer_tests.py` tests package selection, blocked/failing package managers, timeouts, child-process cleanup, piped-script startup and preservation of an existing executable. It uses fake package/build commands and temporary install directories; no root privileges, package installation or external scans are involved. These checks also run through CTest when Python is available.
+`python3 tests/installer_tests.py` tests package selection, blocked/failing package managers, timeouts, child-process cleanup, piped-script startup and preservation of an existing executable. Pseudo-terminal checks cover compilation counts, narrow terminals, plain/color-free modes, log preservation and cursor restoration on failure or cancellation. It uses fake package/build commands and temporary install directories; no root privileges, package installation or external scans are involved. These checks also run through CTest when Python is available.
 
 See [README](../README.md#install) for manual source-build commands and the [CLI reference](cli.md) for module usage.

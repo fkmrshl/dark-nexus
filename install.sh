@@ -16,12 +16,173 @@ Usage: sudo bash install.sh [options]
   --source DIR    Build a local checkout instead of downloading source
   --skip-deps     Use existing system dependencies; do not run a package manager
   --skip-helpers  Skip optional OSINT helpers
+  --no-progress   Print full live output instead of the terminal progress panel
   -h, --help      Show this help
 
-Download, dependency and build operations have time limits. Output is shown live
-and saved to the log path printed at startup. Existing installations are replaced
-only after the new binary has built and passed its version check.
+Download, dependency and build operations have time limits. A terminal shows
+stage progress and recent activity; full output is saved to the printed log path.
+Existing installations are replaced only after the new binary has built and
+passed its version check.
 HELP
+}
+
+# Only the renderer writes the animated panel. Pipes and CI keep plain logs.
+dnx_ui_init() {
+    DNX_UI=0 DNX_UI_UNICODE=0 DNX_UI_COLOR='' DNX_UI_RESET='' DNX_PHASE=0 DNX_PHASES=6
+    DNX_STAGE_TITLE=Starting
+    if [[ -t 1 && "${TERM:-dumb}" != dumb && "${DNX_NO_PROGRESS:-0}" == 0 && "${DARK_NEXUS_PROGRESS:-auto}" != 0 ]]; then
+        DNX_UI=1
+        if [[ ! -v NO_COLOR ]]; then DNX_UI_COLOR=$'\033[36m'; DNX_UI_RESET=$'\033[0m'; fi
+        case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+            *[Uu][Tt][Ff]*8*) DNX_UI_UNICODE=1 ;;
+        esac
+    fi
+}
+
+dnx_stage() {
+    DNX_PHASE=$1
+    DNX_STAGE_TITLE=$2
+    DNX_STAGE_SECONDS=$SECONDS
+}
+
+dnx_stage_done() {
+    if [[ "${DNX_UI:-0}" == 1 ]]; then
+        printf '  %s+%s  %s/%s  %s\n' "$DNX_UI_COLOR" "$DNX_UI_RESET" "$DNX_PHASE" "$DNX_PHASES" "$DNX_STAGE_TITLE"
+    fi
+}
+
+dnx_ui_complete() {
+    [[ "${DNX_UI:-0}" == 1 ]] || return 0
+    local width=18 bar line
+    dnx_ui_columns
+    (( DNX_COLUMNS >= 60 )) || width=8
+    printf -v bar '%*s' "$width" ''
+    if [[ "${DNX_UI_UNICODE:-0}" == 1 ]]; then bar=${bar// /━}; else bar=${bar// /=}; fi
+    line="  [$bar] $DNX_PHASES/$DNX_PHASES Complete"
+    printf '\n%s%s%s\n' "$DNX_UI_COLOR" "${line:0:DNX_COLUMNS-1}" "$DNX_UI_RESET"
+}
+
+dnx_ui_columns() {
+    local columns terminal_fd
+    # stdin is the downloaded script pipe (then /dev/null), not the terminal.
+    # Preserve stdout's TTY fd across command substitution before querying size.
+    exec {terminal_fd}>&1
+    columns=$(stty size <&"$terminal_fd" 2>/dev/null || true)
+    exec {terminal_fd}>&-
+    columns=${columns##* }
+    if [[ ! "$columns" =~ ^[0-9]{1,3}$ ]]; then
+        columns=$(env -u COLUMNS tput cols 2>/dev/null || printf '80')
+    fi
+    [[ "$columns" =~ ^[0-9]{1,3}$ ]] || columns=80
+    (( columns >= 10 )) || columns=10
+    DNX_COLUMNS=$columns
+}
+
+dnx_ui_clear() {
+    if [[ "${DNX_UI_DRAWN:-0}" == 1 ]]; then
+        printf '\r\033[2K\033[1A\r\033[2K'
+        DNX_UI_DRAWN=0
+    fi
+}
+
+dnx_ui_draw() {
+    local tick=$1 elapsed=$(( SECONDS - DNX_STAGE_SECONDS )) width filled bar='' i glyph line detail counts=''
+    local frames='|/-\' solid='=' empty='-'
+    if [[ "${DNX_UI_UNICODE:-0}" == 1 ]]; then frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; solid='━'; empty='─'; fi
+    (( elapsed >= 0 )) || elapsed=0
+    if (( DNX_COLUMNS >= 100 )); then width=24
+    elif (( DNX_COLUMNS >= 80 )); then width=18
+    elif (( DNX_COLUMNS >= 60 )); then width=12
+    else width=8; fi
+    # Completed stages are real progress. Only Ninja's task count advances a
+    # running stage; elapsed time changes the spinner, never the completion bar.
+    filled=$(( (DNX_PHASE - 1) * width / DNX_PHASES ))
+    if (( DNX_TASK_TOTAL > 0 )); then
+        filled=$(( ((DNX_PHASE - 1) * width + width * DNX_TASK_DONE / DNX_TASK_TOTAL) / DNX_PHASES ))
+        counts="  $DNX_TASK_DONE/$DNX_TASK_TOTAL tasks"
+    fi
+    (( filled >= 0 )) || filled=0
+    (( filled <= width )) || filled=$width
+    for (( i=0; i<width; ++i )); do
+        if (( i < filled )); then bar+=$solid; else bar+=$empty; fi
+    done
+    glyph=${frames:tick%${#frames}:1}
+    (( DNX_COLUMNS >= 60 )) || counts=''
+    printf -v line '  %s [%s] %s/%s %s%s  %02d:%02d' "$glyph" "$bar" "$DNX_PHASE" "$DNX_PHASES" "$DNX_STAGE_TITLE" "$counts" "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
+    detail="    ${DNX_ACTIVITY:-$DNX_OPERATION}"
+    line=${line:0:DNX_COLUMNS-1}
+    detail=${detail:0:DNX_COLUMNS-1}
+    dnx_ui_clear
+    printf '\r\033[2K%s%s%s\n\r\033[2K%s' "$DNX_UI_COLOR" "$line" "$DNX_UI_RESET" "$detail"
+    DNX_UI_DRAWN=1
+}
+
+dnx_ui_line() {
+    local line=$1 sequence
+    # Logs keep the original output; terminal status text cannot move the cursor.
+    printf '%s\n' "$line" >>"$DNX_LOG" || return
+    if [[ "$DNX_STAGE_TITLE" == Compile && "$line" =~ \[([0-9]+)/([0-9]+)\] ]]; then
+        local done=${BASH_REMATCH[1]} total=${BASH_REMATCH[2]}
+        if (( total > 0 && done >= DNX_TASK_DONE && done <= total )); then
+            DNX_TASK_DONE=$done DNX_TASK_TOTAL=$total
+        fi
+    fi
+    while [[ "$line" =~ $'\033''\[[0-?]*[ -/]*[@-~]' ]]; do
+        sequence=${BASH_REMATCH[0]}
+        line=${line//"$sequence"/}
+    done
+    line=${line//[$'\001'-$'\037'$'\177']/}
+    [[ -z "$line" ]] || DNX_ACTIVITY=$line
+}
+
+dnx_ui_restore() {
+    dnx_ui_clear
+    printf '\033[?25h'
+}
+
+dnx_ui_stream() {
+    # A process substitution must not inherit the installer's EXIT cleanup.
+    trap - EXIT INT TERM
+    local chunk pending='' line result tick=0 last_size_check=-1
+    DNX_UI_DRAWN=0 DNX_TASK_DONE=0 DNX_TASK_TOTAL=0 DNX_ACTIVITY=$DNX_OPERATION
+    trap dnx_ui_restore EXIT
+    printf '\033[?25l'
+    while :; do
+        if (( SECONDS != last_size_check )); then
+            dnx_ui_columns
+            last_size_check=$SECONDS
+        fi
+        dnx_ui_draw "$tick"
+        chunk=''
+        # Read batches instead of redrawing for every compiler/download line.
+        # Timed reads can return a partial chunk: retain it until its newline.
+        if IFS= read -r -N 4096 -t 0.1 chunk; then result=0; else result=$?; fi
+        pending+=$chunk
+        while [[ "$pending" == *$'\n'* ]]; do
+            line=${pending%%$'\n'*}
+            pending=${pending#*$'\n'}
+            dnx_ui_line "$line" || return
+        done
+        if (( result != 0 && result <= 128 )); then
+            [[ -z "$pending" ]] || dnx_ui_line "$pending" || return
+            dnx_ui_draw "$tick"
+            break
+        fi
+        tick=$(( tick + 1 ))
+    done
+}
+
+dnx_finish_output() {
+    local result=0
+    if [[ -n "${DNX_OUTPUT_FD:-}" ]]; then
+        exec {DNX_OUTPUT_FD}>&-
+        DNX_OUTPUT_FD=''
+    fi
+    if [[ -n "${DNX_RENDER_PID:-}" ]]; then
+        wait "$DNX_RENDER_PID" || result=$?
+        DNX_RENDER_PID=''
+    fi
+    return "$result"
 }
 
 dnx_jobs() {
@@ -44,6 +205,8 @@ dnx_jobs() {
 dnx_cleanup() {
     local status=$?
     trap - EXIT
+    dnx_finish_output || true
+    if [[ "${DNX_UI:-0}" == 1 ]]; then printf '%s\033[?25h' "$DNX_UI_RESET"; fi
     if (( status != 0 )); then
         printf '\nInstallation failed (exit %s). Log: %s\n' "$status" "${DNX_LOG:-not created}" >&2
     fi
@@ -64,24 +227,34 @@ dnx_interrupt() {
         wait "$DNX_ACTIVE_PID" 2>/dev/null || true
         DNX_ACTIVE_PID=''
     fi
+    dnx_finish_output || true
     exit "$status"
 }
 
 # Keep the command PID so Ctrl-C/TERM stops its downloads before cleanup.
 # The separate tee is joined as well, preserving both exit codes and all output.
 dnx_run() {
-    local label=$1 limit=$2 rc=0 log_rc=0 output_fd tee_pid
+    local label=$1 limit=$2 rc=0 log_rc=0
     shift 2
-    printf '\n[%s]\n' "$label" | tee -a "$DNX_LOG" || return
-    exec {output_fd}> >(tee -a "$DNX_LOG")
-    tee_pid=$!
-    timeout --signal=TERM --kill-after=30s "${limit}s" "$@" </dev/null >&"$output_fd" 2>&1 &
+    DNX_OPERATION=$label
+    if [[ "${DNX_UI:-0}" == 1 ]]; then
+        printf '\n[%s]\n' "$label" >>"$DNX_LOG" || return
+        exec {DNX_OUTPUT_FD}> >(dnx_ui_stream)
+    else
+        printf '\n[%s]\n' "$label" | tee -a "$DNX_LOG" || return
+        exec {DNX_OUTPUT_FD}> >(tee -a "$DNX_LOG")
+    fi
+    DNX_RENDER_PID=$!
+    timeout --signal=TERM --kill-after=30s "${limit}s" "$@" </dev/null >&"$DNX_OUTPUT_FD" 2>&1 &
     DNX_ACTIVE_PID=$!
     wait "$DNX_ACTIVE_PID" || rc=$?
     DNX_ACTIVE_PID=''
-    exec {output_fd}>&-
-    wait "$tee_pid" || log_rc=$?
+    dnx_finish_output || log_rc=$?
     (( rc != 0 )) || rc=$log_rc
+    if (( rc != 0 )) && [[ "${DNX_UI:-0}" == 1 ]]; then
+        printf '\nRecent output:\n' >&2
+        tail -n 12 "$DNX_LOG" >&2 || true
+    fi
     if (( rc == 124 || rc == 137 )); then
         dnx_warn "$label exceeded ${limit}s. Check the last output and network/mirror access; log: $DNX_LOG"
     elif (( rc != 0 )); then
@@ -261,17 +434,21 @@ dnx_main() {
     DNX_LOCAL_SOURCE=''
     DNX_SKIP_DEPS=0
     DNX_SKIP_HELPERS=0
+    DNX_NO_PROGRESS=0
     DNX_WORK=''
     DNX_LOG=''
     DNX_PENDING_BINARY=''
     DNX_PENDING_WORDLIST=''
     DNX_ACTIVE_PID=''
+    DNX_OUTPUT_FD=''
+    DNX_RENDER_PID=''
     while (( $# )); do
         argument=$1
         case "$argument" in
             -h|--help) dnx_help; return 0 ;;
             --skip-deps) DNX_SKIP_DEPS=1 ;;
             --skip-helpers) DNX_SKIP_HELPERS=1 ;;
+            --no-progress) DNX_NO_PROGRESS=1 ;;
             --prefix|--source)
                 (( $# >= 2 )) && [[ -n "$2" && "$2" != --* ]] || { dnx_die "$argument needs a value" 2; return 2; }
                 if [[ "$argument" == --prefix ]]; then DNX_PREFIX=$2; else DNX_LOCAL_SOURCE=$2; fi
@@ -311,15 +488,30 @@ dnx_main() {
     # Package managers and helpers cannot consume the script pipe or prompt on stdin.
     exec </dev/null
     export GIT_TERMINAL_PROMPT=0
+    export NINJA_STATUS='[%f/%t] '
     export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=http.lowSpeedLimit GIT_CONFIG_VALUE_0=1024 GIT_CONFIG_KEY_1=http.lowSpeedTime GIT_CONFIG_VALUE_1=60
-    dnx_message "Dark Nexus installer | workers: $jobs"
+    dnx_ui_init
+    dnx_message "Dark Nexus / install | workers: $jobs"
     dnx_message "Log: $DNX_LOG"
+    dnx_stage 1 Dependencies
     if (( ! DNX_SKIP_DEPS )); then dnx_dependencies; else dnx_message 'Using existing system dependencies.'; fi
+    dnx_stage_done
+    dnx_stage 2 Source
     dnx_prepare_source
+    dnx_stage_done
+    dnx_stage 3 Configure
     dnx_run 'Configure build and dependencies (up to 15 minutes)' 900 cmake -S "$DNX_SOURCE" -B "$DNX_SOURCE/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_TLS_VERIFY=ON
+    dnx_stage_done
+    dnx_stage 4 Compile
     dnx_run 'Compile (up to 60 minutes)' 3600 cmake --build "$DNX_SOURCE/build" --parallel "$jobs"
+    dnx_stage_done
+    dnx_stage 5 Install
     dnx_install_binary
+    dnx_stage_done
+    dnx_stage 6 Helpers
     dnx_helpers
+    dnx_stage_done
+    dnx_ui_complete
     printf '\nInstallation complete. Run: %s/bin/dark-nexus --help\n' "$DNX_PREFIX"
     dnx_message "Log: $DNX_LOG"
 }

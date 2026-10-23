@@ -14,7 +14,7 @@ Install or update with one command (Linux, with `curl` and `sudo`):
 curl -fsSLm120 https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh | sudo bash
 ```
 
-Then run `dark-nexus --help`. The installer downloads the source, installs missing dependencies, builds the application and DNS wordlist, and attempts to configure raw socket capabilities. It shows live output and prints a log path. Optional OSINT helpers are attempted after the main application is installed; helper failures do not block it.
+Then run `dark-nexus --help`; no separate build command is needed. The installer downloads the source, installs missing dependencies, compiles and installs the application, installs the DNS wordlist, and attempts to configure raw socket capabilities. In a terminal it shows a compact progress panel with the current stage, elapsed time, recent activity and real compilation task counts. Full output is saved to the printed log path; redirected output stays plain. Optional OSINT helpers are attempted after the main application is installed; helper failures do not block it.
 
 On Arch/CachyOS, the installer uses existing package databases and installs only missing packages. It does not launch a full system upgrade. See [installation troubleshooting](docs/install.md) for mirror errors, package locks, time limits, or a minimal installation.
 
