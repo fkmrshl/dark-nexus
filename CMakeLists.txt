@@ -38,6 +38,7 @@ FetchContent_Declare(c-ares
     GIT_TAG cares-1_28_1
     GIT_SHALLOW TRUE)
 set(CARES_STATIC ON CACHE BOOL "" FORCE)
+set(CARES_STATIC_PIC ON CACHE BOOL "" FORCE)
 set(CARES_SHARED OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(c-ares)
 

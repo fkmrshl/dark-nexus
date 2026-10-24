@@ -6,6 +6,13 @@
 #include <array>
 #include <cassert>
 #include <memory>
+#include <stdexcept>
+
+// Some compilers retain an ASN-lookup clone from traceroute.cpp. Supply its
+// dependency without linking process execution into this packet-only test.
+std::string safe_exec(const std::vector<std::string>&, int) {
+    throw std::logic_error("packet unit tests must not execute child helpers");
+}
 
 namespace {
 constexpr int outer_length = 20;
