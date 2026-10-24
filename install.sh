@@ -328,10 +328,10 @@ dnx_packages() {
 
 dnx_dependencies() {
     case "$DNX_FAMILY" in
-        debian) dnx_packages 'Core dependencies' build-essential cmake ninja-build pkg-config ca-certificates libssl-dev liburing-dev libcap2-bin libcap-dev git curl whois dnsutils iputils-ping ;;
+        debian) dnx_packages 'Core dependencies' build-essential cmake ninja-build pkg-config ca-certificates libssl-dev openssl liburing-dev libcap2-bin libcap-dev git curl whois dnsutils iputils-ping ;;
         arch) dnx_packages 'Core dependencies' base-devel cmake ninja pkgconf ca-certificates openssl liburing libcap git curl whois bind iputils ;;
-        fedora) dnx_packages 'Core dependencies' gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config ca-certificates openssl-devel liburing-devel libcap libcap-devel git curl whois bind-utils iputils ;;
-        suse) dnx_packages 'Core dependencies' gcc gcc-c++ make cmake ninja pkg-config ca-certificates libopenssl-devel liburing-devel libcap-progs libcap-devel git curl whois bind-utils iputils ;;
+        fedora) dnx_packages 'Core dependencies' gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config ca-certificates openssl-devel openssl liburing-devel libcap libcap-devel git curl whois bind-utils iputils ;;
+        suse) dnx_packages 'Core dependencies' gcc gcc-c++ make cmake ninja pkg-config ca-certificates libopenssl-devel openssl liburing-devel libcap-progs libcap-devel git curl whois bind-utils iputils ;;
     esac
 }
 

@@ -36,6 +36,16 @@ void valid_cases() {
     check(cli::parse({"-V"}).version, "version alias");
     check(cli::parse({"--list-modules"}).list_modules, "list modules");
     for (const auto& args : std::vector<std::vector<std::string>> {
+            {"doctor"}, {"--doctor"}, {"doctor", "--no-log", "--no-color"},
+            {"--doctor", "--json", "-"}, {"doctor", "--output", "-", "--format", "json"}}) {
+        const auto options = cli::parse(args);
+        check(options.doctor && options.target.empty() && options.module.empty(), "targetless doctor action");
+    }
+    for (const auto& args : std::vector<std::vector<std::string>> {
+            {"--help", "doctor"}, {"--help=doctor"}, {"--doctor", "--help"}, {"doctor", "--help"}})
+        check(cli::parse(args).doctor && cli::parse(args).help, "doctor help");
+    check(cli::help("doctor").find("CAP_NET_RAW") != std::string::npos, "doctor detailed help");
+    for (const auto& args : std::vector<std::vector<std::string>> {
             {"--help", "portscan"}, {"--help=portscan"},
             {"--portscan", "--help"}, {"--help", "--portscan"},
             {"--portscan", "127.0.0.1", "--help"}}) {
@@ -120,6 +130,16 @@ void valid_cases() {
 }
 
 void invalid_cases() {
+    for (const auto& args : std::vector<std::vector<std::string>> {
+            {"doctor", "target"}, {"--doctor=target"}, {"--doctor", "doctor"},
+            {"doctor", "--doctor"}, {"--doctor", "--version"}, {"doctor", "--list-modules"},
+            {"--doctor", "--dns", "example.com"}, {"doctor", "--ports", "80"},
+            {"doctor", "--quiet"}, {"doctor", "--log-file", "diagnostic.log"},
+            {"doctor", "--output", "report.json"}, {"doctor", "--json", "report.json"},
+            {"doctor", "--output", "-", "--format", "txt"},
+            {"doctor", "--output", "-", "--format", "csv"}, {"doctor", "--format", "json"},
+            {"--doctor", "--doctor"}, {"--doctor", "--no-log", "--log-file", "x"}})
+        rejects(args, "doctor conflicting or unsupported option");
     const std::vector<std::vector<std::string>> invalid = {
         {"--dns"}, {"--dns", ""}, {"--dns", " "}, {"--dns="}, {"--dns", "x\ny"},
         {"--dns", "x", "unexpected"}, {"x"}, {"portscan", "x"}, {"--unknown", "x"},

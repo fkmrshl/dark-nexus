@@ -14,6 +14,8 @@ dark-nexus --list-modules
 dark-nexus --version
 ```
 
+`dark-nexus doctor` is a separate local diagnostic command and takes no target.
+
 Unknown options, missing values, repeated or conflicting flags, and options that do not apply to the selected module are usage errors. Validation happens before the scan starts. Options such as `--timeout` and `--threads` configure only the modules listed below; they are not global limits for every operation. `--` ends option parsing.
 
 ## Modules and targets
@@ -57,6 +59,28 @@ dark-nexus --netscan 127.0.0.1
 Logging is disabled unless requested. `--no-log` and `--log-file` cannot be combined. `--quiet` does not suppress errors or an explicitly selected export.
 
 Automatic color follows terminal detection, `NO_COLOR`, and `TERM=dumb`. Redirected output is plain by default; `--color always` explicitly enables styling.
+
+## Local diagnostics
+
+```sh
+dark-nexus doctor
+dark-nexus --doctor
+dark-nexus --help doctor
+dark-nexus doctor --json -
+dark-nexus doctor --output - --format json
+```
+
+Doctor checks the running version, core runtime helpers (`dig`, `whois`, `host`, `ping`, `curl`, `openssl`, `getent`), optional OSINT executables, known external DNS wordlist paths and the process's effective `CAP_NET_RAW`. It performs local file and capability checks only: no network requests, socket probes, helper execution, package installation or log files.
+
+`ok` means a local prerequisite was detected; it does not certify that an external tool, API or network operation will succeed. Missing core helpers are marked `fail`, with the affected workflows and suggested remedies. Missing optional OSINT helpers, an external wordlist or raw capability are `warn`; the built-in wordlist and TCP connect mode remain available. Raw capability describes the current process before any scan-specific privilege drop and does not guarantee that host/container policy will permit raw sockets.
+
+Core executables are resolved using the runtime `PATH`. OSINT tools also use the module's standard fallback directories. Executables must be regular files with execute permission; symlinks to suitable files are accepted. Wordlists must be regular, readable and nonempty. Doctor searches known paths without invoking `locate`.
+
+Default output is a compact text report. `--output -` defaults to JSON; `--json -` is shorthand. The independent JSON schema includes `schema_version`, `version`, aggregate `status` and `checks`. Each check has a stable `id`, `status`, `detail`, `remedy` and `workflows`. It does not use the scan-result schema.
+
+Doctor accepts color options and `--no-log`. Targets, scan options, `--quiet`, `--log-file`, file exports and CSV/TXT formats are usage errors. Redirect stdout if you need to save the report: `dark-nexus doctor --json - > doctor.json`.
+
+Exit `0` means no core prerequisite was missing (warnings may remain); `1` means a core helper is missing or diagnostics/output failed; `2` means invalid arguments. Check the exit code before treating the report as complete.
 
 ## Port scan
 

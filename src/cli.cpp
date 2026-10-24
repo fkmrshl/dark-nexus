@@ -166,10 +166,16 @@ Options parse(const std::vector<std::string>& args) {
                 options.target = value();
                 explicit_target = true;
             }
+        } else if (flag == "--doctor") {
+            switch_option(options.doctor, "doctor");
         } else if (flag == "--help" || flag == "-h") {
             once("help", flag);
             options.help = true;
-            if (attached) select_module(value());
+            if (attached) {
+                const auto subject = value();
+                if (subject == "doctor") { once("doctor", "doctor"); options.doctor = true; }
+                else select_module(subject);
+            }
         } else if (flag == "--version" || flag == "-V") {
             switch_option(options.version, "version");
         } else if (flag == "--list-modules") {
@@ -318,6 +324,24 @@ Options parse(const std::vector<std::string>& args) {
         }
     }
 
+    if (options.module.empty() && !positional.empty() && positional.front() == "doctor") {
+        once("doctor", "doctor");
+        options.doctor = true;
+        positional.erase(positional.begin());
+    }
+    if (options.doctor) {
+        if (!options.module.empty() || !options.target.empty() || !positional.empty())
+            throw Error("doctor does not accept a target or a scan module");
+        if (options.version || options.list_modules || !scoped.empty())
+            throw Error("doctor cannot be combined with other actions or scan options");
+        if (options.quiet || !options.log_file.empty())
+            throw Error("doctor does not accept --quiet or --log-file");
+        if ((!options.output.empty() && options.output != "-") ||
+            (!options.format.empty() && options.format != "json"))
+            throw Error("doctor supports stdout text or JSON only; use --json -");
+        if (!options.format.empty() && options.output.empty()) throw Error("--format requires --output");
+        return options;
+    }
     if (options.help && options.module.empty() && !positional.empty()) {
         select_module(positional.front());
         positional.erase(positional.begin());
@@ -393,12 +417,26 @@ std::string modules() {
 }
 
 std::string help(const std::string& module) {
+    if (module == "doctor") {
+        return "dark-nexus doctor | local environment\n\n"
+               "Usage: dark-nexus doctor [--json -] [--no-color]\n"
+               "       dark-nexus --doctor [--output - --format json]\n\n"
+               "Inspect core helper paths, optional OSINT helpers, DNS wordlists and\n"
+               "effective CAP_NET_RAW metadata. No helpers are executed, no network\n"
+               "requests are sent, and no system files are changed.\n\n"
+               "Missing core helpers: exit 1 (affected workflows are listed).\n"
+               "Optional helpers, wordlist or raw capabilities: warnings, exit 0.\n"
+               "Invalid arguments: exit 2. Root capabilities are checked before\n"
+               "scan privilege dropping; run doctor as your normal user.\n\n"
+               "Only stdout text or JSON is supported; no target is accepted.\n";
+    }
     if (!module.empty() && !is_module(module)) throw Error("unknown module: " + module);
     std::ostringstream out;
     out << "dark-nexus | network intelligence\n\n"
         << "Usage: dark-nexus --" << (module.empty() ? "<module>" : module)
         << " <target> [options]\n"
         << "       dark-nexus --help [module]\n\n";
+    if (module.empty()) out << "       dark-nexus doctor [--json -]\n\n";
     if (module.empty()) out << "Modules\n" << modules() << '\n';
     else {
         for (const auto& entry : catalog()) {
@@ -409,6 +447,7 @@ std::string help(const std::string& module) {
         << "  -h, --help [module]      Show help, or help for a module\n"
         << "  -V, --version            Show version\n"
         << "      --list-modules       List available modules\n"
+        << "      --doctor             Inspect local dependencies without running scans\n"
         << "  -q, --quiet              Suppress scan output; keep errors and exports\n"
         << "      --color MODE         auto (default), always or never\n"
         << "      --no-color           Disable ANSI colors\n"

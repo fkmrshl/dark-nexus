@@ -82,6 +82,11 @@ target_link_libraries(dark_nexus PRIVATE c-ares::cares_static ${DARK_NEXUS_CURL}
     OpenSSL::SSL OpenSSL::Crypto PkgConfig::URING ${LIBCAP_LIB} pthread nlohmann_json::nlohmann_json)
 
 if(BUILD_TESTING)
+    add_executable(doctor_tests src/environment.cpp src/doctor.cpp src/terminal.cpp tests/doctor_tests.cpp)
+    target_include_directories(doctor_tests PRIVATE include)
+    target_compile_options(doctor_tests PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(doctor_tests PRIVATE ${LIBCAP_LIB} nlohmann_json::nlohmann_json pthread)
+    add_test(NAME doctor_environment COMMAND doctor_tests)
     add_executable(traceroute_packet_tests tests/traceroute_packet_tests.cpp)
     target_include_directories(traceroute_packet_tests PRIVATE include)
     target_compile_options(traceroute_packet_tests PRIVATE -UNDEBUG -ffunction-sections -fdata-sections)
@@ -99,5 +104,7 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME cli_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_integration.py $<TARGET_FILE:dark_nexus>)
+        add_test(NAME doctor_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/doctor_integration.py $<TARGET_FILE:dark_nexus>)
     endif()
 endif()

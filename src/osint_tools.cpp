@@ -1,64 +1,12 @@
 #include "../include/osint.hpp"
+#include "environment.hpp"
 #include <cerrno>
 #include <sys/stat.h>
 
 namespace osint {
 
-static std::string join_path(const std::string& dir, const std::string& name) {
-    if (dir.empty()) return name;
-    return dir.back() == '/' ? dir + name : dir + "/" + name;
-}
-
-static std::string home_dir() {
-    const char* home = std::getenv("HOME");
-    return home && *home ? std::string(home) : "";
-}
-
-static bool is_executable(const std::string& path) {
-    return !path.empty() && access(path.c_str(), X_OK) == 0;
-}
-
-static std::string search_path_tool(const std::string& name) {
-    const char* path_env = std::getenv("PATH");
-    if (!path_env || !*path_env) return "";
-
-    std::stringstream ss(path_env);
-    std::string dir;
-    while (std::getline(ss, dir, ':')) {
-        if (dir.empty()) dir = ".";
-        std::string candidate = join_path(dir, name);
-        if (is_executable(candidate)) return candidate;
-    }
-    return "";
-}
-
-static std::string local_bin_dir() {
-    std::string home = home_dir();
-    return home.empty() ? "" : join_path(home, ".local/bin");
-}
-
-static std::string local_venv_dir() {
-    std::string home = home_dir();
-    return home.empty() ? "" : join_path(home, ".local/share/dark-nexus/osint-venv");
-}
-
 static std::string resolve_tool_path(const std::string& name) {
-    if (name.find('/') != std::string::npos) return is_executable(name) ? name : "";
-
-    std::string from_path = search_path_tool(name);
-    if (!from_path.empty()) return from_path;
-
-    std::vector<std::string> dirs = {"/usr/local/bin", "/opt/dark-nexus-osint/bin"};
-    std::string local_bin = local_bin_dir();
-    std::string local_venv = local_venv_dir();
-    if (!local_bin.empty()) dirs.push_back(local_bin);
-    if (!local_venv.empty()) dirs.push_back(join_path(local_venv, "bin"));
-
-    for (const auto& dir : dirs) {
-        std::string candidate = join_path(dir, name);
-        if (is_executable(candidate)) return candidate;
-    }
-    return "";
+    return environment::find_osint_tool(name, environment::current());
 }
 
 static bool tool_exists(const std::string& name) {

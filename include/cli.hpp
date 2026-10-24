@@ -17,7 +17,7 @@ enum class Family { Auto, IPv4, IPv6 };
 
 struct Options {
     std::string module, target, output, format, log_file, wordlist;
-    bool help = false, version = false, list_modules = false;
+    bool help = false, version = false, list_modules = false, doctor = false;
     bool quiet = false, no_log = false;
     Color color = Color::Auto;
     Family family = Family::Auto;

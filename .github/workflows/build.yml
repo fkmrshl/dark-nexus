@@ -1,0 +1,98 @@
+name: Linux build and checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.distro }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: Ubuntu 24.04
+            family: debian
+            image: ubuntu:24.04
+          - distro: Arch Linux
+            family: arch
+            image: archlinux:base-devel
+          - distro: Fedora 43
+            family: fedora
+            image: fedora:43
+    container:
+      image: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install container dependencies
+        env:
+          DISTRO_FAMILY: ${{ matrix.family }}
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          case "$DISTRO_FAMILY" in
+            debian)
+              apt-get update
+              apt-get install -y --no-install-recommends build-essential cmake ninja-build \
+                git pkg-config ca-certificates libssl-dev liburing-dev libcap-dev \
+                libcurl4-openssl-dev nlohmann-json3-dev python3 util-linux passwd \
+                whois dnsutils iputils-ping curl openssl
+              ;;
+            arch)
+              pacman -Syu --needed --noconfirm base-devel cmake ninja git pkgconf \
+                ca-certificates openssl liburing libcap curl nlohmann-json python \
+                util-linux shadow whois bind iputils
+              ;;
+            fedora)
+              dnf install -y --allowerasing gcc gcc-c++ make cmake ninja-build git pkgconf-pkg-config \
+                ca-certificates openssl-devel liburing-devel libcap-devel libcurl-devel \
+                json-devel python3 util-linux shadow-utils whois bind-utils iputils \
+                curl openssl glibc-common
+              ;;
+          esac
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare ordinary build user
+        run: |
+          useradd --create-home --shell /bin/bash dnx-ci
+          chown -R dnx-ci:dnx-ci "$GITHUB_WORKSPACE"
+
+      - name: Build and test without root
+        run: |
+          runuser -u dnx-ci -- bash -euo pipefail -c '
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+            cmake --build build --parallel 2
+            ctest --test-dir build --output-on-failure --timeout 120
+            ./build/dark_nexus doctor
+            ./build/dark_nexus doctor --json - > build/doctor.json
+            python3 -c "import json; r=json.load(open(\"build/doctor.json\")); assert r[\"status\"] != \"fail\""
+          '
+
+      - name: Check installation from source without root
+        run: |
+          runuser -u dnx-ci -- bash -euo pipefail -c '
+            prefix=$(mktemp -d /tmp/dark-nexus-ci.XXXXXX)
+            trap '\''rm -rf -- "$prefix"'\'' EXIT
+            bash install.sh --skip-deps --skip-helpers --no-progress \
+              --source "$PWD" --prefix "$prefix"
+            "$prefix/bin/dark-nexus" --version
+            "$prefix/bin/dark-nexus" --help
+            "$prefix/bin/dark-nexus" doctor --json - > build/installed-doctor.json
+            test -s "$prefix/share/wordlists/dark-nexus/best-dns-wordlist.txt"
+          '

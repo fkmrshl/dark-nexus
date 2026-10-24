@@ -83,6 +83,7 @@ The automated tests use local fixtures and fake network helpers; they do not sca
 ```sh
 dark-nexus --help
 dark-nexus --list-modules
+dark-nexus doctor
 dark-nexus --help portscan
 dark-nexus --portscan 127.0.0.1 --ports 22,80,443 --connect
 dark-nexus --portscan 127.0.0.1 --ports 8000-8010 --output scan.json
@@ -90,6 +91,8 @@ dark-nexus --portscan 127.0.0.1 --ports 8080 --output - --format json
 ```
 
 Use `--quiet` to suppress the human-readable report, `--no-color` for plain output, and `--output` to save a result. With `--output -`, stdout contains only the selected report format. The [CLI reference](docs/cli.md) covers all flags, defaults, compatibility syntax, and exit codes.
+
+Run `dark-nexus doctor` to inspect local runtime helpers, the DNS wordlist and raw-socket permissions without starting a scan or installing anything. Missing optional features produce warnings; missing core helpers identify the affected workflows. For machine-readable diagnostics, use `dark-nexus doctor --json -`. See [local diagnostics](docs/cli.md#local-diagnostics) and [automated build checks](docs/validation.md).
 
 ## Modules
 

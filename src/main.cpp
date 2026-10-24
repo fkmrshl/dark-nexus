@@ -1,4 +1,6 @@
 #include "cli.hpp"
+#include "doctor.hpp"
+#include "environment.hpp"
 #include "dark_nexus.hpp"
 #include "osint.hpp"
 #include "output.hpp"
@@ -41,14 +43,7 @@ ScanAddrFamily family_for(cli::Family family) {
 }
 
 void require_helper(const std::string& helper) {
-    const char* path = std::getenv("PATH");
-    std::istringstream directories(path ? path : "");
-    std::string directory;
-    while (std::getline(directories, directory, ':')) {
-        const auto candidate = std::filesystem::path(directory.empty() ? "." : directory) / helper;
-        std::error_code error;
-        if (std::filesystem::is_regular_file(candidate, error) && access(candidate.c_str(), X_OK) == 0) return;
-    }
+    if (!environment::find_in_path(helper, environment::current()).empty()) return;
     throw std::runtime_error("required helper not found on PATH: " + helper);
 }
 
@@ -139,9 +134,20 @@ int main(int argc, char** argv) {
                            options.color == cli::Color::Never ? terminal::ColorMode::Never :
                            terminal::ColorMode::Auto;
         terminal::configure(color);
-        if (options.help) { std::cout << cli::help(options.module); return 0; }
+        if (options.help) { std::cout << cli::help(options.doctor ? "doctor" : options.module); return 0; }
         if (options.version) { std::cout << "dark-nexus 2.0.0\n"; return 0; }
         if (options.list_modules) { std::cout << cli::modules(); return 0; }
+        if (options.doctor) {
+            signal(SIGPIPE, SIG_IGN);
+            const auto report = doctor::inspect(environment::current());
+            if (options.output == "-") {
+                std::ostream output(terminal::stdout_buffer());
+                if (!doctor::write_json(report, output)) throw std::runtime_error("failed to write doctor report to stdout");
+            } else if (!doctor::write_text(report, std::cout)) {
+                throw std::runtime_error("failed to write doctor report to stdout");
+            }
+            return report.exit_code();
+        }
         validate_target(options);
         if (!drop_privileges()) throw std::runtime_error("failed to drop privileges");
         if (options.module == "dns") require_helper("dig");

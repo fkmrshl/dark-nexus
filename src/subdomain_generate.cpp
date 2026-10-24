@@ -1,4 +1,5 @@
 #include "subdomain_common.hpp"
+#include "environment.hpp"
 #include "../include/security.hpp"
 #include "../include/user_agents.hpp"
 #include <algorithm>
@@ -70,26 +71,12 @@ static bool is_safe_readable_wordlist_path(const std::string& path) {
         if (alnum || ch == '_' || ch == '-' || ch == '.' || ch == '/') continue;
         return false;
     }
-    return access(path.c_str(), R_OK) == 0;
+    return environment::readable_wordlist(path);
 }
 
 std::string auto_find_wordlist() {
-    const char* h_env = getenv("HOME");
-    std::string h = h_env ? h_env : "/root";
-    for (auto& p : std::vector<std::string>{
-        "./best-dns-wordlist.txt",
-        "best-dns-wordlist.txt",
-        "/usr/share/wordlists/dark-nexus/best-dns-wordlist.txt",
-        h+"/best-dns-wordlist.txt",
-        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000000.txt",
-        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-500000.txt",
-        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
-        "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
-        "/usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-500000.txt",
-        "/opt/SecLists/Discovery/DNS/subdomains-top1million-500000.txt",
-        "/opt/wordlists/best-dns-wordlist.txt",
-        h+"/wordlists/subdomains-top1million-500000.txt",
-    }) { if (is_safe_readable_wordlist_path(p)) return p; }
+    const auto known = environment::find_wordlist(environment::current());
+    if (!known.empty()) return known;
     std::vector<char> buf(4096, 0); std::string loc_res;
     FILE* pipe = popen("locate best-dns-wordlist.txt 2>/dev/null | head -n 1", "r");
     if (pipe) {
