@@ -231,6 +231,6 @@ dark-nexus --recon 127.0.0.1 --output recon.json
 
 ## Project
 
-By Marshal · [Feedback](https://t.me/serphb) · [GNU AGPL v3](LICENSE)
+By Me · [Feedback](https://t.me/serphb) · [GNU AGPL v3](LICENSE)
 
 Use only on systems you own or have permission to assess. Public-source queries are subject to each provider's terms and availability.
