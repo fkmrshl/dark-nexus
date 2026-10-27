@@ -246,7 +246,7 @@ Options parse(const std::vector<std::string>& args) {
         } else if (flag == "--timeout") {
             once("timeout", flag);
             options.timeout_ms = integer(value(), 1, 60000, flag);
-            scope("portscan traceroute");
+            scope("portscan traceroute dns whois");
         } else if (flag == "--banner-timeout") {
             once("banner-timeout", flag);
             options.banner_timeout_ms = integer(value(), 1, 60000, flag);
@@ -474,6 +474,14 @@ std::string help(const std::string& module) {
             << "      --no-http            Skip HTTP enrichment\n"
             << "\nLegacy: --portscan TARGET [PORTS]; 0=preset1000, 0-1=preset100, suffix U=UDP.\n"
             << "Example: dark-nexus --portscan 127.0.0.1 -p 22,80,443 -T3 --output ports.json\n";
+    } else if (module == "dns" || module == "whois") {
+        out << "\nLookup options\n"
+            << "      --timeout MS         Per-helper deadline, 1..60000 (default: "
+            << (module == "dns" ? "6000" : "10000") << ")\n";
+        if (module == "dns")
+            out << "                         Total DNS budget: 60 seconds; enrichment is bounded.\n"
+                << "                         IP targets perform reverse PTR lookup.\n";
+        out << "\nIncomplete lookups exit 1; requested reports retain partial data.\n";
     } else if (module == "subdomain") {
         out << "\nSubdomain options\n"
             << "      --mode MODE          fast (default) or deep; F/D are accepted\n"

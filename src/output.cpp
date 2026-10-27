@@ -23,7 +23,11 @@ void write_csv_report(const ScanResult& result, std::ostream& out) {
     csv_row(out, "metadata", result, result.scan_type, result.tool_version,
             {{"schema_version", result.schema_version}, {"resolved_ip", result.resolved_ip},
              {"start_time", result.start_time}, {"end_time", result.end_time},
-             {"duration_ms", result.duration_ms}});
+             {"duration_ms", result.duration_ms}, {"status", result.status}});
+    for (const auto& error : result.errors)
+        csv_row(out, "error", result, "", error, json::object());
+    for (const auto& warning : result.warnings)
+        csv_row(out, "warning", result, "", warning, json::object());
     if (!result.geo_country.empty() || !result.geo_city.empty())
         csv_row(out, "geo", result, result.resolved_ip, result.geo_country,
                 {{"city", result.geo_city}, {"isp", result.geo_isp}, {"as", result.geo_as},
@@ -39,6 +43,8 @@ void write_csv_report(const ScanResult& result, std::ostream& out) {
         csv_row(out, "trace", result, std::to_string(hop.ttl), hop.addr, json(hop));
     for (const auto& record : result.dns_records)
         csv_row(out, "dns", result, "", record, json::object());
+    for (const auto& record : result.whois_records)
+        csv_row(out, "whois", result, "", record, json::object());
 }
 
 void write_text_report(const ScanResult& r, std::ostream& out) {
@@ -46,7 +52,10 @@ void write_text_report(const ScanResult& r, std::ostream& out) {
         << "Target: " << sanitize(r.target) << '\n'
         << "Resolved IP: " << sanitize(r.resolved_ip) << '\n'
         << "Started: " << r.start_time << "\nEnded: " << r.end_time
-        << "\nDuration: " << r.duration_ms << " ms\n";
+        << "\nDuration: " << r.duration_ms << " ms\n"
+        << "Status: " << sanitize(r.status) << '\n';
+    for (const auto& error : r.errors) out << "Error: " << sanitize(error) << '\n';
+    for (const auto& warning : r.warnings) out << "Warning: " << sanitize(warning) << '\n';
     if (!r.geo_country.empty() || !r.geo_city.empty())
         out << "\nLocation: " << sanitize(r.geo_country) << ", " << sanitize(r.geo_city)
             << "\nISP: " << sanitize(r.geo_isp) << "\nAS: " << sanitize(r.geo_as) << '\n';
@@ -79,6 +88,10 @@ void write_text_report(const ScanResult& r, std::ostream& out) {
     if (!r.dns_records.empty()) {
         out << "\nDNS\n";
         for (const auto& record : r.dns_records) out << sanitize(record) << '\n';
+    }
+    if (!r.whois_records.empty()) {
+        out << "\nWHOIS\n";
+        for (const auto& record : r.whois_records) out << sanitize(record) << '\n';
     }
 }
 } // namespace

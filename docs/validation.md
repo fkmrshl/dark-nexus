@@ -6,6 +6,8 @@ Packages are installed as root only inside disposable CI containers. An ordinary
 
 Each job also builds and installs the project from source into a temporary prefix using `--skip-deps --skip-helpers`, checks the installed version and help, runs `doctor`, and verifies the installed wordlist. This exercises compilation and installation without changing the runner's system installation. Optional OSINT helpers are not installed or executed.
 
+DNS/WHOIS checks use fake `dig` and `whois` programs, including fake PTR answers; no real resolver or registry is queried. They exercise positive/negative DNS responses, malformed replies, CNAME correlation, unsafe SPF references, transfer framing, WHOIS exports, limits and cancellation. These are syntax and behavior checks, not universal resource-record, policy or cryptographic validation. Process-supervisor checks cover closed output streams, continuous output, cancellation, capture limits, concurrent helpers and cleanup of descendants that remain in the helper's process group.
+
 Container results establish whether the project builds and passes these checks in those environments. They do not establish live external-service availability, raw-socket access on every host, or successful package-manager installation on every distribution. See the actual workflow run for results; defining a matrix does not mean its jobs have passed.
 
 To run the same application checks locally after installing build dependencies:

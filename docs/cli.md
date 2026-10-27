@@ -24,7 +24,7 @@ Unknown options, missing values, repeated or conflicting flags, and options that
 | --- | --- | --- |
 | `--portscan` | Hostname or IP | TCP/UDP port discovery and service inspection |
 | `--subdomain` | Domain | Subdomain enumeration and optional enrichment |
-| `--dns` | Domain | DNS records and configuration checks |
+| `--dns` | Domain or IP | DNS records, bounded inspection and reverse PTR for IPs |
 | `--whois` | Domain or IP | WHOIS registration/allocation fields |
 | `--netscan` | IPv4 address | Host discovery and fixed-port inspection of the containing /24 |
 | `--os-detect` | Hostname or IPv4 | OS fingerprint estimate |
@@ -81,6 +81,28 @@ Default output is a compact text report. `--output -` defaults to JSON; `--json 
 Doctor accepts color options and `--no-log`. Targets, scan options, `--quiet`, `--log-file`, file exports and CSV/TXT formats are usage errors. Redirect stdout if you need to save the report: `dark-nexus doctor --json - > doctor.json`.
 
 Exit `0` means no core prerequisite was missing (warnings may remain); `1` means a core helper is missing or diagnostics/output failed; `2` means invalid arguments. Check the exit code before treating the report as complete.
+
+## DNS and WHOIS
+
+```sh
+dark-nexus --dns example.test --timeout 3000
+dark-nexus --dns 192.0.2.10 --timeout 1000
+dark-nexus --whois example.test --timeout 5000 --json whois.json
+```
+
+`--timeout MS` accepts `1..60000` and limits each helper invocation. Defaults are 6000 ms for DNS and 10000 ms for WHOIS. DNS also has a 60-second total budget and checks at most eight PTR addresses, eight distinct SPF references and eight name servers for AXFR. Those optional inspections can be skipped with a warning when their limits are reached. No recursive SPF expansion or policy validation is performed.
+
+DNS uses `dig -r` to ignore personal `.digrc` settings and parses status headers and full answer records. A CNAME is retained as a CNAME, never relabeled as an IP address. Returned owners must match the question or its CNAME chain (at most 16 links); a reply accepts at most 4096 records. Literal IPv4/IPv6 targets use reverse PTR lookup. Remote SPF and NS names are validated before becoming helper arguments.
+
+Parsing checks reply structure, record owners, TTLs and the syntax of selected record types, including addresses, name references, MX, SRV, SOA, quoted TXT, CAA, DS and DNSKEY data. This is not a universal resource-record validator. Other record data can be retained as text without type-specific validation; an accepted record does not establish policy correctness or cryptographic validity.
+
+NOERROR without matching data and NXDOMAIN are valid negative responses. SERVFAIL, malformed or truncated replies, nonzero helper exits and timeouts are operational failures; they do not establish that SPF/DMARC or other records are absent. DNSSEC output describes DS/DNSKEY observations, without claiming cryptographic validation. This interpretation also accounts for [dig's documented exit codes](https://bind9.readthedocs.io/en/stable/manpages.html#return-codes): a zero exit code alone does not establish a positive DNS answer.
+
+AXFR is confirmed only after successful completion with parsed records and matching opening/closing SOA records. The same record-validation limits apply to transferred data. Refusal, timeout and incomplete or diagnostic-only output are distinct outcomes. Optional AXFR failures produce warnings and do not invalidate otherwise completed primary queries. A refusal does not certify the zone's overall security.
+
+WHOIS retains sanitized non-comment stdout lines in `whois_records`, including unfamiliar fields and repeated keys. Recognized negative registry replies are retained as meaningful results. Known access-denial and rate-limit messages on stdout or stderr fail the operation, even with helper exit zero. WHOIS is free-form text: this checks common messages and process completion, rather than validating every registry's response format. Output beyond the capture limit (1 MiB per stream for WHOIS, 256 KiB for DNS) is reported as incomplete. WHOIS data already captured before a failure remains available in the requested export.
+
+Both commands stop their helper process groups on cancellation. Cleanup also terminates descendants that remain in the helper's group; processes that create a separate session or group are outside this mechanism. SIGINT and SIGTERM currently return `130`; a requested export retains collected data with status `cancelled`. Partial or failed primary lookups return `1` and retain errors in the export. Invalid arguments return `2` before helpers run.
 
 ## Port scan
 
@@ -181,16 +203,16 @@ dark-nexus --portscan 127.0.0.1 --ports 8080 --connect --output result.data --fo
 
 Without `--format`, file extensions select JSON or CSV; other filenames select text. With `--output -`, the default format is JSON and stdout contains only the report, without ANSI escapes or progress messages; module status output goes to stderr unless `--quiet` is set. Use `--format` to override the filename. Diagnostic errors are written to stderr. Check the process exit status before consuming an export.
 
-CSV writes one table to the requested path or stdout, with columns `record_type,target,identifier,value,details`. Row types include `metadata`, `geo`, `os`, `port`, `subdomain`, `osint`, `trace`, and `dns`; `details` contains a JSON object with fields for that record. This replaces the previous separate `*_ports.csv`, `*_subdomains.csv`, and similar common-report files; the subdomain module's own files are independent.
+CSV writes one table to the requested path or stdout, with columns `record_type,target,identifier,value,details`. Row types include `metadata`, `geo`, `os`, `port`, `subdomain`, `osint`, `trace`, `dns`, `whois`, `warning` and `error`; `details` contains a JSON object with fields for that record. This replaces the previous separate `*_ports.csv`, `*_subdomains.csv`, and similar common-report files; the subdomain module's own files are independent.
 
-Exports contain fields populated in the shared scan result. They are not transcripts of the terminal report. DNS, WHOIS, and network discovery currently display more information than they store in the common report; an empty result array does not necessarily mean a lookup returned nothing. Subdomain module files contain additional data.
+Exports contain fields populated in the shared scan result. They are not transcripts of the terminal report. DNS records use `dns_records`; WHOIS response lines use `whois_records`. Additive report fields `status` (`complete`, `partial`, `failed`, `cancelled`), `errors` and `warnings` describe command completion. Requested exports are finalized after module failures and cancellation, including partial observations. Reports written before these fields were introduced can still be read with their default values. Network-discovery and subdomain-specific output can contain additional data.
 
 | Exit code | Meaning |
 | --- | --- |
 | `0` | Command completed |
 | `1` | Runtime or report-writing failure |
 | `2` | Invalid command-line usage |
-| `130` | Interrupted with SIGINT |
+| `130` | Interrupted with SIGINT or SIGTERM |
 
 A completed command can contain unavailable-source messages or incomplete observations. Exit `0` does not certify that every external service responded or that every result was independently verified.
 
@@ -206,7 +228,7 @@ For module purposes and limitations, see the [module guide](../README.md#modules
 
 ## Offline checks
 
-Parser, thread pool, and terminal tests can run without fetching network dependencies or building the application:
+Parser, process-supervisor, thread pool, and terminal tests can run without fetching network dependencies or building the application:
 
 ```sh
 cmake -S . -B build-cli -DDARK_NEXUS_BUILD_APP=OFF

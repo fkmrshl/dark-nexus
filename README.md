@@ -127,21 +127,23 @@ dark-nexus --subdomain example.test --mode fast --wordlist ./hosts.txt --no-enri
 <details>
 <summary><strong>DNS</strong> — records and domain configuration</summary>
 
-Query A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, and SRV records, inspect SPF includes and DMARC, check for DS/DNSKEY records, and attempt AXFR against discovered name servers. This is a configuration review, including active zone transfer requests; DS/DNSKEY presence is not full DNSSEC validation. Requires `dig`.
+Query A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, and SRV records, inspect SPF references and DMARC TXT, check for DS/DNSKEY records, and attempt AXFR against discovered name servers. IP targets perform reverse PTR lookup. Operational errors remain distinct from negative DNS answers, and a transfer is confirmed only from a complete response. This includes active zone transfer requests; policy inspection and DS/DNSKEY presence do not establish SPF/DMARC or cryptographic DNSSEC validity. Requires `dig`.
 
 ```sh
-dark-nexus --dns example.test
+dark-nexus --dns example.test --timeout 3000
 ```
+
+[DNS and WHOIS options](docs/cli.md#dns-and-whois)
 
 </details>
 
 <details>
 <summary><strong>WHOIS</strong> — registration and allocation records</summary>
 
-Read WHOIS information for a domain or IP address and display selected registration, organization, network, and contact fields. Available fields depend on the registry response and its privacy policy. Requires `whois`.
+Read WHOIS information for a domain or IP address. Non-comment stdout lines, including repeated and unfamiliar fields, are retained in JSON/CSV/TXT reports. Known rate-limit and access-denial messages on stdout or stderr are reported as failures; meaningful negative results remain valid responses. Available fields and message formats depend on the registry. Requires `whois`.
 
 ```sh
-dark-nexus --whois example.com
+dark-nexus --whois example.com --timeout 5000 --output whois.json
 ```
 
 </details>

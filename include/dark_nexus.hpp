@@ -126,6 +126,8 @@ struct ScanResult {
     std::string start_time;
     std::string end_time;
     int duration_ms = 0;
+    std::string status = "complete";
+    std::vector<std::string> errors, warnings;
 
     std::string geo_country;
     std::string geo_city;
@@ -140,6 +142,7 @@ struct ScanResult {
     std::vector<OsintEntry> osint;
     std::vector<TraceHop> trace;
     std::vector<std::string> dns_records;
+    std::vector<std::string> whois_records;
 
     std::vector<std::pair<int,std::string>> open_ports;
     std::vector<std::string> osint_hits;
@@ -219,8 +222,8 @@ void os_detect(const std::string& ip);
 
 void ip_intel(const std::string& ip);
 
-void dns_lookup(const std::string& domain);
-void whois_lookup(const std::string& target);
+void dns_lookup(const std::string& domain, int timeout_ms = 6000);
+void whois_lookup(const std::string& target, int timeout_ms = 10000);
 void site_lookup(const std::string& raw);
 
 void osint_scan(const std::string& username);

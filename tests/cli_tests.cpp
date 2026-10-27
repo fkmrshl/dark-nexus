@@ -103,6 +103,9 @@ void valid_cases() {
               global.format == "json" && global.log_file == "session.log", "global options");
     check(cli::parse({"--whois", "example.com", "--json", "out.txt"}).format == "json",
           "JSON alias explicitly chooses JSON");
+    check(cli::parse({"--dns", "example.test", "--timeout", "100"}).timeout_ms == 100 &&
+          cli::parse({"--whois", "example.test", "--timeout", "200"}).timeout_ms == 200,
+          "DNS and WHOIS helper deadlines");
     check(cli::parse({"--dns", "x", "--color=auto", "--no-log"}).no_log, "explicit no logging");
     check(cli::parse({"--osint", "--", "-username"}).target == "-username", "delimiter target");
     check(cli::parse({"--osint=--help"}).target == "--help", "inline target can begin with dash");
@@ -220,7 +223,7 @@ void invalid_cases() {
         rejects(args, "port flag scope " + item.first);
     }
     for (const auto& item : std::vector<std::pair<std::string, std::string>> {
-            {"--threads", "2"}, {"--timeout", "10"}, {"--mode", "deep"}, {"--wordlist", "a"},
+            {"--threads", "2"}, {"--mode", "deep"}, {"--wordlist", "a"},
             {"--no-permutations", ""}, {"--no-enrich", ""}, {"--no-deep-passive", ""},
             {"--protocol", "tcp"}, {"--max-hops", "2"}, {"--probes", "2"},
             {"--parallel-hops", "2"}, {"--destination-port", "80"},

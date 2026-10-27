@@ -33,6 +33,9 @@ namespace nlohmann {
                 {"start_time", r.start_time},
                 {"end_time", r.end_time},
                 {"duration_ms", r.duration_ms},
+                {"status", r.status},
+                {"errors", r.errors},
+                {"warnings", r.warnings},
                 {"geo", {
                     {"country", r.geo_country},
                     {"city", r.geo_city},
@@ -46,7 +49,8 @@ namespace nlohmann {
                 {"subdomains", r.subdomains},
                 {"osint", r.osint},
                 {"trace", r.trace},
-                {"dns_records", r.dns_records}
+                {"dns_records", r.dns_records},
+                {"whois_records", r.whois_records}
             };
         }
         static void from_json(const json& j, ScanResult& r) {
@@ -58,6 +62,10 @@ namespace nlohmann {
             j.at("start_time").get_to(r.start_time);
             j.at("end_time").get_to(r.end_time);
             j.at("duration_ms").get_to(r.duration_ms);
+            r.status = j.value("status", std::string("complete"));
+            r.errors = j.value("errors", std::vector<std::string>{});
+            r.warnings = j.value("warnings", std::vector<std::string>{});
+            r.whois_records = j.value("whois_records", std::vector<std::string>{});
             auto geo = j.at("geo");
             geo.at("country").get_to(r.geo_country);
             geo.at("city").get_to(r.geo_city);

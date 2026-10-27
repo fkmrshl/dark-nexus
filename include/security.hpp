@@ -96,8 +96,8 @@ struct InputGuard {
                 size_t j = i + 1;
                 if (j < s.size() && s[j] == '[') {
                     j++;
-                    while (j < s.size() && (std::isdigit(s[j]) || s[j] == ';')) j++;
-                    if (j < s.size() && std::isalpha(s[j])) { i = j; continue; }
+                    while (j < s.size() && (std::isdigit(static_cast<unsigned char>(s[j])) || s[j] == ';')) j++;
+                    if (j < s.size() && std::isalpha(static_cast<unsigned char>(s[j]))) { i = j; continue; }
                 }
                 continue;
             }

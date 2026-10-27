@@ -54,6 +54,14 @@ void validate_target(const cli::Options& options) {
     } else if (options.module == "site") {
         if (!InputGuard::is_safe_url(options.target) && !valid_target(options.target))
             throw cli::Error("site target must be a hostname or an http(s) URL");
+    } else if (options.module == "dns" || options.module == "whois") {
+        unsigned char address[sizeof(in6_addr)] = {};
+        const bool literal = inet_pton(AF_INET, options.target.c_str(), address) == 1 ||
+                             inet_pton(AF_INET6, options.target.c_str(), address) == 1;
+        std::string hostname = options.target;
+        if (!hostname.empty() && hostname.back() == '.') hostname.pop_back();
+        if (!literal && (options.target.find(':') != std::string::npos || !valid_target(hostname)))
+            throw cli::Error("invalid hostname or IP address: " + options.target);
     } else if (!valid_target(options.target)) {
         throw cli::Error("invalid hostname or IP address: " + options.target);
     }
@@ -72,8 +80,8 @@ void run_module(const cli::Options& options) {
     g_result.scan_type = module == "portscan" ? "port_scan" : module;
 
     // Domain modules keep the original domain: MX/TXT/WHOIS are not IP queries.
-    if (module == "dns") return dns_lookup(target);
-    if (module == "whois") return whois_lookup(target);
+    if (module == "dns") return dns_lookup(target, options.timeout_ms ? options.timeout_ms : 6000);
+    if (module == "whois") return whois_lookup(target, options.timeout_ms ? options.timeout_ms : 10000);
     if (module == "osint") return osint_scan(target);
     if (module == "site") return site_lookup(target);
     if (module == "subdomain") {
@@ -150,8 +158,6 @@ int main(int argc, char** argv) {
         }
         validate_target(options);
         if (!drop_privileges()) throw std::runtime_error("failed to drop privileges");
-        if (options.module == "dns") require_helper("dig");
-        if (options.module == "whois") require_helper("whois");
         if (!options.no_log && !options.log_file.empty()) {
             if (!Logger::get().init(options.log_file))
                 throw std::runtime_error("cannot open log file: " + options.log_file);
@@ -165,13 +171,31 @@ int main(int argc, char** argv) {
         signal(SIGPIPE, SIG_IGN);
         g_cancel_token.cancelled = false;
         g_result.target = options.target;
+        g_result.scan_type = options.module == "portscan" ? "port_scan" : options.module;
         const auto start = std::chrono::steady_clock::now();
         const auto start_text = now_str();
         LOG_INFO("main", "started module=" + options.module + " target=" + options.target);
         {
             ScanOutput output(options);
-            run_module(options);
+            try {
+                if (options.module == "dns") require_helper("dig");
+                if (options.module == "whois") require_helper("whois");
+                run_module(options);
+            } catch (const std::exception& error) {
+                // Preserve collected records and finish a requested export even
+                // when a module fails or the user cancels an operation.
+                if (!interrupted) g_result.errors.push_back(sanitize(error.what()));
+            }
         }
+        const bool has_results = !g_result.dns_records.empty() || !g_result.whois_records.empty() ||
+            !g_result.ports.empty() || !g_result.subdomains.empty() || !g_result.osint.empty() ||
+            !g_result.trace.empty() || !g_result.open_ports.empty() || !g_result.os_guess.empty() ||
+            !g_result.geo_country.empty() || !g_result.geo_city.empty();
+        g_result.status = interrupted ? "cancelled" : g_result.errors.empty() ? "complete" :
+                          has_results ? "partial" : "failed";
+        for (const auto& error : g_result.errors) std::cerr << "dark-nexus: " << sanitize(error) << '\n';
+        if (!options.quiet)
+            for (const auto& warning : g_result.warnings) std::cerr << "dark-nexus: warning: " << sanitize(warning) << '\n';
         // Command metadata describes the full run, including chained modules.
         g_result.target = options.target;
         g_result.start_time = start_text;
@@ -198,7 +222,7 @@ int main(int argc, char** argv) {
             std::cerr << "dark-nexus: interrupted; results may be incomplete\n";
             return 130;
         }
-        return 0;
+        return g_result.errors.empty() ? 0 : 1;
     } catch (const cli::Error& error) {
         std::cerr << "dark-nexus: " << error.what() << "\nTry 'dark-nexus --help'.\n";
         return 2;

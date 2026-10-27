@@ -20,9 +20,14 @@ with tempfile.TemporaryDirectory(prefix='dark-nexus-cli-') as temporary:
 import os, sys
 with open(os.environ['DARK_NEXUS_TEST_CALLS'], 'a') as f:
     f.write(' '.join(sys.argv[1:]) + '\\n')
-kind = sys.argv[-1]
-if kind == 'MX': print('example.test. 60 IN MX 10 mail.example.test.')
-if kind == 'TXT': print('example.test. 60 IN TXT "v=spf1 -all"')
+types = ('A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'SOA', 'CAA', 'SRV', 'DS', 'DNSKEY', 'AXFR', 'PTR')
+kind = next((arg.upper() for arg in sys.argv[1:] if arg.upper() in types), '')
+question = next((arg for arg in sys.argv[1:] if not arg.startswith(('+', '-', '@')) and arg.upper() not in types), 'example.test')
+print(';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1234')
+print(';; flags: qr rd ra; QUERY: 1, ANSWER: ' + ('1' if kind in ('MX', 'TXT') else '0') + ', AUTHORITY: 0, ADDITIONAL: 0')
+print(';; ANSWER SECTION:')
+if kind == 'MX': print(question.rstrip('.') + '. 60 IN MX 10 mail.example.test.')
+if kind == 'TXT': print(question.rstrip('.') + '. 60 IN TXT "v=spf1 -all"')
 ''')
     (tools / 'whois').write_text('''#!/usr/bin/env python3
 import os, sys
