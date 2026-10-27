@@ -16,6 +16,15 @@
 #include <cctype>
 #include <random>
 #include <new>
+#include <map>
+#include <set>
+#include <stdexcept>
+#include <filesystem>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <cerrno>
+
+#include "dns_response.hpp"
 
 #if __has_include(<liburing.h>)
 #include <liburing.h>
@@ -49,6 +58,7 @@ static std::mutex                g_custom_resolvers_mtx;
 static std::once_flag            g_default_resolvers_once;
 static std::mutex                g_default_resolvers_mtx;
 static std::vector<std::string>  g_default_resolvers_checked;
+static bool g_default_resolvers_ready = false;
 
 static const std::vector<std::string>& default_resolver_pool();
 
@@ -71,28 +81,137 @@ static std::vector<std::string> resolver_pool_snapshot() {
     return default_resolver_pool();
 }
 
-struct AresCtx {
-    std::vector<std::string>* out;
-    std::atomic<int>*         pending;
+namespace {
+class AresChannelGuard {
+public:
+    ares_channel channel = nullptr;
+    ~AresChannelGuard() { if (channel) ares_destroy(channel); }
 };
 
-struct BulkAContext {
-    std::vector<std::vector<std::string>>* per_host_results;
-    size_t index;
-    std::atomic<int>* pending;
+std::string dns_name_key(std::string name) {
+    if (!name.empty() && name.back() == '.') name.pop_back();
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return name;
+}
+
+struct CheckedFamily {
+    std::vector<std::string> addresses;
+    bool completed = false, failed = false;
+    std::string error;
 };
+
+bool negative_status(int status) { return status == ARES_ENODATA || status == ARES_ENOTFOUND; }
+
+CheckedFamily parse_checked_address_reply(int status, const unsigned char* packet,
+                                         int length, const std::string& name, int type) {
+    CheckedFamily result;
+    result.completed = status != ARES_EDESTRUCTION && status != ARES_ECANCELLED;
+    if (status != ARES_SUCCESS && !negative_status(status)) {
+        result.failed = true;
+        result.error = ares_strerror(status);
+        return result;
+    }
+    if ((!packet || length <= 0) && negative_status(status)) return result;
+    ares_dns_record_t* raw = nullptr;
+    const int parsed = packet && length > 0 ?
+        ares_dns_parse(packet, static_cast<std::size_t>(length), 0, &raw) : ARES_EBADRESP;
+    std::unique_ptr<ares_dns_record_t, decltype(&ares_dns_record_destroy)> message(raw, ares_dns_record_destroy);
+    auto fail = [&](const char* error) {
+        result.addresses.clear(); result.failed = true; result.error = error;
+        return result;
+    };
+    if (parsed != ARES_SUCCESS || !message) return fail("Malformed DNS response");
+    const auto flags = ares_dns_record_get_flags(message.get());
+    if (!(flags & ARES_FLAG_QR) || (flags & ARES_FLAG_TC) ||
+        ares_dns_record_get_opcode(message.get()) != ARES_OPCODE_QUERY)
+        return fail("Invalid or truncated DNS response header");
+    const auto rcode = ares_dns_record_get_rcode(message.get());
+    if (rcode != ARES_RCODE_NOERROR && rcode != ARES_RCODE_NXDOMAIN)
+        return fail("DNS server returned an unsuccessful response");
+    const char* question = nullptr;
+    ares_dns_rec_type_t question_type{};
+    ares_dns_class_t question_class{};
+    if (ares_dns_record_query_cnt(message.get()) != 1 ||
+        ares_dns_record_query_get(message.get(), 0, &question, &question_type, &question_class) != ARES_SUCCESS ||
+        !question || dns_name_key(question) != dns_name_key(name) ||
+        static_cast<int>(question_type) != type || question_class != ARES_CLASS_IN)
+        return fail("DNS response question does not match the request");
+    const auto count = ares_dns_record_rr_cnt(message.get(), ARES_SECTION_ANSWER);
+    if (count > 4096) return fail("DNS answer record limit exceeded");
+    std::map<std::string, std::string> aliases;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto* record = ares_dns_record_rr_get_const(message.get(), ARES_SECTION_ANSWER, i);
+        if (!record || ares_dns_rr_get_type(record) != ARES_REC_TYPE_CNAME) continue;
+        const auto* owner = ares_dns_rr_get_name(record);
+        const auto* target = ares_dns_rr_get_str(record, ARES_RR_CNAME_CNAME);
+        if (ares_dns_rr_get_class(record) != ARES_CLASS_IN || !owner || !target || !*target)
+            return fail("Invalid DNS CNAME record");
+        const auto key = dns_name_key(owner), value = dns_name_key(target);
+        const auto previous = aliases.find(key);
+        if (previous != aliases.end() && previous->second != value) return fail("Conflicting DNS CNAME records");
+        aliases[key] = value;
+    }
+    std::set<std::string> reachable;
+    auto cursor = dns_name_key(name);
+    for (std::size_t hops = 0;; ++hops) {
+        if (!reachable.insert(cursor).second) return fail("DNS CNAME loop");
+        const auto alias = aliases.find(cursor);
+        if (alias == aliases.end()) break;
+        if (hops >= 16) return fail("DNS CNAME chain limit exceeded");
+        cursor = alias->second;
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto* record = ares_dns_record_rr_get_const(message.get(), ARES_SECTION_ANSWER, i);
+        if (!record) return fail("Invalid DNS answer record");
+        const auto record_type = ares_dns_rr_get_type(record);
+        if (static_cast<int>(record_type) != type && record_type != ARES_REC_TYPE_CNAME) continue;
+        const char* owner = ares_dns_rr_get_name(record);
+        if (!owner || !reachable.count(dns_name_key(owner)) || ares_dns_rr_get_class(record) != ARES_CLASS_IN)
+            return fail("DNS answer owner does not match the request");
+        if (record_type == ARES_REC_TYPE_CNAME) continue;
+        if (rcode == ARES_RCODE_NXDOMAIN || aliases.count(dns_name_key(owner)))
+            return fail("DNS answer contradicts its negative response or CNAME");
+        char address[INET6_ADDRSTRLEN]{};
+        const void* bytes = type == ns_t_a ? static_cast<const void*>(ares_dns_rr_get_addr(record, ARES_RR_A_ADDR)) :
+                                           static_cast<const void*>(ares_dns_rr_get_addr6(record, ARES_RR_AAAA_ADDR));
+        if (!bytes || !inet_ntop(type == ns_t_a ? AF_INET : AF_INET6, bytes, address, sizeof(address)))
+            return fail("Invalid DNS address record");
+        result.addresses.emplace_back(address);
+    }
+    std::sort(result.addresses.begin(), result.addresses.end());
+    result.addresses.erase(std::unique(result.addresses.begin(), result.addresses.end()), result.addresses.end());
+    return result;
+}
+
+struct CheckedContext {
+    CheckedFamily* family;
+    std::atomic<int>* pending;
+    const std::string* name;
+    int type;
+};
+
+void checked_address_callback(void* argument, int status, int, unsigned char* packet, int length) noexcept {
+    std::unique_ptr<CheckedContext> context(static_cast<CheckedContext*>(argument));
+    try {
+        *context->family = parse_checked_address_reply(status, packet, length, *context->name, context->type);
+    } catch (...) {
+        // Do not unwind through c-ares' C callback frame.
+        context->family->completed = true;
+        context->family->failed = true;
+    }
+    context->pending->fetch_sub(1, std::memory_order_release);
+}
+} // namespace
 
 struct CnameCtx {
     std::string*      out;
     std::atomic<int>* pending;
+    const std::string* name;
 };
 
-static std::string trim_trailing_dns_dots(std::string name) {
-    while (!name.empty() && name.back() == '.') { name.pop_back(); }
-    return name;
-}
-
-static std::string parse_first_cname_reply(unsigned char* abuf, int alen) {
+static std::string parse_first_cname_reply(unsigned char* abuf, int alen, const std::string& name) {
     if (!abuf || alen <= 0) { return ""; }
 
     ares_dns_record_t* raw_record = nullptr;
@@ -102,75 +221,53 @@ static std::string parse_first_cname_reply(unsigned char* abuf, int alen) {
     }
     std::unique_ptr<ares_dns_record_t, decltype(&ares_dns_record_destroy)>
         record(raw_record, ares_dns_record_destroy);
-
+    const char* question = nullptr;
+    ares_dns_rec_type_t question_type{};
+    ares_dns_class_t question_class{};
+    const auto flags = ares_dns_record_get_flags(record.get());
+    if (!(flags & ARES_FLAG_QR) || flags & ARES_FLAG_TC ||
+        ares_dns_record_get_opcode(record.get()) != ARES_OPCODE_QUERY ||
+        ares_dns_record_get_rcode(record.get()) != ARES_RCODE_NOERROR ||
+        ares_dns_record_query_cnt(record.get()) != 1 ||
+        ares_dns_record_query_get(record.get(), 0, &question, &question_type, &question_class) != ARES_SUCCESS ||
+        !question || dns_name_key(question) != dns_name_key(name) ||
+        question_type != ARES_REC_TYPE_CNAME || question_class != ARES_CLASS_IN) return "";
+    std::map<std::string, std::string> aliases;
     size_t answer_count = ares_dns_record_rr_cnt(record.get(), ARES_SECTION_ANSWER);
+    if (answer_count > 4096) return "";
     for (size_t i = 0; i < answer_count; i++) {
         const ares_dns_rr_t* rr =
             ares_dns_record_rr_get_const(record.get(), ARES_SECTION_ANSWER, i);
         if (!rr) { continue; }
         if (ares_dns_rr_get_type(rr) != ARES_REC_TYPE_CNAME) { continue; }
-        if (ares_dns_rr_get_class(rr) != ARES_CLASS_IN) { continue; }
+        if (ares_dns_rr_get_class(rr) != ARES_CLASS_IN) return "";
+        const char* owner = ares_dns_rr_get_name(rr);
         const char* cname = ares_dns_rr_get_str(rr, ARES_RR_CNAME_CNAME);
-        if (!cname || !*cname) { continue; }
-        return trim_trailing_dns_dots(std::string(cname));
+        if (!owner || !cname || !dns_response::valid_name(owner) || !dns_response::valid_name(cname)) return "";
+        const auto key = dns_name_key(owner), target = dns_name_key(cname);
+        if (aliases.count(key) && aliases[key] != target) return "";
+        aliases[key] = target;
     }
-
-    return "";
+    std::set<std::string> reachable;
+    auto cursor = dns_name_key(name);
+    for (std::size_t hops = 0;; ++hops) {
+        if (!reachable.insert(cursor).second) return "";
+        const auto alias = aliases.find(cursor);
+        if (alias == aliases.end()) break;
+        if (hops >= 16) return "";
+        cursor = alias->second;
+    }
+    for (const auto& alias : aliases) if (!reachable.count(alias.first)) return "";
+    const auto first = aliases.find(dns_name_key(name));
+    return first == aliases.end() ? "" : first->second;
 }
 
-static void ares_aaaa_cb(void* arg, int status, int, struct ares_addrinfo* res) {
-    std::unique_ptr<AresCtx> ctx(static_cast<AresCtx*>(arg));
-    if (status == ARES_SUCCESS && res) {
-        for (auto* n = res->nodes; n; n = n->ai_next) {
-            if (n->ai_family == AF_INET6) {
-                char buf[INET6_ADDRSTRLEN];
-                inet_ntop(AF_INET6,
-                    &reinterpret_cast<sockaddr_in6*>(n->ai_addr)->sin6_addr,
-                    buf, sizeof(buf));
-                ctx->out->emplace_back(buf);
-            }
-        }
-        ares_freeaddrinfo(res);
-    }
-    ctx->pending->fetch_sub(1, std::memory_order_release);
-}
-
-static void bulk_a_cb(void* arg, int status, int, unsigned char* abuf, int alen) {
-    std::unique_ptr<BulkAContext> ctx(static_cast<BulkAContext*>(arg));
-    try {
-        if (ctx && status == ARES_SUCCESS && abuf && alen > 0 &&
-            ctx->per_host_results && ctx->index < ctx->per_host_results->size()) {
-            struct hostent* raw_host = nullptr;
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            int parse_status = ares_parse_a_reply(abuf, alen, &raw_host, nullptr, nullptr);
-#pragma GCC diagnostic pop
-            std::unique_ptr<struct hostent, decltype(&ares_free_hostent)>
-                host(raw_host, ares_free_hostent);
-            if (parse_status == ARES_SUCCESS && host &&
-                host->h_addrtype == AF_INET && host->h_length == (int)sizeof(struct in_addr)) {
-                auto& out = (*ctx->per_host_results)[ctx->index];
-                for (char** addr = host->h_addr_list; addr && *addr; ++addr) {
-                    char buf[INET_ADDRSTRLEN];
-                    if (inet_ntop(AF_INET, *addr, buf, sizeof(buf))) {
-                        out.emplace_back(buf);
-                    }
-                }
-            }
-        }
-    } catch (...) {
-    }
-    if (ctx && ctx->pending) {
-        ctx->pending->fetch_sub(1, std::memory_order_release);
-    }
-}
-
-static void ares_cname_cb(void* arg, int status, int, unsigned char* abuf, int alen) {
+static void ares_cname_cb(void* arg, int status, int, unsigned char* abuf, int alen) noexcept {
     std::unique_ptr<CnameCtx> ctx(static_cast<CnameCtx*>(arg));
-    if (status == ARES_SUCCESS && abuf && alen > 0) {
-        std::string cname = parse_first_cname_reply(abuf, alen);
+    try { if (status == ARES_SUCCESS && abuf && alen > 0) {
+        std::string cname = parse_first_cname_reply(abuf, alen, *ctx->name);
         if (!cname.empty()) { *ctx->out = std::move(cname); }
-    }
+    } } catch (...) {}
     ctx->pending->fetch_sub(1, std::memory_order_release);
 }
 
@@ -231,33 +328,6 @@ static void poll_loop_step(ares_channel ch) {
     if (!processed) {
         ares_process_fd(ch, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
     }
-}
-
-struct ResolverHealthCtx {
-    std::vector<std::string> ips;
-    bool done = false;
-};
-
-static void resolver_health_cb(void* arg, int status, int, unsigned char* abuf, int alen) {
-    auto* ctx = static_cast<ResolverHealthCtx*>(arg);
-    if (status == ARES_SUCCESS && abuf && alen > 0) {
-        struct hostent* host = nullptr;
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        int parse_status = ares_parse_a_reply(abuf, alen, &host, nullptr, nullptr);
-#pragma GCC diagnostic pop
-        if (parse_status == ARES_SUCCESS && host &&
-            host->h_addrtype == AF_INET && host->h_length == (int)sizeof(struct in_addr)) {
-            for (char** addr = host->h_addr_list; addr && *addr; ++addr) {
-                char buf[INET_ADDRSTRLEN];
-                if (inet_ntop(AF_INET, *addr, buf, sizeof(buf))) {
-                    ctx->ips.emplace_back(buf);
-                }
-            }
-        }
-        if (host) { ares_free_hostent(host); }
-    }
-    ctx->done = true;
 }
 
 static void health_poll_loop_step(ares_channel ch,
@@ -330,39 +400,41 @@ static void health_poll_loop_step(ares_channel ch,
     }
 }
 
-static std::vector<std::string> query_resolver_a(const std::string& resolver_ip,
+static CheckedFamily query_resolver_a(const std::string& resolver_ip,
                                                  const std::string& hostname,
                                                  int timeout_ms) {
-    if (timeout_ms <= 0) { return {}; }
-
+    CheckedFamily result;
+    result.failed = true;
+    if (timeout_ms <= 0 || g_cancel_token.cancelled) return result;
+    std::atomic<int> pending{0};
+    AresChannelGuard guard;
     struct ares_options opts{};
     opts.timeout = timeout_ms;
     opts.tries   = 1;
-    ares_channel ch;
-    if (ares_init_options(&ch, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) {
-        return {};
+    if (ares_init_options(&guard.channel, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) {
+        return result;
     }
-
-    if (ares_set_servers_csv(ch, resolver_ip.c_str()) != ARES_SUCCESS) {
-        ares_destroy(ch);
-        return {};
+    if (ares_set_servers_ports_csv(guard.channel, resolver_ip.c_str()) != ARES_SUCCESS) {
+        return result;
     }
-
-    ResolverHealthCtx ctx;
+    auto* context = new CheckedContext{&result, &pending, &hostname, ns_t_a};
+    pending = 1;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    ares_query(ch, hostname.c_str(), ns_c_in, ns_t_a, resolver_health_cb, &ctx);
+    ares_query(guard.channel, hostname.c_str(), ns_c_in, ns_t_a, checked_address_callback, context);
 #pragma GCC diagnostic pop
-
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (!ctx.done && std::chrono::steady_clock::now() < deadline) {
-        health_poll_loop_step(ch, deadline);
+    while (pending.load(std::memory_order_acquire) && !g_cancel_token.cancelled &&
+           std::chrono::steady_clock::now() < deadline) {
+        health_poll_loop_step(guard.channel, deadline);
     }
-
-    bool completed = ctx.done;
-    ares_destroy(ch);
-    if (!completed) { return {}; }
-    return ctx.ips;
+    const bool completed = pending.load(std::memory_order_acquire) == 0;
+    ares_destroy(guard.channel);
+    guard.channel = nullptr;
+    if (!completed || g_cancel_token.cancelled) {
+        result.addresses.clear(); result.failed = true;
+    }
+    return result;
 }
 
 static bool is_resolver_healthy(const std::string& resolver_ip,
@@ -373,9 +445,9 @@ static bool is_resolver_healthy(const std::string& resolver_ip,
     auto start = std::chrono::steady_clock::now();
     auto positive = query_resolver_a(resolver_ip, positive_host, timeout_ms);
     bool healthy = false;
-    if (!positive.empty()) {
+    if (!positive.failed && !positive.addresses.empty() && !g_cancel_token.cancelled) {
         auto negative = query_resolver_a(resolver_ip, negative_host, timeout_ms);
-        healthy = negative.empty();
+        healthy = !negative.failed && negative.addresses.empty();
     }
     if (elapsed_ms_out) {
         auto elapsed = std::chrono::steady_clock::now() - start;
@@ -420,26 +492,36 @@ filter_healthy_resolvers(const std::vector<std::string>& input_resolvers,
     std::vector<long long> elapsed_ms(test_count, 0);
     std::atomic<size_t> next{0};
     std::atomic<size_t> tested{0};
+    std::atomic<bool> failed{false};
     std::string negative_host = make_health_negative_host();
+    const auto health_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
     auto worker = [&]() {
-        while (true) {
+        try {
+        while (!g_cancel_token.cancelled && !failed && std::chrono::steady_clock::now() < health_deadline) {
             size_t idx = next.fetch_add(1, std::memory_order_relaxed);
             if (idx >= test_count) { break; }
             tested.fetch_add(1, std::memory_order_relaxed);
             long long resolver_elapsed_ms = 0;
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                health_deadline - std::chrono::steady_clock::now()).count();
+            const int probe_timeout = static_cast<int>(std::min<long long>(timeout_ms, std::max<long long>(1, remaining / 2)));
             if (is_resolver_healthy(input_resolvers[idx], "example.com",
-                                    negative_host, timeout_ms, &resolver_elapsed_ms)) {
+                                    negative_host, probe_timeout, &resolver_elapsed_ms)) {
                 passed[idx] = 1;
                 elapsed_ms[idx] = resolver_elapsed_ms;
             }
         }
+        } catch (...) { failed = true; }
     };
 
     std::vector<std::thread> threads;
     threads.reserve(worker_count);
-    for (size_t i = 0; i < worker_count; i++) { threads.emplace_back(worker); }
+    try {
+        for (size_t i = 0; i < worker_count; i++) { threads.emplace_back(worker); }
+    } catch (...) { failed = true; }
     for (auto& t : threads) { t.join(); }
+    if (failed) throw std::runtime_error("DNS resolver health workers could not complete");
 
     if (tested_count_out) { *tested_count_out = tested.load(std::memory_order_relaxed); }
 
@@ -482,23 +564,16 @@ static const std::vector<std::string>& default_resolver_pool() {
                       << passed << "/" << tested
                       << BLOOD_RED << " default resolvers passed\n" << RESET;
         }
-        std::vector<std::string> chosen;
-        if (healthy.size() >= 4) {
-            chosen = std::move(healthy);
-        } else {
-            chosen = ALL_RESOLVERS;
-            std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << BLOOD_RED
-                      << "  [!] DNS resolver health: fallback to unfiltered default resolver pool\n"
-                      << RESET;
-        }
-        if (chosen.empty()) { chosen = ALL_RESOLVERS; }
+        if (g_cancel_token.cancelled) throw std::runtime_error("DNS resolver health check cancelled");
+        // Cache a failed health pass too: concurrent lookups must not repeat
+        // the same network probes once for every waiting worker.
         {
             std::lock_guard<std::mutex> lk(g_default_resolvers_mtx);
-            g_default_resolvers_checked = std::move(chosen);
+            g_default_resolvers_checked = std::move(healthy);
+            g_default_resolvers_ready = true;
         }
     });
-    return g_default_resolvers_checked.empty() ? ALL_RESOLVERS : g_default_resolvers_checked;
+    return g_default_resolvers_checked;
 }
 
 #if DNS_HAS_URING
@@ -633,7 +708,7 @@ size_t DnsEngine::resolver_count() const {
     }
     {
         std::lock_guard<std::mutex> lk(g_default_resolvers_mtx);
-        if (!g_default_resolvers_checked.empty()) { return g_default_resolvers_checked.size(); }
+        if (g_default_resolvers_ready) { return g_default_resolvers_checked.size(); }
     }
     return ALL_RESOLVERS.size();
 }
@@ -660,24 +735,79 @@ static std::string make_shard_csv(const std::vector<std::string>& resolvers,
 }
 
 void DnsEngine::load_resolvers(const std::string& path) {
-    if (path.empty()) return;
-    std::ifstream f(path);
-    if (!f.is_open()) return;
+    if (path.empty()) throw std::runtime_error("DNS resolver path is empty");
+    struct FileGuard { int fd = -1; ~FileGuard() { if (fd >= 0) close(fd); } } file;
+    file.fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (file.fd < 0) throw std::runtime_error("Cannot open DNS resolver file: " + path);
+    constexpr std::size_t maximum_bytes = 2 * 1024 * 1024;
+    struct stat metadata{};
+    if (fstat(file.fd, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_size < 0 ||
+        static_cast<std::uintmax_t>(metadata.st_size) > maximum_bytes)
+        throw std::runtime_error("DNS resolver file must be a readable regular file of at most 2 MiB: " + path);
+    std::string content;
+    char buffer[4096];
+    while (!g_cancel_token.cancelled) {
+        const auto count = read(file.fd, buffer, sizeof(buffer));
+        if (count == 0) break;
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            throw std::runtime_error("Cannot read DNS resolver file: " + path);
+        }
+        if (content.size() + static_cast<std::size_t>(count) > maximum_bytes)
+            throw std::runtime_error("DNS resolver file exceeded its 2 MiB limit: " + path);
+        content.append(buffer, static_cast<std::size_t>(count));
+    }
+    if (g_cancel_token.cancelled) throw std::runtime_error("DNS resolver loading cancelled");
+    auto endpoint = [](const std::string& value) -> std::string {
+        std::string address = value, port;
+        if (value.empty() || value.find_first_of(" \t\r\n\0", 0, 5) != std::string::npos) return "";
+        if (value.front() == '[') {
+            const auto end = value.find(']');
+            if (end == std::string::npos) return "";
+            address = value.substr(1, end - 1);
+            if (end + 1 < value.size()) {
+                if (value[end + 1] != ':') return "";
+                port = value.substr(end + 2);
+                if (port.empty()) return "";
+            }
+        } else if (std::count(value.begin(), value.end(), ':') == 1) {
+            const auto colon = value.find(':');
+            address = value.substr(0, colon); port = value.substr(colon + 1);
+            if (port.empty()) return "";
+        }
+        if (!port.empty()) {
+            if (port.size() > 5 || !std::all_of(port.begin(), port.end(), [](unsigned char c) { return c >= '0' && c <= '9'; })) return "";
+            const int number = std::stoi(port);
+            if (number < 1 || number > 65535) return "";
+            port = ':' + std::to_string(number);
+        }
+        unsigned char bytes[sizeof(in6_addr)]{};
+        char formatted[INET6_ADDRSTRLEN]{};
+        if (inet_pton(AF_INET, address.c_str(), bytes) == 1 && inet_ntop(AF_INET, bytes, formatted, sizeof(formatted)))
+            return std::string(formatted) + port;
+        if (inet_pton(AF_INET6, address.c_str(), bytes) == 1 && inet_ntop(AF_INET6, bytes, formatted, sizeof(formatted)))
+            return '[' + std::string(formatted) + ']' + port;
+        return "";
+    };
+    std::istringstream f(content);
     std::vector<std::string> loaded;
-    loaded.reserve(100000);
     std::unordered_set<std::string> seen;
-    seen.reserve(100000);
     std::string line;
+    std::size_t line_number = 0;
     while (std::getline(f, line)) {
+        if (++line_number > 100000) throw std::runtime_error("DNS resolver file exceeds 100000 lines");
         while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
             line.pop_back();
         size_t start = 0;
         while (start < line.size() && std::isspace(static_cast<unsigned char>(line[start]))) start++;
         if (start > 0) line.erase(0, start);
         if (line.empty() || line[0]=='#') continue;
-        if (InputGuard::is_valid_ipv4(line) && seen.insert(line).second) loaded.push_back(line);
+        const auto normalized = endpoint(line);
+        if (normalized.empty()) throw std::runtime_error("Invalid DNS resolver on line " + std::to_string(line_number));
+        if (seen.insert(normalized).second) loaded.push_back(normalized);
     }
-    if (!loaded.empty()) {
+    if (loaded.empty()) throw std::runtime_error("DNS resolver file contains no addresses: " + path);
+    {
         size_t tested = 0;
         size_t passed = 0;
         auto healthy = filter_healthy_resolvers(loaded,
@@ -687,16 +817,15 @@ void DnsEngine::load_resolvers(const std::string& path) {
                                                 RESOLVER_HEALTH_TIMEOUT_MS,
                                                 &tested,
                                                 &passed);
-        size_t required = std::min((size_t)4, loaded.size());
-        bool use_healthy = healthy.size() >= required;
-        size_t final_count = use_healthy ? healthy.size() : loaded.size();
+        if (g_cancel_token.cancelled) throw std::runtime_error("DNS resolver health check cancelled");
+        if (healthy.empty()) throw std::runtime_error("No custom DNS resolver passed positive and negative health checks");
+        const auto final_count = healthy.size();
         {
             std::lock_guard<std::mutex> lk(g_custom_resolvers_mtx);
-            g_custom_resolvers = use_healthy ? std::move(healthy) : std::move(loaded);
+            g_custom_resolvers = std::move(healthy);
         }
         {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            if (use_healthy) {
                 std::cout << BLOOD_RED << "  [*] DNS resolver health: " << WHITE
                           << passed << "/" << tested
                           << BLOOD_RED << " custom resolvers passed, using ";
@@ -707,140 +836,125 @@ void DnsEngine::load_resolvers(const std::string& path) {
                     std::cout << WHITE << "all " << final_count
                               << BLOOD_RED << " passing resolvers\n" << RESET;
                 }
-            } else {
-                std::cout << BLOOD_RED
-                          << "  [!] DNS resolver health: too few custom resolvers passed, using original loaded list\n"
-                          << RESET;
-            }
             std::cout << BLOOD_RED << "  [+] " << WHITE << final_count
                       << BLOOD_RED << " custom resolvers loaded\n" << RESET;
         }
     }
 }
 
+std::unordered_map<std::string, DnsLookupResult>
+DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency,
+                                 int timeout_ms) {
+    std::unordered_map<std::string, DnsLookupResult> output;
+    std::vector<std::string> names;
+    names.reserve(hosts.size());
+    for (const auto& host : hosts) {
+        if (output.emplace(host, DnsLookupResult{}).second) names.push_back(host);
+    }
+    if (names.empty()) return output;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(std::clamp(timeout_ms, 1, 30000));
+    auto fail_all = [&](const std::string& error) {
+        for (auto& entry : output) { entry.second.failed = true; entry.second.error = error; }
+    };
+    if (g_cancel_token.cancelled) { fail_all("DNS lookup cancelled"); return output; }
+    std::vector<std::string> resolvers;
+    try { resolvers = resolver_pool_snapshot(); }
+    catch (const std::exception& error) { fail_all(error.what()); return output; }
+    if (resolvers.empty()) { fail_all("No healthy DNS resolvers available"); return output; }
+
+    struct HostState { CheckedFamily ipv4, ipv6; };
+    std::vector<HostState> states(names.size());
+    const int total_slots = clamp_total_concurrency(concurrency);
+    const int channels = std::min<int>({N_CHANNELS, total_slots, static_cast<int>(std::min<std::size_t>(names.size(), N_CHANNELS))});
+    const int slots = total_to_per_channel_concurrency(total_slots, channels);
+    const auto rotation = resolver_rotation_.fetch_add(static_cast<std::size_t>(channels) * RESOLVERS_PER_CHANNEL);
+    std::atomic<std::size_t> next{0};
+    std::atomic<bool> worker_failure{false};
+    auto worker = [&](int channel_index) noexcept {
+        try {
+            // The channel is destroyed before pending, and callbacks retain
+            // references only to the stable names/states arrays above.
+            std::atomic<int> pending{0};
+            AresChannelGuard guard;
+            ares_options options{};
+            options.timeout = 500;
+            options.tries = 1;
+            const int initialized = ares_init_options(&guard.channel, &options, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES);
+            if (initialized != ARES_SUCCESS ||
+                ares_set_servers_ports_csv(guard.channel,
+                    make_shard_csv(resolvers, rotation, channel_index, RESOLVERS_PER_CHANNEL).c_str()) != ARES_SUCCESS) {
+                worker_failure = true;
+                return;
+            }
+            while (!g_cancel_token.cancelled && !worker_failure && std::chrono::steady_clock::now() < deadline) {
+                while (pending.load(std::memory_order_acquire) < slots && !g_cancel_token.cancelled &&
+                       !worker_failure && std::chrono::steady_clock::now() < deadline) {
+                    const auto index = next.fetch_add(1);
+                    if (index >= names.size()) break;
+                    const auto key = dns_name_key(names[index]);
+                    if (!InputGuard::is_valid_host(key) || key.find(':') != std::string::npos) {
+                        for (auto* family : {&states[index].ipv4, &states[index].ipv6}) {
+                            family->completed = true; family->failed = true; family->error = "Invalid DNS hostname";
+                        }
+                        continue;
+                    }
+                    for (const int type : {ns_t_a, ns_t_aaaa}) {
+                        auto* family = type == ns_t_a ? &states[index].ipv4 : &states[index].ipv6;
+                        auto* context = new CheckedContext{family, &pending, &names[index], type};
+                        pending.fetch_add(1, std::memory_order_release);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                        ares_query(guard.channel, names[index].c_str(), ns_c_in, type, checked_address_callback, context);
+#pragma GCC diagnostic pop
+                    }
+                }
+                if (pending.load(std::memory_order_acquire) == 0 && next.load() >= names.size()) break;
+                poll_loop_step(guard.channel);
+            }
+        } catch (...) { worker_failure = true; }
+    };
+    std::vector<std::thread> threads;
+    threads.reserve(channels);
+    try {
+        for (int i = 0; i < channels; ++i) threads.emplace_back(worker, i);
+    } catch (...) { worker_failure = true; }
+    for (auto& thread : threads) if (thread.joinable()) thread.join();
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        auto& result = output.at(names[i]);
+        result.ipv4 = std::move(states[i].ipv4.addresses);
+        result.ipv6 = std::move(states[i].ipv6.addresses);
+        const std::array<std::pair<const char*, CheckedFamily*>, 2> families{{
+            {"A", &states[i].ipv4}, {"AAAA", &states[i].ipv6}}};
+        for (const auto family : families) {
+            if (family.second->completed && !family.second->failed) continue;
+            result.failed = true;
+            if (!result.error.empty()) result.error += "; ";
+            result.error += std::string(family.first) + ": ";
+            if (g_cancel_token.cancelled) result.error += "DNS lookup cancelled";
+            else if (family.second->completed && !family.second->error.empty()) result.error += family.second->error;
+            else if (worker_failure) result.error += "DNS worker or channel initialization failed";
+            else if (!family.second->completed || std::chrono::steady_clock::now() >= deadline)
+                result.error += "DNS deadline exceeded or query was not completed";
+            else result.error += family.second->error.empty() ? "DNS response processing failed" : family.second->error;
+        }
+    }
+    return output;
+}
+
 std::unordered_map<std::string, std::vector<std::string>>
 DnsEngine::run_ares_batch(const std::vector<std::string>& hosts,
-                           const std::vector<std::string>& resolvers,
                            int concurrency,
                            int deadline_s)
 {
-    int total = (int)hosts.size();
-
-    std::unordered_map<std::string, std::vector<std::string>> results;
-    results.reserve(total * 2);
-    for (auto& h : hosts) { results[h]; }
-
-    if (total == 0) { return results; }
-
-    std::vector<std::vector<std::string>> per_host_results(hosts.size());
-
-    int n_ch = (total <= 50)    ? 1 :
-               (total <= 250)   ? std::min(N_CHANNELS, 4) :
-               (total <= 2000)  ? std::min(N_CHANNELS, 8) :
-                                  N_CHANNELS;
-    int per_channel = total_to_per_channel_concurrency(clamp_total_concurrency(concurrency), n_ch);
-
-    std::vector<std::string> fallback_resolvers;
-    const std::vector<std::string>* resolver_pool = &resolvers;
-    if (resolver_pool->empty()) {
-        fallback_resolvers = resolver_pool_snapshot();
-        resolver_pool = &fallback_resolvers;
-    }
-    size_t active_slots = (size_t)n_ch * (size_t)RESOLVERS_PER_CHANNEL;
-    size_t base_offset = resolver_rotation_.fetch_add(active_slots, std::memory_order_relaxed);
-
-    std::atomic<int> next_host{0};
-
-    auto worker = [&](int tid) {
-#if DNS_HAS_URING
-        struct io_uring ring{};
-        bool ring_ok = false;
-#endif
-        struct ares_options opts{};
-        opts.timeout = 400;
-        opts.tries   = 1;
-        ares_channel ch;
-        if (ares_init_options(&ch, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) {
-#if DNS_HAS_URING
-            if (ring_ok) { io_uring_queue_exit(&ring); }
-#endif
-            return;
-        }
-
-        std::string csv = make_shard_csv(*resolver_pool, base_offset, tid, RESOLVERS_PER_CHANNEL);
-        if (ares_set_servers_csv(ch, csv.c_str()) != ARES_SUCCESS) {
-            ares_destroy(ch);
-#if DNS_HAS_URING
-            if (ring_ok) { io_uring_queue_exit(&ring); }
-#endif
-            return;
-        }
-
-        std::atomic<int> pending{0};
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(deadline_s);
-
-        while (true) {
-            if (g_cancel_token.cancelled) { break; }
-            if (std::chrono::steady_clock::now() > deadline) { break; }
-
-            while (pending.load(std::memory_order_acquire) < per_channel) {
-                int idx = next_host.fetch_add(1, std::memory_order_relaxed);
-                if (idx >= total) { goto drain; }
-
-                const std::string& h = hosts[idx];
-                auto* ctx = new (std::nothrow) BulkAContext{&per_host_results, (size_t)idx, &pending};
-                if (!ctx) { continue; }
-                pending.fetch_add(1, std::memory_order_acquire);
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                ares_query(ch, h.c_str(), ns_c_in, ns_t_a, bulk_a_cb, ctx);
-#pragma GCC diagnostic pop
-            }
-
-            drain:
-            if (pending.load(std::memory_order_acquire) == 0 &&
-                next_host.load(std::memory_order_relaxed) >= total) {
-                break;
-            }
-
-            poll_loop_step(ch);
-        }
-
-        ares_destroy(ch);
-#if DNS_HAS_URING
-        if (ring_ok) { io_uring_queue_exit(&ring); }
-#endif
-    };
-
-    std::vector<std::thread> threads;
-    threads.reserve(n_ch);
-    for (int i = 0; i < n_ch; i++) { threads.emplace_back(worker, i); }
-    for (auto& t : threads) { t.join(); }
-
-    for (size_t i = 0; i < per_host_results.size(); i++) {
-        if (per_host_results[i].empty()) { continue; }
-        auto& dst = results[hosts[i]];
-        dst.insert(dst.end(), per_host_results[i].begin(), per_host_results[i].end());
-    }
-
-    for (auto& entry : results) {
-        auto& ips = entry.second;
-        if (ips.size() < 2) { continue; }
-        std::unordered_set<std::string> seen;
-        seen.reserve(ips.size());
-        std::vector<std::string> unique_ips;
-        unique_ips.reserve(ips.size());
-        for (auto& ip : ips) {
-            if (seen.insert(ip).second) { unique_ips.push_back(std::move(ip)); }
-        }
-        ips = std::move(unique_ips);
-    }
-
-    return results;
+    auto checked = resolve_batch_checked(hosts, concurrency, std::clamp(deadline_s, 1, 30) * 1000);
+    std::unordered_map<std::string, std::vector<std::string>> output;
+    for (auto& entry : checked) output.emplace(entry.first, std::move(entry.second.ipv4));
+    return output;
 }
 
 static std::string doh_http_get(const std::string& url) {
+    if (g_cancel_token.cancelled) return "";
     std::string body;
     CURL* c = curl_easy_init();
     if (!c) return "";
@@ -848,20 +962,30 @@ static std::string doh_http_get(const std::string& url) {
     hdrs = curl_slist_append(hdrs, "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
     auto cb = +[](char* p, size_t s, size_t n, void* u) -> size_t {
         auto* b = static_cast<std::string*>(u);
-        if (b->size() < 32768) b->append(p, std::min(s*n, 32768-b->size()));
-        return s*n;
+        const auto bytes = s * n;
+        if (bytes > 256 * 1024 - std::min<std::size_t>(b->size(), 256 * 1024)) return 0;
+        try { b->append(p, bytes); } catch (...) { return 0; }
+        return bytes;
     };
     curl_easy_setopt(c, CURLOPT_URL,           url.c_str());
     curl_easy_setopt(c, CURLOPT_HTTPHEADER,    hdrs);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
     curl_easy_setopt(c, CURLOPT_WRITEDATA,     &body);
     curl_easy_setopt(c, CURLOPT_TIMEOUT,       4L);
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,0L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 2L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST,2L);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, +[](void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+        return g_cancel_token.cancelled ? 1 : 0;
+    });
     curl_easy_setopt(c, CURLOPT_NOSIGNAL,      1L);
-    curl_easy_perform(c);
+    const auto code = curl_easy_perform(c);
+    long http_status = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_status);
     curl_slist_free_all(hdrs);
     curl_easy_cleanup(c);
-    return body;
+    return code == CURLE_OK && http_status == 200 && !g_cancel_token.cancelled ? body : "";
 }
 
 static std::vector<std::string> doh_resolve_single(const std::string& host) {
@@ -871,13 +995,11 @@ static std::vector<std::string> doh_resolve_single(const std::string& host) {
         {"https://dns.google/resolve?name="+host+"&type=A",           "google"},
     };
     for (auto& [url, name] : providers) {
-        auto resp = doh_http_get(url);
-        if (resp.empty()) { continue; }
-        std::vector<std::string> addrs;
-        std::regex re("\"data\"\\s*:\\s*\"([0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3})\"");
-        std::sregex_iterator it(resp.begin(), resp.end(), re), end;
-        for (; it != end; ++it) { addrs.push_back((*it)[1].str()); }
-        if (!addrs.empty()) { return addrs; }
+        if (g_cancel_token.cancelled) return {};
+        const auto response = doh_http_get(url);
+        if (response.empty()) continue;
+        auto parsed = dns_response::parse_doh_response(response, host, 1);
+        if (parsed.valid && !parsed.addresses.empty()) return parsed.addresses;
     }
     return {};
 }
@@ -891,9 +1013,11 @@ doh_batch(const std::vector<std::string>& hosts, int max_slots)
     std::atomic<int> next{0};
     int total = (int)hosts.size();
     std::mutex out_mtx;
+    std::atomic<bool> failed{false};
 
     auto worker = [&]() {
-        while (true) {
+        try {
+        while (!failed) {
             if (g_cancel_token.cancelled) { break; }
             int idx = next.fetch_add(1, std::memory_order_relaxed);
             if (idx >= total) { break; }
@@ -903,12 +1027,15 @@ doh_batch(const std::vector<std::string>& hosts, int max_slots)
                 out[hosts[idx]] = std::move(ips);
             }
         }
+        } catch (...) { failed = true; }
     };
 
     int nw = std::min(max_slots, std::min(total, 64));
     std::vector<std::thread> threads;
     threads.reserve(nw);
-    for (int i = 0; i < nw; i++) { threads.emplace_back(worker); }
+    try {
+        for (int i = 0; i < nw; i++) { threads.emplace_back(worker); }
+    } catch (...) { failed = true; }
     for (auto& t : threads) { t.join(); }
 
     return out;
@@ -918,7 +1045,7 @@ std::vector<std::string> DnsEngine::resolve(const std::string& host) {
     auto cached = cache_get(host);
     if (!cached.empty()) { return cached; }
 
-    auto res = run_ares_batch({host}, resolver_pool_snapshot(), 4, 8);
+    auto res = run_ares_batch({host}, 4, 8);
     auto& ips = res[host];
     if (!ips.empty()) {
         cache_put(host, ips);
@@ -945,95 +1072,44 @@ std::vector<std::string> DnsEngine::resolve(const std::string& host) {
 }
 
 std::vector<std::string> DnsEngine::resolve_aaaa(const std::string& host) {
-    std::string key = host + ":AAAA";
-    auto cached = cache_get(key);
-    if (!cached.empty()) { return cached; }
-
-    struct ares_options opts{};
-    opts.timeout = 500;
-    opts.tries   = 2;
-    ares_channel ch;
-    if (ares_init_options(&ch, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) {
-        return {};
-    }
-    auto resolvers = resolver_pool_snapshot();
-    if (resolvers.empty()) {
-        ares_destroy(ch);
-        return {};
-    }
-    size_t base_offset = resolver_rotation_.fetch_add(static_cast<size_t>(RESOLVERS_PER_CHANNEL), std::memory_order_relaxed);
-    std::string csv = make_shard_csv(resolvers, base_offset, 0, RESOLVERS_PER_CHANNEL);
-    if (ares_set_servers_csv(ch, csv.c_str()) != ARES_SUCCESS) {
-        ares_destroy(ch);
-        return {};
-    }
-
-    std::vector<std::string> ips;
-    std::atomic<int> pending{1};
-
-    struct ares_addrinfo_hints hints{};
-    hints.ai_family = AF_INET6;
-    ares_getaddrinfo(ch, host.c_str(), nullptr, &hints,
-                     ares_aaaa_cb, new AresCtx{&ips, &pending});
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (pending.load(std::memory_order_acquire) > 0 &&
-           std::chrono::steady_clock::now() < deadline) {
-        poll_loop_step(ch);
-    }
-    ares_destroy(ch);
-
-    if (!ips.empty()) { cache_put(key, ips); }
-    return ips;
+    if (g_cancel_token.cancelled) return {};
+    const auto key = host + ":AAAA";
+    const auto cached = cache_get(key);
+    if (!cached.empty()) return cached;
+    auto result = resolve_batch_checked({host}, 2, 5000);
+    auto addresses = std::move(result.at(host).ipv6);
+    if (!addresses.empty()) cache_put(key, addresses);
+    return addresses;
 }
 
 std::string DnsEngine::resolve_cname(const std::string& host) {
-    std::string key = host + ":CNAME";
-    auto cached = cache_get(key);
-    if (!cached.empty()) { return cached[0]; }
-
-    struct ares_options opts{};
-    opts.timeout = 500;
-    opts.tries   = 2;
-    ares_channel ch;
-    if (ares_init_options(&ch, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) {
-        return "";
-    }
-
-    auto resolvers = resolver_pool_snapshot();
-    if (resolvers.empty()) {
-        ares_destroy(ch);
-        return "";
-    }
-
-    size_t base_offset = resolver_rotation_.fetch_add(static_cast<size_t>(RESOLVERS_PER_CHANNEL), std::memory_order_relaxed);
-    std::string csv = make_shard_csv(resolvers, base_offset, 0, RESOLVERS_PER_CHANNEL);
-    if (ares_set_servers_csv(ch, csv.c_str()) != ARES_SUCCESS) {
-        ares_destroy(ch);
-        return "";
-    }
-
+    if (g_cancel_token.cancelled || !dns_response::valid_name(host)) return "";
+    const auto key = host + ":CNAME";
+    const auto cached = cache_get(key);
+    if (!cached.empty()) return cached.front();
+    const auto resolvers = resolver_pool_snapshot();
+    if (resolvers.empty()) return "";
     std::string cname;
-    std::atomic<int> pending{1};
-
+    std::atomic<int> pending{0};
+    AresChannelGuard guard;
+    ares_options options{};
+    options.timeout = 500; options.tries = 1;
+    if (ares_init_options(&guard.channel, &options, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES) != ARES_SUCCESS) return "";
+    const auto offset = resolver_rotation_.fetch_add(RESOLVERS_PER_CHANNEL);
+    const auto servers = make_shard_csv(resolvers, offset, 0, RESOLVERS_PER_CHANNEL);
+    if (ares_set_servers_ports_csv(guard.channel, servers.c_str()) != ARES_SUCCESS) return "";
+    auto* context = new CnameCtx{&cname, &pending, &host};
+    pending = 1;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    ares_query(ch, host.c_str(), ns_c_in, ns_t_cname,
-               ares_cname_cb, new CnameCtx{&cname, &pending});
+    ares_query(guard.channel, host.c_str(), ns_c_in, ns_t_cname, ares_cname_cb, context);
 #pragma GCC diagnostic pop
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (pending.load(std::memory_order_acquire) > 0 &&
-           !g_cancel_token.cancelled &&
-           std::chrono::steady_clock::now() < deadline) {
-        poll_loop_step(ch);
-    }
-
-    bool completed = pending.load(std::memory_order_acquire) == 0;
-    bool cancelled = g_cancel_token.cancelled;
-    ares_destroy(ch);
-
-    if (!completed || cancelled || cname.empty()) { return ""; }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (pending.load(std::memory_order_acquire) && !g_cancel_token.cancelled &&
+           std::chrono::steady_clock::now() < deadline) poll_loop_step(guard.channel);
+    const bool completed = pending.load(std::memory_order_acquire) == 0;
+    ares_destroy(guard.channel); guard.channel = nullptr;
+    if (!completed || g_cancel_token.cancelled || cname.empty()) return "";
     cache_put(key, {cname});
     return cname;
 }
@@ -1081,8 +1157,7 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int concurrency,
                      std::min(120, std::max(45, n / 1000 + 30));
 
     int effective_concurrency = clamp_total_concurrency(concurrency > 0 ? concurrency : concurrency_);
-    auto fresh = run_ares_batch(uncached, resolver_pool_snapshot(),
-                                effective_concurrency, deadline_s);
+    auto fresh = run_ares_batch(uncached, effective_concurrency, deadline_s);
 
     std::vector<std::string> doh_queue;
     for (auto& [h, ips] : fresh) {

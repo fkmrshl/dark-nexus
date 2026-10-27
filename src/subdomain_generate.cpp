@@ -1,93 +1,75 @@
 #include "subdomain_common.hpp"
 #include "environment.hpp"
+#include "dns_response.hpp"
+#include <nlohmann/json.hpp>
 #include "../include/security.hpp"
 #include "../include/user_agents.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
-#include <regex>
 #include <unistd.h>
 #include <utility>
 
-static std::string regex_escape(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size() * 2);
-    for (char ch : value) {
-        switch (ch) {
-            case '\\': case '^': case '$': case '.': case '|': case '?': case '*':
-            case '+': case '(': case ')': case '[': case ']': case '{': case '}':
-                escaped.push_back('\\');
-                break;
-            default:
-                break;
-        }
-        escaped.push_back(ch);
-    }
-    return escaped;
+std::optional<std::string> normalize_subdomain_name(const std::string& value, const std::string& domain) {
+    auto candidate = value;
+    const auto first = candidate.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return std::nullopt;
+    candidate = candidate.substr(first, candidate.find_last_not_of(" \t\r\n") - first + 1);
+    if (candidate.rfind("*.", 0) == 0) candidate.erase(0, 2);
+    candidate = dns_response::name_key(candidate);
+    const auto root = dns_response::name_key(domain);
+    if (!dns_response::valid_name(candidate) || !dns_response::valid_name(root)) return std::nullopt;
+    const auto suffix = "." + root;
+    if (candidate.size() <= suffix.size() || candidate.compare(candidate.size() - suffix.size(), suffix.size(), suffix) != 0)
+        return std::nullopt;
+    return candidate;
 }
 
 void extract_subs(const std::string& text, const std::string& domain, std::set<std::string>& out) {
-    std::string pat = "([a-zA-Z0-9_\\-]+(?:\\.[a-zA-Z0-9_\\-]+)*\\."+regex_escape(domain)+")";
-    std::regex re(pat, std::regex::icase);
-    std::sregex_iterator it(text.begin(), text.end(), re), end;
-    for (; it != end; ++it) {
-        std::string h = (*it)[1].str();
-        std::transform(h.begin(), h.end(), h.begin(), ::tolower);
-        if (h.size() > domain.size() && h.substr(h.size()-domain.size()) == domain) out.insert(h);
+    std::string token;
+    bool overlong = false;
+    auto consume = [&]() {
+        if (!overlong) if (const auto normalized = normalize_subdomain_name(token, domain)) out.insert(*normalized);
+        token.clear();
+        overlong = false;
+    };
+    for (unsigned char c : text) {
+        if (g_cancel_token.cancelled.load(std::memory_order_relaxed)) return;
+        if (out.size() >= 50000) { subdomain_warning("Passive candidate limit of 50000 reached; additional names were skipped"); return; }
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '.' || c == '-' || c == '_' || c == '*') {
+            if (token.size() < 255) token += static_cast<char>(c);
+            else overlong = true;
+        }
+        else consume();
     }
+    consume();
 }
 
-std::vector<std::string> doh_query(const std::string& hostname,
-                                   const std::string& type,
-                                   std::string* prov)
-{
-    if (!InputGuard::is_valid_host(hostname)) return {};
-    const std::vector<std::pair<std::string,std::string>> providers = {
-        {"cloudflare", "https://cloudflare-dns.com/dns-query?name="+hostname+"&type="+type},
-        {"google",     "https://dns.google/resolve?name="+hostname+"&type="+type},
-    };
-    for (auto& [name, url] : providers) {
-        auto resp = libcurl_get(url, "", random_ua(), 6, {"Accept: application/dns-json"});
-        if (resp.body.empty()) continue;
-        std::vector<std::string> addrs;
-        std::regex re("\"data\"\\s*:\\s*\"([0-9a-fA-F.:]+)\"");
-        std::sregex_iterator it(resp.body.begin(), resp.body.end(), re), end;
-        for (; it != end; ++it) {
-            std::string a = (*it)[1].str();
-            if (a.find('.')!=std::string::npos || a.find(':')!=std::string::npos) addrs.push_back(a);
+std::vector<std::string> doh_query(const std::string& hostname, const std::string& type, std::string* provider) {
+    if (provider) provider->clear();
+    if (!dns_response::valid_name(hostname) || (type != "A" && type != "AAAA") || g_cancel_token.cancelled.load()) return {};
+    for (const auto& entry : std::vector<std::pair<std::string, std::string>>{
+            {"cloudflare", "https://cloudflare-dns.com/dns-query?name=" + hostname + "&type=" + type},
+            {"google", "https://dns.google/resolve?name=" + hostname + "&type=" + type}}) {
+        if (g_cancel_token.cancelled.load()) break;
+        const auto response = libcurl_get(entry.second, "", random_ua(), 6, {"Accept: application/dns-json"});
+        if (response.cancelled) break;
+        if (!response.success) {
+            subdomain_warning("DoH " + entry.first + ": " + (response.error.empty() ? "HTTP " + std::to_string(response.http_code) : response.error));
+            continue;
         }
-        if (!addrs.empty()) { if (prov) *prov = name; return addrs; }
+        const auto answer = dns_response::parse_doh_response(response.body, hostname, type == "A" ? 1 : 28);
+        if (!answer.valid) { subdomain_warning("DoH " + entry.first + ": " + answer.error); continue; }
+        if (provider) *provider = entry.first;
+        return answer.addresses;
     }
     return {};
 }
 
-static bool is_safe_readable_wordlist_path(const std::string& path) {
-    if (path.empty()) return false;
-    if (path.find("..") != std::string::npos) return false;
-    if (path.find('\0') != std::string::npos) return false;
-    for (unsigned char ch : path) {
-        bool alnum = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9');
-        if (alnum || ch == '_' || ch == '-' || ch == '.' || ch == '/') continue;
-        return false;
-    }
-    return environment::readable_wordlist(path);
-}
-
 std::string auto_find_wordlist() {
-    const auto known = environment::find_wordlist(environment::current());
-    if (!known.empty()) return known;
-    std::vector<char> buf(4096, 0); std::string loc_res;
-    FILE* pipe = popen("locate best-dns-wordlist.txt 2>/dev/null | head -n 1", "r");
-    if (pipe) {
-        if (fgets(buf.data(), (int)buf.size(), pipe)) loc_res = buf.data();
-        pclose(pipe);
-        if (!loc_res.empty()) {
-            if (loc_res.back()=='\n') loc_res.pop_back();
-            if (is_safe_readable_wordlist_path(loc_res)) return loc_res;
-        }
-    }
-    return "";
+    return environment::find_wordlist(environment::current());
 }
 
 std::optional<std::string> normalize_wordlist_candidate_to_fqdn(
@@ -173,15 +155,16 @@ void for_each_permutation_candidate(const std::set<std::string>& found,
         "uat","qa","staging","preprod","corp","int","secure","cloud"
     };
     for (auto& sub : found) {
+        if (g_cancel_token.cancelled.load()) return;
         std::string label = sub;
         auto dot = sub.find('.');
         if (dot!=std::string::npos) label = sub.substr(0, dot);
         if (label.empty()) continue;
         for (auto& af : affixes) {
-            emit(label+"-"+af+"."+domain);
-            emit(label+af+"."+domain);
-            emit(af+"-"+label+"."+domain);
-            emit(af+label+"."+domain);
+            if (g_cancel_token.cancelled.load()) return;
+            for (auto& candidate : {label+"-"+af+"."+domain, label+af+"."+domain,
+                    af+"-"+label+"."+domain, af+label+"."+domain})
+                if (const auto normalized = normalize_subdomain_name(candidate, domain)) emit(std::string(*normalized));
         }
     }
 }

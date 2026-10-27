@@ -69,6 +69,10 @@ print('Domain Name: example.test')
                       ('--subdomain', 'example.test', '--wordlist', '/no/such/wordlist'),
                       ('--osint', 'invalid value')]:
         run(*arguments, code=2)
+    fifo = root / 'wordlist-fifo'
+    os.mkfifo(fifo)
+    run('--subdomain', 'example.test', '--wordlist', str(fifo), code=2)
+    run('--subdomain', 'example.test', '--wordlist', str(root), code=2)
     assert not calls.exists(), 'informational/invalid commands invoked a network helper'
     result = run('--dns', 'example.test', '--output', '-')
     report = json.loads(result.stdout)

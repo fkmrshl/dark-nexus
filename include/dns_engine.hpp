@@ -11,6 +11,12 @@
 #include <thread>
 #include <array>
 
+struct DnsLookupResult {
+    std::vector<std::string> ipv4, ipv6;
+    bool failed = false;
+    std::string error;
+};
+
 class DnsEngine {
 public:
     static DnsEngine& get();
@@ -25,6 +31,13 @@ public:
 
     std::unordered_map<std::string, std::vector<std::string>>
     resolve_batch(const std::vector<std::string>& hosts, int concurrency = 800, const std::unordered_set<std::string>* doh_allow = nullptr);
+
+    // A and AAAA together, without DoH or a cache that could hide failures.
+    // Negative DNS answers are successful empty results; operational failures
+    // retain any addresses collected from the other family.
+    std::unordered_map<std::string, DnsLookupResult>
+    resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency = 800,
+                          int timeout_ms = 30000);
 
     void set_concurrency(int c);
     void clear_cache();
@@ -61,7 +74,6 @@ private:
 
     std::unordered_map<std::string, std::vector<std::string>>
     run_ares_batch(const std::vector<std::string>& hosts,
-                   const std::vector<std::string>& resolvers,
                    int concurrency,
                    int deadline_s);
 

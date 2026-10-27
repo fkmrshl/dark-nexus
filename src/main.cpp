@@ -69,6 +69,9 @@ void validate_target(const cli::Options& options) {
         (InputGuard::is_valid_ipv4(options.target) || InputGuard::is_valid_ipv6(options.target)))
         throw cli::Error("subdomain scanning requires a domain name");
     if (!options.wordlist.empty()) {
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(options.wordlist, error))
+            throw cli::Error("wordlist must be a readable regular file: " + options.wordlist);
         std::ifstream wordlist(options.wordlist);
         if (!wordlist) throw cli::Error("cannot read wordlist: " + options.wordlist);
     }

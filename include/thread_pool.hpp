@@ -15,31 +15,38 @@ public:
         : stop_(false)
     {
         if (n == 0) n = 4;
-        for (size_t i = 0; i < n; ++i) {
-            workers_.emplace_back([this] {
-                for (;;) {
-                    std::function<void()> task;
-                    {
-                        std::unique_lock<std::mutex> lk(mtx_);
-                        cv_.wait(lk, [this]{ return stop_ || !tasks_.empty(); });
-                        if (stop_ && tasks_.empty()) return;
-                        task = std::move(tasks_.front());
-                        tasks_.pop();
-                        active_++;
-                    }
-                    struct ActiveGuard {
-                        int& active;
-                        std::mutex& mutex;
-                        std::condition_variable& cv;
-                        ~ActiveGuard() {
-                            std::lock_guard<std::mutex> lock(mutex);
-                            active--;
-                            cv.notify_all();
+        try {
+            for (size_t i = 0; i < n; ++i) {
+                workers_.emplace_back([this] {
+                    for (;;) {
+                        std::function<void()> task;
+                        {
+                            std::unique_lock<std::mutex> lk(mtx_);
+                            cv_.wait(lk, [this]{ return stop_ || !tasks_.empty(); });
+                            if (stop_ && tasks_.empty()) return;
+                            task = std::move(tasks_.front());
+                            tasks_.pop();
+                            active_++;
                         }
-                    } guard{active_, mtx_, done_cv_};
-                    task();
-                }
-            });
+                        struct ActiveGuard {
+                            int& active;
+                            std::mutex& mutex;
+                            std::condition_variable& cv;
+                            ~ActiveGuard() {
+                                std::lock_guard<std::mutex> lock(mutex);
+                                active--;
+                                cv.notify_all();
+                            }
+                        } guard{active_, mtx_, done_cv_};
+                        task();
+                    }
+                });
+            }
+        } catch (...) {
+            { std::lock_guard<std::mutex> lock(mtx_); stop_ = true; }
+            cv_.notify_all();
+            for (auto& worker : workers_) worker.join();
+            throw;
         }
     }
 

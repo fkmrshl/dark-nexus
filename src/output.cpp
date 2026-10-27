@@ -71,6 +71,8 @@ void write_text_report(const ScanResult& r, std::ostream& out) {
         for (const auto& s : r.subdomains) {
             out << sanitize(s.sub);
             for (const auto& ip : s.ips) out << "  " << sanitize(ip);
+            for (const auto& ip : s.ipv6) out << "  " << sanitize(ip);
+            if (s.wildcard_match) out << "  [possible wildcard]";
             out << "  " << sanitize(s.title) << '\n';
         }
     }

@@ -92,6 +92,20 @@ if(BUILD_TESTING)
     target_include_directories(dns_query_tests PRIVATE include)
     target_compile_options(dns_query_tests PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME dns_reply_parser COMMAND dns_query_tests)
+    add_executable(dns_engine_tests tests/dns_engine_tests.cpp src/terminal.cpp)
+    target_include_directories(dns_engine_tests PRIVATE include)
+    target_compile_options(dns_engine_tests PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(dns_engine_tests PRIVATE c-ares::cares_static ${DARK_NEXUS_CURL}
+        PkgConfig::URING pthread nlohmann_json::nlohmann_json)
+    add_test(NAME dns_engine COMMAND dns_engine_tests)
+    set_tests_properties(dns_engine PROPERTIES TIMEOUT 30)
+    add_executable(subdomain_sources_tests tests/subdomain_sources_tests.cpp src/subdomain_generate.cpp
+        src/subdomain_passive.cpp src/environment.cpp src/dns_query.cpp src/globals.cpp)
+    target_include_directories(subdomain_sources_tests PRIVATE include src)
+    target_compile_options(subdomain_sources_tests PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(subdomain_sources_tests PRIVATE c-ares::cares_static
+        nlohmann_json::nlohmann_json pthread)
+    add_test(NAME subdomain_sources COMMAND subdomain_sources_tests)
     add_executable(doctor_tests src/environment.cpp src/doctor.cpp src/terminal.cpp tests/doctor_tests.cpp)
     target_include_directories(doctor_tests PRIVATE include)
     target_compile_options(doctor_tests PRIVATE -Wall -Wextra -Wpedantic)
@@ -112,11 +126,32 @@ if(BUILD_TESTING)
     target_link_libraries(output_tests PRIVATE c-ares::cares_static nlohmann_json::nlohmann_json)
     add_test(NAME report_output COMMAND output_tests)
     if(Python3_Interpreter_FOUND)
+        add_executable(subdomain_http_fixture tests/subdomain_http_fixture.cpp src/subdomain_http.cpp src/globals.cpp)
+        target_include_directories(subdomain_http_fixture PRIVATE include src)
+        target_compile_options(subdomain_http_fixture PRIVATE -Wall -Wextra -Wpedantic)
+        target_link_libraries(subdomain_http_fixture PRIVATE c-ares::cares_static
+            ${DARK_NEXUS_CURL} nlohmann_json::nlohmann_json pthread)
+        add_test(NAME subdomain_http COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/subdomain_http_tests.py $<TARGET_FILE:subdomain_http_fixture>)
+        set_tests_properties(subdomain_http PROPERTIES TIMEOUT 30)
+        add_executable(subdomain_integration_fixture src/subdomain.cpp src/subdomain_generate.cpp
+            src/environment.cpp src/dns_query.cpp src/output.cpp src/terminal.cpp src/globals.cpp
+            tests/subdomain_integration.cpp)
+        target_include_directories(subdomain_integration_fixture PRIVATE include src)
+        target_compile_options(subdomain_integration_fixture PRIVATE -Wall -Wextra -Wpedantic)
+        target_link_libraries(subdomain_integration_fixture PRIVATE c-ares::cares_static
+            ${DARK_NEXUS_CURL} ${LIBCAP_LIB} nlohmann_json::nlohmann_json pthread)
+        add_test(NAME subdomain_pipeline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/subdomain_integration.py $<TARGET_FILE:subdomain_integration_fixture>)
+        set_tests_properties(subdomain_pipeline PROPERTIES TIMEOUT 120)
         add_test(NAME cli_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_integration.py $<TARGET_FILE:dark_nexus>)
         add_test(NAME doctor_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/doctor_integration.py $<TARGET_FILE:dark_nexus>)
         add_test(NAME dns_whois_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/dns_whois_integration.py $<TARGET_FILE:dark_nexus>)
+        add_test(NAME subdomain_cli_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/subdomain_cli_integration.py $<TARGET_FILE:dark_nexus>)
+        set_tests_properties(subdomain_cli_integration PROPERTIES TIMEOUT 120)
     endif()
 endif()

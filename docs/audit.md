@@ -2,7 +2,7 @@
 
 ## DNS and WHOIS
 
-This pass covers the DNS/WHOIS command paths and their shared process supervisor. Other network modules have not received the same module-level audit.
+This pass covers the DNS/WHOIS command paths and their shared process supervisor. Subdomain discovery is covered separately below; other network modules have not received the same module-level audit.
 
 Resolved issues:
 
@@ -17,4 +17,14 @@ The regression suite uses local fake helpers and synthetic replies. It checks su
 
 These checks do not establish availability of public resolvers or registries. WHOIS classification recognizes common free-form messages; it is not a validator for every registry's text format. DNS parsing checks reply structure, answer correlation and the syntax of selected record types. It is not a universal DNS resource-record validator; policy and cryptographic validation remain outside this command's contract. See the [command reference](cli.md#dns-and-whois) for exact limits, statuses and exit codes.
 
-The next module to audit is subdomain discovery, including its DNS/HTTP pipeline, worker cancellation and module-specific output/checkpoint files.
+## Subdomain discovery
+
+This pass covers candidate validation, A/AAAA resolution, the DNS/HTTP queue, cancellation, optional enrichment and result-file handling.
+
+- DNS observations reach shared and module reports before HTTP enrichment. IPv6-only names remain available without enrichment. Operational DNS failures are distinct from negative answers.
+- Queue waits and active DNS/HTTP operations observe cancellation. Queue teardown joins workers on normal completion and exceptions; thread-pool construction cleans up workers when creation fails.
+- Passive names must remain under the requested domain. Certificate JSON and DoH responses are parsed structurally; DoH checks status, owner/CNAME correlation, record type and address syntax. API requests verify TLS, bound capture and report failures.
+- Wildcard coincidences remain visible as marked observations. CNAME fingerprints are manual-inspection hints and do not establish a takeover.
+- Module exports and checkpoints use unique temporary files and checked atomic replacement. Final snapshots are written after enrichment; checkpoints contain results, not resumable scan state. Concurrent runs can replace each other's complete files, with the last successful writer winning.
+
+Local fixtures exercise the pipeline, resolver replies, passive parsing, HTTP limits, cancellation, worker errors and file-write failures. External resolver/registry/API availability and complete Internet-wide discovery remain outside these checks. The [command reference](cli.md#subdomains) describes limits and report behavior.

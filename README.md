@@ -114,7 +114,7 @@ dark-nexus --portscan 127.0.0.1 --ports 22,80,8000-8010 --connect --timeout 500
 <details>
 <summary><strong>Subdomains</strong> — domain discovery and web metadata</summary>
 
-Combine certificate transparency results with wordlist DNS resolution and wildcard filtering. Deep mode adds more passive sources, permutations, CNAME/AAAA checks, web technology hints, JavaScript discovery, and takeover signature checks. Fast mode uses fewer sources and lighter HTTP enrichment. Neither mode is passive-only: both send DNS queries and, by default, HTTP requests. Takeover matches need manual verification.
+Combine certificate transparency results with wordlist A/AAAA resolution. IPv6-only names remain available without web enrichment; possible wildcard matches are retained with a marker. Deep mode adds more passive sources, permutations, CNAME checks, web technology hints, JavaScript discovery, and service fingerprints requiring manual verification. Fast mode uses fewer sources and lighter HTTP enrichment. Both modes send DNS queries and, by default, HTTP requests. Cancellation preserves collected DNS observations in requested reports.
 
 ```sh
 dark-nexus --subdomain example.test --mode fast --wordlist ./hosts.txt --no-enrich

@@ -87,6 +87,7 @@ struct PortEntry {
 struct SubEntry {
     std::string sub;
     std::vector<std::string> ips;
+    std::vector<std::string> ipv6;
     std::string cname;
     std::string http_code;
     std::string server;
@@ -96,6 +97,7 @@ struct SubEntry {
     std::string source;
     std::string title;
     bool takeover_possible = false;
+    bool wildcard_match = false;
 };
 
 struct OsintEntry {

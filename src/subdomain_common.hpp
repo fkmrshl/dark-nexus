@@ -12,7 +12,15 @@ struct CurlResponse {
     std::string headers;
     std::string body;
     long        http_code = 0;
+    int transport_code = -1;
+    bool success = false, cancelled = false, timed_out = false, truncated = false, callback_failed = false;
+    std::string effective_url, error;
 };
+
+enum class SubdomainHttpMode { Verified, TargetProbe };
+void subdomain_warning(const std::string& message);
+std::string sanitize_subdomain_text(const std::string& value, std::size_t limit = 512);
+std::optional<std::string> normalize_subdomain_name(const std::string& candidate, const std::string& domain);
 
 struct WAFInfo  { std::string name, confidence; };
 struct TechInfo { std::vector<std::string> stack; std::string cms, language, session_cookie; };
@@ -24,7 +32,11 @@ CurlResponse libcurl_get(const std::string& url,
                          const std::string& host_hdr,
                          const std::string& ua,
                          int timeout_s = 5,
-                         const std::vector<std::string>& extra_headers = {});
+                         const std::vector<std::string>& extra_headers = {},
+                         SubdomainHttpMode mode = SubdomainHttpMode::Verified);
+CurlResponse libcurl_post(const std::string& url, const std::string& ua, int timeout_s,
+                         const std::vector<std::string>& headers, const std::string& body,
+                         const std::string& credentials = "");
 CurlResponse fast_probe(const std::string& sub, int timeout_s);
 long fast_check(const std::string& sub, int timeout_s);
 WAFInfo detect_waf(const std::string& hdrs, const std::string& body, const std::string& cookies);

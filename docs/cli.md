@@ -167,6 +167,20 @@ Both profiles perform active DNS resolution. `--no-enrich` disables web enrichme
 
 The module also writes its own `<domain>_subdomains.json`, `<domain>_subdomains.csv`, and checkpoint files in the working directory, independently of `--output`. These module files use a different layout from the common CLI report.
 
+DNS discovery checks both A and AAAA records. IPv6-only names remain available with `--no-enrich`; common JSON and CSV details include `ipv6`. Discovery rows require an observed address; a missing row does not establish that a DNS name is nonexistent. Resolver errors are distinguished from NXDOMAIN and successful empty answers. Failed candidate lookups make the common report partial or failed and return `1`; optional passive-source and HTTP failures produce bounded warnings. A completed command does not guarantee coverage of every passive source.
+
+DNS observations are saved before optional enrichment. SIGINT/SIGTERM stop new work and cancel active DNS/HTTP operations; the common report retains observations with status `cancelled` and exit `130`. The HTTP queue is bounded and is discarded on cancellation without losing DNS observations already returned by the current batch. Worker failures retain base records and appear in report errors.
+
+Wildcard matching is a heuristic. Names sharing the probe address set are retained with `wildcard_match: true` and a warning, rather than silently excluded. Incomplete wildcard probes cannot establish absence. CNAME service fingerprints are inspection hints requiring manual verification; `takeover_possible` does not establish exploitability.
+
+Explicit wordlists must be readable regular files. A list without valid candidates is an error and does not silently switch to the built-in list. Module JSON/CSV and checkpoint files use independent atomic replacements; write failures are reported. Checkpoints are result snapshots, including a final snapshot after workers finish; they do not implement scan resumption. Concurrent runs produce complete individual files, but the last successful writer wins and JSON/CSV/checkpoint files are not one transaction.
+
+Passive APIs and DoH use verified TLS and bounded response capture. DoH answers must have a valid DNS status, matching address type and owner/CNAME chain. Fallback is restricted to passive candidates with operational DNS failures and at most 500 candidates per run. JavaScript inspection checks at most 32 pages and 50 script URLs under the scan domain; CNAME service inspection checks at most 64 matching candidates. These limits produce warnings when remaining optional work is skipped.
+
+HTTP requests do not follow redirects; reported status and metadata describe the requested endpoint. HTTP bodies are capped at 1 MiB for API requests and 50000 bytes for target probes, with a 64 KiB header limit. Partial, oversized and failed responses are not treated as completed HTTP enrichment.
+
+The existing resolver-file search includes `./resolvers.txt` and `./resolvers_trusted.txt`. Files must be readable regular files, at most 2 MiB and 100000 lines, containing IPv4/IPv6 resolver addresses with optional ports (`127.0.0.1:5353` or `[::1]:5353`); blank lines and full-line `#` comments are accepted. Resolver health checks require a positive `example.com` A response and a successful negative probe. Only passing resolvers are used; an empty or malformed file or no passing custom resolver is an error. Resolver setup has its own bounded health-check phase; candidate batches have a 30-second deadline.
+
 ## Traceroute
 
 ```sh

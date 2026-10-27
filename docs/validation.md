@@ -10,6 +10,8 @@ DNS/WHOIS checks use fake `dig` and `whois` programs, including fake PTR answers
 
 Container results establish whether the project builds and passes these checks in those environments. They do not establish live external-service availability, raw-socket access on every host, or successful package-manager installation on every distribution. See the actual workflow run for results; defining a matrix does not mean its jobs have passed.
 
+Subdomain checks use local DNS/HTTP fixtures and a pipeline harness with replaced network dependencies. They cover IPv6-only names, negative answers versus resolver failures, candidate boundaries, cancellation under queue pressure, worker exceptions, wildcard markers, partial reports and atomic module-file writes. These checks do not contact passive providers or public resolvers.
+
 To run the same application checks locally after installing build dependencies:
 
 ```sh
