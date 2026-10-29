@@ -124,6 +124,30 @@ static void subdomain_error(const std::string& message) {
     if (g_result.errors.size() < 64) g_result.errors.push_back(InputGuard::sanitize_output(message, 2048));
 }
 
+static std::string server_from_headers(const std::string& headers) {
+    std::string server;
+    std::size_t start = 0;
+    while (start < headers.size()) {
+        const auto newline = headers.find('\n', start);
+        const auto end = newline == std::string::npos ? headers.size() : newline;
+        if (headers.compare(start, 5, "HTTP/") == 0) server.clear();
+        static constexpr char name[] = "server:";
+        bool matches = end - start >= sizeof(name) - 1;
+        for (std::size_t i = 0; matches && i < sizeof(name) - 1; ++i)
+            matches = std::tolower(static_cast<unsigned char>(headers[start + i])) == name[i];
+        if (matches) {
+            auto first = start + sizeof(name) - 1;
+            auto last = end;
+            while (first < last && std::isspace(static_cast<unsigned char>(headers[first]))) ++first;
+            while (last > first && std::isspace(static_cast<unsigned char>(headers[last - 1]))) --last;
+            server = sanitize_subdomain_text(headers.substr(first, std::min(last - first, std::size_t{256})), 80);
+        }
+        if (newline == std::string::npos) break;
+        start = newline + 1;
+    }
+    return server;
+}
+
 thread_local std::mt19937 tl_rng{std::random_device{}()};
 
 struct SubResult {
@@ -292,16 +316,7 @@ static void scrape_js_subdomains(const std::vector<std::string>& targets,
         if (pages++ >= 32) { subdomain_warning("JS discovery page limit of 32 reached"); break; }
         const auto response = libcurl_get("https://" + sub, sub, random_ua(), 5);
         if (response.http_code < 200 || response.http_code >= 300) continue;
-        const std::regex scripts("(?:src|href)=['\"]([^'\"]+\\.js[^'\"]*)['\"]", std::regex::icase);
-        for (std::sregex_iterator it(response.body.begin(), response.body.end(), scripts), end; it != end; ++it) {
-            auto url = (*it)[1].str();
-            if (url.rfind("//", 0) == 0) url = "https:" + url;
-            else if (!url.empty() && url.front() == '/') url = "https://" + sub + url;
-            const auto scheme = url.find("://");
-            if (scheme == std::string::npos || (url.substr(0, scheme) != "http" && url.substr(0, scheme) != "https")) continue;
-            const auto finish = url.find_first_of("/?#", scheme + 3);
-            const auto host = url.substr(scheme + 3, finish == std::string::npos ? finish : finish - scheme - 3);
-            if (!normalize_subdomain_name(host, domain)) continue;
+        for (const auto& url : extract_script_urls(response.body, "https://" + sub + "/", domain)) {
             urls.insert(url);
             if (urls.size() >= 50) break;
         }
@@ -343,6 +358,7 @@ void subdomain_scan(const std::string& domain,
     if (g_cancel_token.cancelled) return;
 
     print_header("SUBDOMAIN SCAN // " + scan_domain);
+    const auto value_color = terminal::style(terminal::Style::Value);
     CurlGlobalGuard curl_guard;
 
     auto& dns = DnsEngine::get();
@@ -669,10 +685,7 @@ void subdomain_scan(const std::string& domain,
                 auto response = fast_probe(sub, HTTP_TIMEOUT);
                 if (response.http_code > 0) {
                     result.http_code = std::to_string(response.http_code);
-                    std::smatch match;
-                    if (std::regex_search(response.headers, match,
-                            std::regex("(?:^|\\n)[Ss]erver:\\s*([^\\r\\n]+)")))
-                        result.server = sanitize_subdomain_text(match[1].str(), 80);
+                    result.server = server_from_headers(response.headers);
                     result.title = parse_title(response.body);
                     result.waf = detect_waf(response.headers, response.body, response.headers);
                     result.tech = detect_tech(response.headers, response.body, response.headers);
@@ -696,17 +709,25 @@ void subdomain_scan(const std::string& domain,
             g_result.subdomains.at(result.report_index) = entry_from_result(result);
         }
         std::lock_guard<std::mutex> print_lock(g_print_mtx);
-        std::cout << "  " << sub;
-        for (const auto& ip : result.ips) std::cout << ' ' << ip;
-        for (const auto& ip : result.ipv6) std::cout << ' ' << ip;
-        if (!result.http_code.empty()) std::cout << " HTTP:" << result.http_code;
-        if (result.wildcard_match) std::cout << " [possible wildcard]";
-        std::cout << " (" << result.source << ")\n";
+        std::cout << "  " << BOLD << sub << RESET;
+        if (!result.ips.empty()) {
+            std::cout << "  IPv4:";
+            for (const auto& ip : result.ips) std::cout << ' ' << value_color << ip << RESET;
+        }
+        if (!result.ipv6.empty()) {
+            std::cout << "  " << value_color << "IPv6:" << RESET;
+            for (const auto& ip : result.ipv6) std::cout << ' ' << value_color << ip << RESET;
+        }
+        if (!result.cname.empty())
+            std::cout << "  " << value_color << "CNAME: " << result.cname << RESET;
+        if (!result.http_code.empty())
+            std::cout << "  HTTP:" << value_color << result.http_code << RESET;
+        std::cout << DIM << " (" << result.source << ")" << RESET << '\n';
     };
 
     print_section("ASYNC DNS + DoH → PIPELINE HTTP");
     std::cout << BLOOD_RED << "  wordlist: " << WHITE
-              << (stream_file_wordlist ? "streaming" : "builtin")
+              << (passive_only ? "disabled" : stream_file_wordlist ? "streaming" : "builtin")
               << BLOOD_RED << " | passive: " << WHITE << passive_subs.size()
               << BLOOD_RED << " | HTTP workers: " << WHITE << HTTP_WORKERS
               << BLOOD_RED << " | DNS batch: " << WHITE << DNS_BATCH_SIZE
@@ -1087,23 +1108,29 @@ void subdomain_scan(const std::string& domain,
     for (auto& r : results) {
         if (r.dns_status != "resolved") continue;
         std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(42) << r.sub;
-        if (!r.ips.empty())  std::cout << WHITE << std::setw(16) << r.ips[0];
-        else                 std::cout << BLOOD_RED << std::setw(16) << "-";
-        if (!r.ipv6.empty()) { std::cout << WHITE << std::setw(6) << "v6"; cnt_ipv6++; }
-        else                   std::cout << BLOOD_RED << std::setw(6) << "-";
-        if (!r.http_code.empty() && r.http_code!="0") std::cout << BLOOD_RED << std::setw(8) << r.http_code;
-        else                                           std::cout << BLOOD_RED << std::setw(8) << "-";
+        if (!r.ips.empty())  std::cout << value_color << std::setw(16) << r.ips[0] << RESET;
+        else                 std::cout << DIM << std::setw(16) << "-" << RESET;
+        if (!r.ipv6.empty()) { std::cout << value_color << std::setw(6) << "v6" << RESET; cnt_ipv6++; }
+        else                   std::cout << DIM << std::setw(6) << "-" << RESET;
+        if (!r.http_code.empty() && r.http_code!="0")
+            std::cout << value_color << std::setw(8) << r.http_code << RESET;
+        else std::cout << DIM << std::setw(8) << "-" << RESET;
         if (!r.waf.name.empty()) {
             std::string wn=r.waf.name; if(wn.size()>14) wn=wn.substr(0,14);
-            std::cout << BLOOD_RED << std::setw(16) << wn; cnt_waf++;
-        } else { std::cout << BLOOD_RED << std::setw(16) << "-"; }
+            std::cout << value_color << std::setw(16) << wn << RESET; cnt_waf++;
+        } else { std::cout << DIM << std::setw(16) << "-" << RESET; }
         std::string ts=r.tech.language; if(!r.tech.cms.empty()) ts+="/"+r.tech.cms;
         if (ts.size()>12) ts=ts.substr(0,12);
-        std::cout << BLOOD_RED << std::setw(12) << (ts.empty()?"-":ts);
+        std::cout << (ts.empty() ? DIM : value_color) << std::setw(12) << (ts.empty()?"-":ts) << RESET;
         std::cout << WHITE << sanitize(r.title) << RESET << "\n";
-        if (!r.cname.empty()) { std::cout << BLOOD_RED << "    -> CNAME: " << WHITE << r.cname << RESET << "\n"; cnt_cname++; }
-        if (!r.ipv6.empty())  { std::cout << BLOOD_RED << "    -> IPv6:  " << WHITE; for (auto& a:r.ipv6) std::cout<<a<<" "; std::cout<<RESET<<"\n"; }
-        if (!r.tech.stack.empty()) { std::cout << BLOOD_RED << "    -> stack: " << WHITE; for (auto& s:r.tech.stack) std::cout<<s<<" "; std::cout<<RESET<<"\n"; }
+        if (r.ips.size() > 1) {
+            std::cout << "    -> " << value_color << "IPv4:  ";
+            for (const auto& ip : r.ips) std::cout << ip << ' ';
+            std::cout << RESET << '\n';
+        }
+        if (!r.cname.empty()) { std::cout << "    -> " << value_color << "CNAME: " << r.cname << RESET << "\n"; cnt_cname++; }
+        if (!r.ipv6.empty())  { std::cout << "    -> " << value_color << "IPv6:  "; for (auto& a:r.ipv6) std::cout<<a<<" "; std::cout<<RESET<<"\n"; }
+        if (!r.tech.stack.empty()) { std::cout << "    -> stack: " << value_color; for (auto& s:r.tech.stack) std::cout<<s<<" "; std::cout<<RESET<<"\n"; }
         if (!r.server.empty()) server_stats[r.server]++;
         if (!r.waf.name.empty()) waf_stats[r.waf.name]++;
         if (!r.tech.language.empty()) lang_stats[r.tech.language]++;
@@ -1112,26 +1139,28 @@ void subdomain_scan(const std::string& domain,
     }
 
     print_section("STATISTICS");
-    std::cout << BLOOD_RED << "  [resolved names]  " << WHITE << found_count.load() << "\n" << RESET;
-    std::cout << "  [uncertain names] " << candidate_count << " (excluded from resolved names)\n";
-    std::cout << BLOOD_RED << "  [dns checked]     " << WHITE << dns_checked.load()    << "\n" << RESET;
-    std::cout << BLOOD_RED << "  [DoH fallbacks]   " << WHITE << doh_used.load()       << "\n" << RESET;
-    std::cout << BLOOD_RED << "  [with CNAME]      " << WHITE << cnt_cname             << "\n" << RESET;
-    std::cout << BLOOD_RED << "  [with IPv6]       " << WHITE << cnt_ipv6              << "\n" << RESET;
-    std::cout << BLOOD_RED << "  [behind WAF]      " << WHITE << cnt_waf               << "\n" << RESET;
+    std::cout << "  [resolved names]  " << value_color << found_count.load() << RESET << '\n';
+    std::cout << "  [uncertain names] " << (candidate_count ? YELLOW : DIM) << candidate_count << RESET
+              << " (excluded from resolved names)\n";
+    std::cout << "  [dns checked]     " << value_color << dns_checked.load() << RESET << '\n';
+    std::cout << "  [DoH fallbacks]   " << value_color << doh_used.load() << RESET << '\n';
+    std::cout << "  [with CNAME]      " << value_color << cnt_cname << RESET << '\n';
+    std::cout << "  [with IPv6]       " << value_color << cnt_ipv6 << RESET << '\n';
+    std::cout << "  [behind WAF]      " << value_color << cnt_waf << RESET << '\n';
     std::cout << "  [wildcard scopes] " << std::count_if(wildcard_scopes.begin(), wildcard_scopes.end(),
         [](const auto& scope) { return scope.second == WildcardState::Wildcard; }) << '\n';
     std::cout << BLOOD_RED << "  [wildcard filtered] " << WHITE << wildcard_filtered.load() << "\n" << RESET;
     std::cout << "  [unchecked skipped] " << unchecked_filtered << '\n';
     std::cout << BLOOD_RED << "  [HTTP workers]    " << WHITE << HTTP_WORKERS           << "\n" << RESET;
 
-    auto print_dist=[](const std::map<std::string,int>& m, const std::string& label){
+    auto print_dist=[&](const std::map<std::string,int>& m, const std::string& label){
         if (m.empty()) return;
         std::cout << BLOOD_RED << "\n  [" << WHITE << label << BLOOD_RED << "]\n" << RESET;
         std::vector<std::pair<std::string,int>> v(m.begin(),m.end());
         std::sort(v.begin(),v.end(),[](auto& a,auto& b){return a.second>b.second;});
         for (auto& [k,cnt]:v)
-            std::cout<<BLOOD_RED<<"    "<<std::left<<std::setw(30)<<k<<WHITE<<cnt<<"\n"<<RESET;
+            std::cout << "    " << value_color << std::left << std::setw(30) << k
+                      << RESET << value_color << cnt << RESET << '\n';
     };
     print_dist(source_stats,"sources");
     print_dist(waf_stats,"WAF");
@@ -1168,8 +1197,9 @@ void subdomain_scan(const std::string& domain,
                     std::lock_guard<std::mutex> report_lock(g_result_mtx);
                     g_result.subdomains.at(result.report_index).takeover_possible = result.takeover_possible;
                 }
-                std::cout << "  " << result.sub << " -> " << name << " (" << signature.service << "): "
-                          << status << "; manual verification required\n";
+                std::cout << "  " << result.sub << " -> " << value_color << name << RESET
+                          << " (" << value_color << signature.service << RESET << "): "
+                          << YELLOW << status << RESET << "; manual verification required\n";
                 break;
             }
         }

@@ -115,6 +115,9 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int, int
             answer.failed = true;
             answer.error = "fixture AAAA timeout";
             answer.ipv4 = {"192.0.2.20"};
+        } else if (scenario == "presentation") {
+            answer.ipv4 = {"192.0.2.20", "192.0.2.21"};
+            answer.ipv6 = {"2001:db8::20"};
         } else answer.ipv4 = {"192.0.2.20"};
     }
     return output;
@@ -131,7 +134,9 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int concurrency,
 
 std::vector<std::string> DnsEngine::resolve(const std::string&) { return {"192.0.2.20"}; }
 std::vector<std::string> DnsEngine::resolve_aaaa(const std::string&) { return {}; }
-std::string DnsEngine::resolve_cname(const std::string&) { return {}; }
+std::string DnsEngine::resolve_cname(const std::string&) {
+    return scenario == "presentation" ? "edge.example.test" : "";
+}
 std::string DnsEngine::resolve_ptr(const std::string&) { return {}; }
 
 void passive_crtsh(const std::string&, std::set<std::string>& out) { passive_fixture(out); }
@@ -155,6 +160,9 @@ CurlResponse fast_probe(const std::string&, int) {
     response.transport_code = 0;
     response.success = response.http_code > 0;
     response.headers = "Server: fixture\r\n";
+    if (scenario == "presentation")
+        response.headers = "HTTP/1.1 200 Connection established\r\nServer: proxy\r\n\r\nHTTP/2 200\r\n"
+            "sErVeR: " + std::string(50000, 'x') + "\r\nsErVeR: fixture\r\n";
     response.body = "<title>café Москва, \"quoted\"</title>";
     return response;
 }
@@ -189,6 +197,13 @@ CurlResponse libcurl_get(const std::string& url, const std::string&, const std::
     response.transport_code = 0;
     response.success = true;
     response.body = "<title>café Москва, \"quoted\"</title>";
+    if (scenario == "js-relative") {
+        if (url == "https://www.example.test")
+            response.body = "<script src = 'assets/app.js'></script>";
+        else if (url == "https://www.example.test/assets/app.js")
+            response.body = "const endpoint = 'https://discovered.api.example.test/api';";
+        else throw std::runtime_error("unexpected script URL in JS discovery fixture: " + url);
+    }
     return response;
 }
 WAFInfo detect_waf(const std::string&, const std::string&, const std::string&) { return {}; }
@@ -222,7 +237,11 @@ std::vector<std::string> split_lines(const std::string& input) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) return 2;
+    if (argc < 2 || argc > 3) return 2;
+    const std::string color = argc == 3 ? argv[2] : "never";
+    if (color != "never" && color != "always" && color != "auto") return 2;
+    terminal::configure(color == "always" ? terminal::ColorMode::Always :
+                        color == "auto" ? terminal::ColorMode::Auto : terminal::ColorMode::Never);
     scenario = argv[1];
     g_result.scan_type = "subdomain";
     g_result.target = "example.test";
@@ -262,9 +281,11 @@ int main(int argc, char** argv) {
             if (failures) throw std::runtime_error("concurrent atomic writer failed");
         } else {
             const bool enrich = scenario == "cancel" || scenario == "worker-throw" || scenario == "unicode" ||
+                                scenario == "presentation" || scenario == "js-relative" ||
                                 classification_fixture();
             subdomain_scan("example.test", "wordlist.txt", 1, scenario == "permutation-budget",
-                           scenario == "unicode", enrich, false, scenario == "passive-only");
+                           scenario == "unicode" || scenario == "presentation" || scenario == "js-relative", enrich, false,
+                           scenario == "passive-only");
         }
     } catch (const std::exception& error) {
         g_result.errors.push_back(error.what());

@@ -220,6 +220,36 @@ class SubdomainCLITests(unittest.TestCase):
                 else:
                     self.assertIn('Status: complete', result.stdout)
 
+    def test_terminal_accents_respect_color_controls_and_keep_reports_clean(self):
+        for color in ('always', 'never', 'auto'):
+            with self.subTest(color=color):
+                start = len(self.proxy.requests)
+                destination = self.root / f'colors-{color}.json'
+                command = self.command(('dual', 'v6'), output=str(destination))
+                command.remove('--quiet')
+                command += ['--color', color]
+                result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+                self.assert_local_activity(start)
+                if color == 'always':
+                    self.assertIn('\x1b[32m192.0.2.20', result.stdout)
+                    self.assertRegex(result.stdout, r'\x1b\[32mIPv6: +2001:db8::20')
+                else:
+                    self.assertNotIn('\x1b', result.stdout)
+                report = json.loads(destination.read_text())
+                self.assertEqual({row['sub'] for row in report['subdomains']},
+                                 {'dual.example.test', 'v6.example.test'})
+                self.assertNotIn('\\u001b', destination.read_text())
+        command = self.command(('dual', 'v6')) + ['--color', 'always']
+        command.remove('--quiet')
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('\x1b', result.stdout)
+        self.assertEqual(len(json.loads(result.stdout)['subdomains']), 2)
+        self.assertIn('\x1b[32m', result.stderr)
+
     def test_deep_mode_does_not_turn_rotating_wildcard_into_wordlist_findings(self):
         self.dns.wildcard = True
         start = len(self.proxy.requests)

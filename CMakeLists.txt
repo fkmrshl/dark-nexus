@@ -103,7 +103,7 @@ if(BUILD_TESTING)
         src/subdomain_passive.cpp src/environment.cpp src/dns_query.cpp src/globals.cpp)
     target_include_directories(subdomain_sources_tests PRIVATE include src)
     target_compile_options(subdomain_sources_tests PRIVATE -Wall -Wextra -Wpedantic)
-    target_link_libraries(subdomain_sources_tests PRIVATE c-ares::cares_static
+    target_link_libraries(subdomain_sources_tests PRIVATE c-ares::cares_static ${DARK_NEXUS_CURL}
         nlohmann_json::nlohmann_json pthread)
     add_test(NAME subdomain_sources COMMAND subdomain_sources_tests)
     add_executable(doctor_tests src/environment.cpp src/doctor.cpp src/terminal.cpp tests/doctor_tests.cpp)

@@ -28,13 +28,15 @@ class SubdomainPipelineTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def run_fixture(self, scenario='success', words=('www', 'mail'), code=0):
+    def run_fixture(self, scenario='success', words=('www', 'mail'), code=0, color=None):
         (self.root / 'wordlist.txt').write_text('\n'.join(words) + '\n')
         started = time.monotonic()
-        result = subprocess.run([BINARY, scenario], cwd=self.root, env=self.environment,
+        arguments = [BINARY, scenario] + ([color] if color is not None else [])
+        result = subprocess.run(arguments, cwd=self.root, env=self.environment,
                                 stdin=subprocess.DEVNULL, capture_output=True,
                                 text=True, timeout=12)
         self.assertEqual(result.returncode, code, (scenario, result.stdout[-5000:], result.stderr))
+        self.last_stdout = result.stdout
         report = json.loads((self.root / 'fixture-report.json').read_text())
         self.assertEqual(report['fixture']['active_http'], 0)
         self.assertEqual(report['fixture']['http_after_cancel'], 0)
@@ -58,6 +60,34 @@ class SubdomainPipelineTests(unittest.TestCase):
             self.assertEqual(row['ipv6'], ['2001:db8::20'])
         self.assertTrue(all(row['ipv6'] == ['2001:db8::20'] for row in self.module_json()))
         self.assertEqual(report['fixture']['http_calls'], 0)
+
+    def test_console_accents_preserve_plain_output_and_machine_reports(self):
+        for color in ('always', 'never', 'auto'):
+            with self.subTest(color=color):
+                report, _ = self.run_fixture('presentation', color=color)
+                output = self.last_stdout
+                for value in ('192.0.2.20', '192.0.2.21', '2001:db8::20', 'CNAME: edge.example.test'):
+                    self.assertIn(value, output)
+                if color == 'always':
+                    self.assertIn('\x1b[32m192.0.2.20', output)
+                    self.assertIn('\x1b[32m2001:db8::20', output)
+                    self.assertIn('\x1b[32mCNAME: edge.example.test', output)
+                else:
+                    self.assertNotIn('\x1b', output)
+                self.assertEqual(len(report['subdomains']), 2)
+                self.assertTrue(all(row['cname'] == 'edge.example.test' for row in report['subdomains']))
+                self.assertTrue(all(row['server'] == 'fixture' for row in report['subdomains']))
+                for filename in ('fixture-report.json', 'example.test_subdomains.json',
+                                 'example.test_subdomains.csv', 'example.test_subdomains_checkpoint.json'):
+                    self.assertNotIn('\x1b', (self.root / filename).read_text())
+
+    def test_deep_js_relative_script_reaches_dns_discovery_pipeline(self):
+        report, _ = self.run_fixture('js-relative', words=('www',))
+        self.assertEqual({row['sub'] for row in report['subdomains']},
+                         {'www.example.test', 'discovered.api.example.test'})
+        self.assertEqual(report['subdomain_candidates'], [])
+        self.assertEqual(report['fixture']['http_calls'], 2)
+        self.assertIn('discovered.api.example.test', report['fixture']['requested'])
 
     def test_dns_operational_failure_differs_from_negative_answer(self):
         negative, _ = self.run_fixture('nxdomain')

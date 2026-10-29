@@ -1,6 +1,7 @@
 #include "../src/subdomain_common.hpp"
 #include "dns_response.hpp"
 #include "process.hpp"
+#include <algorithm>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <deque>
@@ -59,6 +60,62 @@ int main() {
     for (const auto& name : {"example.test", "notexample.test", "foo.example.test.evil", "bad_name.example.test",
             "@api.example.test", "+trace", "10 mail.example.test", "a..example.test"})
         check(!normalize_subdomain_name(name, "example.test"), "invalid or out-of-scope name rejected");
+    const auto root_variants = generate_permutations({"API.Example.Test."}, "example.test");
+    const std::set<std::string> root_names(root_variants.begin(), root_variants.end());
+    check(root_names.count("api-dev.example.test") && root_names.count("apidev.example.test") &&
+          root_names.count("dev-api.example.test") && root_names.count("devapi.example.test"),
+          "direct child permutations retain existing normalized forms");
+    const auto nested_variants = generate_permutations({"api.dev.example.test"}, "example.test");
+    const std::set<std::string> nested_names(nested_variants.begin(), nested_variants.end());
+    check(nested_names.count("api-dev.dev.example.test") && nested_names.count("apidev.dev.example.test") &&
+          nested_names.count("dev-api.dev.example.test") && nested_names.count("devapi.dev.example.test") &&
+          !nested_names.count("api-dev.example.test"), "nested child permutations preserve direct parent scope");
+    check(std::all_of(nested_variants.begin(), nested_variants.end(), [](const auto& name) {
+              const std::string suffix = ".dev.example.test";
+              return name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+          }), "every nested permutation remains in its seed branch");
+    check(generate_permutations({"example.test", "api.foreign.test", "api.example.test.evil", "bad_name.example.test"},
+                                "example.test").empty(), "apex, malformed and foreign seeds cannot generate candidates");
+    const auto script_urls = extract_script_urls(R"(
+        <script src="assets/app.js?x=1&amp;y=2#fragment"></script>
+        <SCRIPT SRC = '/bundle.JS'></SCRIPT>
+        <script src=//cdn.example.test/lib.js></script>
+        <link href = "https://example.test/apex.js" rel="preload">
+        <script src="../shared.js"></script>
+        <script src="https://cdn.example.test:8443/port.js#v"></script>
+        <script src="https://foreign.test/a.js"></script>
+        <script src="https://cdn.example.test.evil/a.js"></script>
+        <script src="https://user:pass@cdn.example.test/a.js"></script>
+        <script src="ftp://cdn.example.test/a.js"></script>
+        <script src="https://*.cdn.example.test/wildcard.js"></script>
+        <script data-src="/lazy.js"></script>
+        <div title="src='/quoted.js'"></div>
+        <!-- <script src="/comment.js"></script> -->
+        <script src="/not-script.json"></script>
+    )", "https://www.example.test/path/index.html", "example.test");
+    check(script_urls == std::set<std::string>({
+        "https://www.example.test/path/assets/app.js?x=1&y=2",
+        "https://www.example.test/bundle.JS", "https://cdn.example.test/lib.js",
+        "https://example.test/apex.js", "https://www.example.test/shared.js",
+        "https://cdn.example.test:8443/port.js"}),
+        "script attributes resolve normal URL forms and exclude foreign or misleading attributes");
+    check(extract_script_urls("<script src='/app.js'>", "https://foreign.test/", "example.test").empty(),
+          "script page base must remain within scan scope");
+    check(extract_script_urls("<script src='/app.js'>", "https://www.example.test/", "example.test", 0).empty(),
+          "zero script budget performs no discovery");
+    std::string many_scripts;
+    for (int index = 0; index < 100; ++index)
+        many_scripts += "<script src='/app" + std::to_string(index) + ".js'></script>";
+    check(extract_script_urls(many_scripts, "https://www.example.test/", "example.test").size() == 50 &&
+          extract_script_urls(many_scripts, "https://www.example.test/", "example.test", 2).size() == 2,
+          "script discovery respects configured and absolute URL budgets");
+    check(extract_script_urls("<script title='" + std::string(100000, 'x') +
+          "' src='/after.js'></script><script src='" + std::string(100000, 'x') + ".js'>",
+          "https://www.example.test/", "example.test") == std::set<std::string>({"https://www.example.test/after.js"}),
+          "large attributes are scanned without recursion and overlong URLs are skipped");
+    check(extract_script_urls(std::string(1024 * 1024, 'x') + "<script src='/past-cap.js'>",
+                              "https://www.example.test/", "example.test").empty(),
+          "HTML discovery is bounded to its capture limit");
     std::set<std::string> names;
     extract_subs("https://api.example.test/path www.example.test.evil notexample.test foo.example.test", "example.test", names);
     check(names == std::set<std::string>({"api.example.test", "foo.example.test"}), "text extraction respects full hostname boundary");
@@ -127,6 +184,8 @@ int main() {
     check(names.empty(), "failed DNS helper cannot become passive evidence");
     const auto count = requested.size();
     g_cancel_token.cancelled = true;
+    check(extract_script_urls("<script src='/app.js'>", "https://www.example.test/", "example.test").empty(),
+          "pre-cancelled script discovery returns immediately");
     names.clear(); passive_crtsh("example.test", names); passive_dnsdumpster("example.test", names);
     check(doh_query("example.test").empty() && requested.size() == count, "pre-cancelled sources start no HTTP requests");
     g_cancel_token.cancelled = false;

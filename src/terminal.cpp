@@ -169,6 +169,7 @@ const char* style(Style value) {
         case Style::Strong: return "\033[1m";
         case Style::Muted: return "\033[2m";
         case Style::Text: return "\033[0m";
+        case Style::Value: return "\033[32m";
     }
     return "";
 }

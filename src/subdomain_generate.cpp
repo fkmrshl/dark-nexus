@@ -2,12 +2,15 @@
 #include "environment.hpp"
 #include "dns_response.hpp"
 #include <nlohmann/json.hpp>
+#include <curl/curl.h>
 #include "../include/security.hpp"
 #include "../include/user_agents.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <string_view>
 #include <unistd.h>
 #include <utility>
 
@@ -45,6 +48,114 @@ void extract_subs(const std::string& text, const std::string& domain, std::set<s
         else consume();
     }
     consume();
+}
+
+std::set<std::string> extract_script_urls(const std::string& html, const std::string& base_url,
+                                          const std::string& domain, std::size_t limit) {
+    std::set<std::string> output;
+    limit = std::min<std::size_t>(limit, 50);
+    if (!limit || g_cancel_token.cancelled) return output;
+    using Url = std::unique_ptr<CURLU, decltype(&curl_url_cleanup)>;
+    auto part = [](CURLU* url, CURLUPart field) -> std::optional<std::string> {
+        char* raw = nullptr;
+        if (curl_url_get(url, field, &raw, 0) != CURLUE_OK) return std::nullopt;
+        std::unique_ptr<char, decltype(&curl_free)> value(raw, curl_free);
+        return std::string(value.get());
+    };
+    const auto root = dns_response::name_key(domain);
+    auto allowed = [&](CURLU* url) {
+        auto scheme = part(url, CURLUPART_SCHEME);
+        const auto host = part(url, CURLUPART_HOST);
+        if (scheme) std::transform(scheme->begin(), scheme->end(), scheme->begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return scheme && (*scheme == "http" || *scheme == "https") && host &&
+            dns_response::valid_name(dns_response::name_key(*host)) &&
+            (dns_response::name_key(*host) == root || normalize_subdomain_name(*host, root)) &&
+            !part(url, CURLUPART_USER) && !part(url, CURLUPART_PASSWORD);
+    };
+    Url base(curl_url(), curl_url_cleanup);
+    if (!dns_response::valid_name(root) || !base ||
+        base_url.find('\0') != std::string::npos ||
+        curl_url_set(base.get(), CURLUPART_URL, base_url.c_str(), 0) != CURLUE_OK || !allowed(base.get()))
+        return output;
+    auto add = [&](std::size_t start, std::size_t end) {
+        if (end - start > 8192) return;
+        auto value = html.substr(start, end - start);
+        const auto first = value.find_first_not_of(" \t\r\n\f");
+        if (first == std::string::npos) return;
+        value = value.substr(first, value.find_last_not_of(" \t\r\n\f") - first + 1);
+        std::string decoded;
+        decoded.reserve(value.size());
+        for (std::size_t i = 0; i < value.size(); ++i) {
+            if (value.compare(i, 5, "&amp;") == 0) { decoded += '&'; i += 4; }
+            else decoded += value[i];
+        }
+        if (decoded.find('\0') != std::string::npos || decoded.find('\\') != std::string::npos) return;
+        Url url(curl_url_dup(base.get()), curl_url_cleanup);
+        if (!url || curl_url_set(url.get(), CURLUPART_URL, decoded.c_str(), 0) != CURLUE_OK || !allowed(url.get())) return;
+        const auto path = part(url.get(), CURLUPART_PATH);
+        if (!path || path->size() < 3) return;
+        auto extension = path->substr(path->size() - 3);
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (extension != ".js") return;
+        const auto host = part(url.get(), CURLUPART_HOST);
+        const auto normalized_host = dns_response::name_key(*host);
+        if (curl_url_set(url.get(), CURLUPART_HOST, normalized_host.c_str(), 0) != CURLUE_OK ||
+            curl_url_set(url.get(), CURLUPART_FRAGMENT, nullptr, 0) != CURLUE_OK) return;
+        if (const auto resolved = part(url.get(), CURLUPART_URL)) output.insert(*resolved);
+    };
+    constexpr std::size_t max_html = 1024 * 1024;
+    const auto size = std::min(html.size(), max_html);
+    const std::string_view input(html.data(), size);
+    if (html.size() > max_html) subdomain_warning("JS discovery HTML capture exceeded 1 MiB; remaining input skipped");
+    auto whitespace = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    auto name_char = [](unsigned char ch) { return std::isalnum(ch) || ch == '-' || ch == '_' || ch == ':'; };
+    std::size_t cursor = 0;
+    while (cursor < size && output.size() < limit && !g_cancel_token.cancelled) {
+        cursor = input.find('<', cursor);
+        if (cursor == std::string::npos || cursor >= size) break;
+        if (input.compare(cursor, 4, "<!--") == 0) {
+            const auto end = input.find("-->", cursor + 4);
+            if (end == std::string::npos || end >= size) break;
+            cursor = end + 3;
+            continue;
+        }
+        ++cursor;
+        if (cursor >= size || !std::isalpha(static_cast<unsigned char>(html[cursor]))) continue;
+        while (cursor < size && name_char(static_cast<unsigned char>(html[cursor]))) ++cursor;
+        while (cursor < size && html[cursor] != '>' && html[cursor] != '<' &&
+               output.size() < limit && !g_cancel_token.cancelled) {
+            if (whitespace(static_cast<unsigned char>(html[cursor])) || html[cursor] == '/') { ++cursor; continue; }
+            const auto start = cursor;
+            while (cursor < size && name_char(static_cast<unsigned char>(html[cursor]))) ++cursor;
+            if (cursor == start) { ++cursor; continue; }
+            auto name = html.substr(start, cursor - start);
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+            while (cursor < size && whitespace(static_cast<unsigned char>(html[cursor]))) ++cursor;
+            if (cursor >= size || html[cursor] != '=') continue;
+            ++cursor;
+            while (cursor < size && whitespace(static_cast<unsigned char>(html[cursor]))) ++cursor;
+            if (cursor >= size) break;
+            const char quote = html[cursor] == '\'' || html[cursor] == '"' ? html[cursor++] : '\0';
+            const auto value_start = cursor;
+            if (quote) {
+                cursor = input.find(quote, cursor);
+                if (cursor == std::string::npos || cursor >= size) { cursor = size; break; }
+            } else {
+                while (cursor < size && !whitespace(static_cast<unsigned char>(html[cursor])) &&
+                       html[cursor] != '>' && html[cursor] != '<') ++cursor;
+            }
+            if (name == "src" || name == "href") add(value_start, cursor);
+            if (quote) ++cursor;
+        }
+        if (cursor < size && html[cursor] == '>') ++cursor;
+    }
+    return output;
 }
 
 std::vector<std::string> doh_query(const std::string& hostname, const std::string& type, std::string* provider) {
@@ -156,14 +267,15 @@ void for_each_permutation_candidate(const std::set<std::string>& found,
     };
     for (auto& sub : found) {
         if (g_cancel_token.cancelled.load()) return;
-        std::string label = sub;
-        auto dot = sub.find('.');
-        if (dot!=std::string::npos) label = sub.substr(0, dot);
-        if (label.empty()) continue;
+        const auto seed = normalize_subdomain_name(sub, domain);
+        if (!seed) continue;
+        const auto dot = seed->find('.');
+        const auto label = seed->substr(0, dot);
+        const auto parent_suffix = seed->substr(dot);
         for (auto& af : affixes) {
             if (g_cancel_token.cancelled.load()) return;
-            for (auto& candidate : {label+"-"+af+"."+domain, label+af+"."+domain,
-                    af+"-"+label+"."+domain, af+label+"."+domain})
+            for (auto& candidate : {label+"-"+af+parent_suffix, label+af+parent_suffix,
+                    af+"-"+label+parent_suffix, af+label+parent_suffix})
                 if (const auto normalized = normalize_subdomain_name(candidate, domain)) emit(std::string(*normalized));
         }
     }

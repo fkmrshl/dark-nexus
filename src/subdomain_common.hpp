@@ -44,6 +44,8 @@ TechInfo detect_tech(const std::string& headers, const std::string& body, const 
 std::string parse_title(const std::string& body);
 
 void extract_subs(const std::string& text, const std::string& domain, std::set<std::string>& out);
+std::set<std::string> extract_script_urls(const std::string& html, const std::string& base_url,
+                                          const std::string& domain, std::size_t limit = 50);
 std::vector<std::string> doh_query(const std::string& hostname,
                                    const std::string& type = "A",
                                    std::string* prov = nullptr);
