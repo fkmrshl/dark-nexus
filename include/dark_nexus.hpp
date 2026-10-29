@@ -44,6 +44,7 @@
 #include <random>
 #include <unordered_set>
 #include <unordered_map>
+#include <optional>
 
 #include "colors.hpp"
 #include "logger.hpp"
@@ -101,16 +102,6 @@ struct SubEntry {
     std::string dns_status = "resolved";
 };
 
-struct OsintEntry {
-    std::string platform;
-    std::string url;
-    std::string category;
-    std::string certainty;
-    double confidence = 0.0;
-    std::string evidence;
-    std::string source;
-};
-
 struct TraceHop {
     int ttl = 0;
     std::string addr;
@@ -121,7 +112,7 @@ struct TraceHop {
 };
 
 struct ScanResult {
-    std::string schema_version = "2.0";
+    std::string schema_version = "3.0";
     std::string tool_version = "dark-nexus/2.0";
     std::string scan_type;
     std::string target;
@@ -143,13 +134,11 @@ struct ScanResult {
     std::vector<PortEntry> ports;
     std::vector<SubEntry> subdomains;
     std::vector<SubEntry> subdomain_candidates;
-    std::vector<OsintEntry> osint;
     std::vector<TraceHop> trace;
     std::vector<std::string> dns_records;
     std::vector<std::string> whois_records;
 
     std::vector<std::pair<int,std::string>> open_ports;
-    std::vector<std::string> osint_hits;
 };
 
 struct CancellationToken {
@@ -177,7 +166,6 @@ std::string safe_curl(const std::string& url, int t = 8);
 HttpFetchResult safe_curl_detailed(const std::string& url, int t = 8);
 
 bool        valid_target(const std::string& s);
-bool        valid_username(const std::string& s);
 bool        valid_port(int p);
 std::string sanitize(const std::string& s);
 std::string resolve(const std::string& host);
@@ -230,11 +218,18 @@ void dns_lookup(const std::string& domain, int timeout_ms = 6000);
 void whois_lookup(const std::string& target, int timeout_ms = 10000);
 void site_lookup(const std::string& raw);
 
-void osint_scan(const std::string& username);
-
 void traceroute(const std::string& target);
 void full_recon(const std::string& ip);
 std::string auto_find_wordlist();
+
+struct SubdomainFeatures {
+    bool http = true;
+    bool cname = true;
+    bool tech = true;
+    bool js = true;
+    bool service_hints = true;
+    bool full_addresses = false;
+};
 
 void subdomain_scan(const std::string& domain,
                     const std::string& wordlist_path = "",
@@ -243,5 +238,6 @@ void subdomain_scan(const std::string& domain,
                     bool deep_passive = true,
                     bool do_enrich = true,
                     bool use_deep_passive_sources = true,
-                    bool passive_only = false);
+                    bool passive_only = false,
+                    std::optional<SubdomainFeatures> requested_features = std::nullopt);
 std::string auto_find_wordlist();

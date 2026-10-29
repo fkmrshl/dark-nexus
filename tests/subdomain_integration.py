@@ -52,6 +52,39 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertEqual(report['fixture']['http_calls'], 0)
         self.assertEqual({row['subdomain'] for row in self.module_json()}, {'www.example.test', 'mail.example.test'})
 
+    def test_wordlist_streaming_reaches_candidates_beyond_first_dns_batch(self):
+        words = [f'unknown{index}' for index in range(10005)] + ['tailmarker']
+        report, _ = self.run_fixture('streaming-tail', words=words)
+        self.assertEqual([row['sub'] for row in report['subdomains']], ['tailmarker.example.test'])
+        queried = self.non_probe_names(report)
+        self.assertEqual(len(queried), len(words))
+        self.assertEqual(queried[-1], 'tailmarker.example.test')
+
+    def test_independent_feature_switches_control_actual_pipeline_work(self):
+        cases = (
+            ('feature-none', 0, 0, 0, 0),
+            ('feature-http', 2, 0, 0, 0),
+            ('feature-cname', 0, 2, 0, 0),
+            ('feature-tech', 2, 0, 2, 0),
+            ('feature-js', 2, 0, 0, 2),
+            ('feature-hints', 2, 2, 0, 2),
+        )
+        for scenario, http, cname, tech, pages in cases:
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario)
+                fixture = report['fixture']
+                self.assertEqual(len(report['subdomains']), 2)
+                self.assertEqual(fixture['http_calls'], http)
+                self.assertEqual(fixture['cname_calls'], cname)
+                self.assertEqual(fixture['tech_calls'], tech)
+                self.assertEqual(fixture['page_calls'], pages)
+                if scenario == 'feature-http':
+                    self.assertEqual(fixture['head_calls'], 2)
+                    self.assertEqual(fixture['get_calls'], 0)
+                if scenario == 'feature-tech':
+                    self.assertEqual(fixture['get_calls'], 2)
+                    self.assertEqual(fixture['waf_calls'], 2)
+
     def test_ipv6_only_names_survive_without_enrichment(self):
         report, _ = self.run_fixture('ipv6')
         self.assertEqual(len(report['subdomains']), 2)
@@ -70,7 +103,7 @@ class SubdomainPipelineTests(unittest.TestCase):
                     self.assertIn(value, output)
                 if color == 'always':
                     self.assertIn('\x1b[32m192.0.2.20', output)
-                    self.assertIn('\x1b[32m2001:db8::20', output)
+                    self.assertIn('\x1b[32mIPv6:  2001:db8::20', output)
                     self.assertIn('\x1b[32mCNAME: edge.example.test', output)
                 else:
                     self.assertNotIn('\x1b', output)
@@ -88,6 +121,13 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertEqual(report['subdomain_candidates'], [])
         self.assertEqual(report['fixture']['http_calls'], 2)
         self.assertIn('discovered.api.example.test', report['fixture']['requested'])
+
+    def test_compact_console_keeps_additional_addresses_in_reports(self):
+        report, _ = self.run_fixture('presentation-compact')
+        self.assertIn('192.0.2.20 (+1)', self.last_stdout)
+        self.assertNotIn('192.0.2.21', self.last_stdout)
+        self.assertTrue(all(row['ips'] == ['192.0.2.20', '192.0.2.21'] for row in report['subdomains']))
+        self.assertTrue(all(row['ipv4'] == ['192.0.2.20', '192.0.2.21'] for row in self.module_json()))
 
     def test_dns_operational_failure_differs_from_negative_answer(self):
         negative, _ = self.run_fixture('nxdomain')

@@ -39,8 +39,6 @@ void write_csv_report(const ScanResult& result, std::ostream& out) {
         csv_row(out, "subdomain", result, subdomain.sub, subdomain.title, json(subdomain));
     for (const auto& candidate : result.subdomain_candidates)
         csv_row(out, "subdomain_candidate", result, candidate.sub, candidate.dns_status, json(candidate));
-    for (const auto& hit : result.osint)
-        csv_row(out, "osint", result, hit.platform, hit.url, json(hit));
     for (const auto& hop : result.trace)
         csv_row(out, "trace", result, std::to_string(hop.ttl), hop.addr, json(hop));
     for (const auto& record : result.dns_records)
@@ -86,11 +84,6 @@ void write_text_report(const ScanResult& r, std::ostream& out) {
             for (const auto& ip : s.ipv6) out << "  " << sanitize(ip);
             out << '\n';
         }
-    }
-    if (!r.osint.empty()) {
-        out << "\nOSINT\n";
-        for (const auto& hit : r.osint)
-            out << sanitize(hit.platform) << "  " << sanitize(hit.certainty) << "  " << sanitize(hit.url) << '\n';
     }
     if (!r.trace.empty()) {
         out << "\nTrace\n";

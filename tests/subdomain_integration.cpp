@@ -18,10 +18,12 @@ std::mutex fixture_mutex;
 std::vector<std::string> requested_names;
 std::map<std::string, int> request_counts;
 std::atomic<int> http_calls{0}, active_http{0}, http_after_cancel{0};
+std::atomic<int> head_calls{0}, get_calls{0}, cname_calls{0}, tech_calls{0}, waf_calls{0}, page_calls{0};
 std::atomic<bool> finished{false};
 
 bool wildcard_probe(const std::string& host) { return host.rfind("dnxwc-", 0) == 0; }
 bool provider_fixture() { return scenario == "doh-provider-keep" || scenario == "doh-provider-merge"; }
+bool presentation_fixture() { return scenario.rfind("presentation", 0) == 0; }
 
 bool classification_fixture() {
     return scenario == "wildcard" || scenario == "rotating-wildcard" ||
@@ -107,7 +109,7 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int, int
         if (scenario == "dns-failure" || (provider_fixture() && host == "www.example.test")) {
             answer.failed = true;
             answer.error = "fixture resolver timeout";
-        } else if (scenario == "nxdomain") {
+        } else if (scenario == "nxdomain" || (scenario == "streaming-tail" && host != "tailmarker.example.test")) {
             // A successful negative reply has no addresses and no error.
         } else if (scenario == "ipv6" || (scenario == "duplicate-family" && calls > 1))
             answer.ipv6 = {"2001:db8::20"};
@@ -115,7 +117,7 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int, int
             answer.failed = true;
             answer.error = "fixture AAAA timeout";
             answer.ipv4 = {"192.0.2.20"};
-        } else if (scenario == "presentation") {
+        } else if (presentation_fixture()) {
             answer.ipv4 = {"192.0.2.20", "192.0.2.21"};
             answer.ipv6 = {"2001:db8::20"};
         } else answer.ipv4 = {"192.0.2.20"};
@@ -135,7 +137,9 @@ DnsEngine::resolve_batch(const std::vector<std::string>& hosts, int concurrency,
 std::vector<std::string> DnsEngine::resolve(const std::string&) { return {"192.0.2.20"}; }
 std::vector<std::string> DnsEngine::resolve_aaaa(const std::string&) { return {}; }
 std::string DnsEngine::resolve_cname(const std::string&) {
-    return scenario == "presentation" ? "edge.example.test" : "";
+    ++cname_calls;
+    if (scenario.rfind("feature-", 0) == 0) return "fixture.github.io";
+    return presentation_fixture() ? "edge.example.test" : "";
 }
 std::string DnsEngine::resolve_ptr(const std::string&) { return {}; }
 
@@ -153,14 +157,15 @@ void passive_censys(const std::string&, std::set<std::string>&) {}
 void dns_extra_records(const std::string&, std::set<std::string>&) {}
 
 void http_jitter() {}
-long fast_check(const std::string&, int) { return fixture_http(); }
+long fast_check(const std::string&, int) { ++head_calls; return fixture_http(); }
 CurlResponse fast_probe(const std::string&, int) {
+    ++get_calls;
     CurlResponse response;
     response.http_code = fixture_http();
     response.transport_code = 0;
     response.success = response.http_code > 0;
     response.headers = "Server: fixture\r\n";
-    if (scenario == "presentation")
+    if (presentation_fixture())
         response.headers = "HTTP/1.1 200 Connection established\r\nServer: proxy\r\n\r\nHTTP/2 200\r\n"
             "sErVeR: " + std::string(50000, 'x') + "\r\nsErVeR: fixture\r\n";
     response.body = "<title>café Москва, \"quoted\"</title>";
@@ -168,6 +173,7 @@ CurlResponse fast_probe(const std::string&, int) {
 }
 CurlResponse libcurl_get(const std::string& url, const std::string&, const std::string&, int,
                          const std::vector<std::string>&, SubdomainHttpMode) {
+    ++page_calls;
     if (provider_fixture()) {
         const bool cloudflare = url.rfind("https://cloudflare-dns.com/dns-query?", 0) == 0;
         const bool google = url.rfind("https://dns.google/resolve?", 0) == 0;
@@ -206,8 +212,8 @@ CurlResponse libcurl_get(const std::string& url, const std::string&, const std::
     }
     return response;
 }
-WAFInfo detect_waf(const std::string&, const std::string&, const std::string&) { return {}; }
-TechInfo detect_tech(const std::string&, const std::string&, const std::string&) { return {}; }
+WAFInfo detect_waf(const std::string&, const std::string&, const std::string&) { ++waf_calls; return {}; }
+TechInfo detect_tech(const std::string&, const std::string&, const std::string&) { ++tech_calls; return {}; }
 std::string parse_title(const std::string&) { return "café Москва, \"quoted\""; }
 
 void subdomain_warning(const std::string& message) {
@@ -281,11 +287,24 @@ int main(int argc, char** argv) {
             if (failures) throw std::runtime_error("concurrent atomic writer failed");
         } else {
             const bool enrich = scenario == "cancel" || scenario == "worker-throw" || scenario == "unicode" ||
-                                scenario == "presentation" || scenario == "js-relative" ||
-                                classification_fixture();
+                                presentation_fixture() || scenario == "js-relative" ||
+                                classification_fixture() || scenario.rfind("feature-", 0) == 0;
+            std::optional<SubdomainFeatures> features;
+            if (scenario.rfind("feature-", 0) == 0) {
+                features = SubdomainFeatures{};
+                features->http = scenario == "feature-http" || scenario == "feature-tech" ||
+                                 scenario == "feature-js" || scenario == "feature-hints";
+                features->cname = scenario == "feature-cname" || scenario == "feature-hints";
+                features->tech = scenario == "feature-tech";
+                features->js = scenario == "feature-js";
+                features->service_hints = scenario == "feature-hints";
+            } else if (scenario == "presentation") {
+                features = SubdomainFeatures{};
+                features->full_addresses = true;
+            }
             subdomain_scan("example.test", "wordlist.txt", 1, scenario == "permutation-budget",
-                           scenario == "unicode" || scenario == "presentation" || scenario == "js-relative", enrich, false,
-                           scenario == "passive-only");
+                           scenario == "unicode" || presentation_fixture() || scenario == "js-relative", enrich, false,
+                           scenario == "passive-only", features);
         }
     } catch (const std::exception& error) {
         g_result.errors.push_back(error.what());
@@ -298,7 +317,10 @@ int main(int argc, char** argv) {
                       g_result.subdomains.empty() && g_result.subdomain_candidates.empty() ? "failed" : "partial";
     nlohmann::json result = g_result;
     result["fixture"] = {{"http_calls", http_calls.load()}, {"active_http", active_http.load()},
-                          {"http_after_cancel", http_after_cancel.load()}, {"requested", requested_names}};
+                          {"http_after_cancel", http_after_cancel.load()}, {"requested", requested_names},
+                          {"head_calls", head_calls.load()}, {"get_calls", get_calls.load()},
+                          {"cname_calls", cname_calls.load()}, {"tech_calls", tech_calls.load()},
+                          {"waf_calls", waf_calls.load()}, {"page_calls", page_calls.load()}};
     std::ofstream output("fixture-report.json");
     output << result.dump(2, ' ', false, nlohmann::json::error_handler_t::replace) << '\n';
     if (!output) return 3;

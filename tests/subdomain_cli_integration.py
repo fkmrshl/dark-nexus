@@ -44,6 +44,7 @@ def question(packet):
 class LocalDNS:
     def __init__(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
         self.socket.bind(('127.0.0.1', 0))
         self.socket.settimeout(0.05)
         self.port = self.socket.getsockname()[1]
@@ -275,6 +276,7 @@ class SubdomainCLITests(unittest.TestCase):
         self.assertEqual(checkpoint['candidate_count'], 0)
 
     def test_bruteforce_respects_explicit_wordlist_instead_of_discovered_list(self):
+        (self.root / 'best-dns-wordlist.txt').write_text('discovered-only\n')
         start = len(self.proxy.requests)
         command = self.command(('dual', 'v6', 'absent')) + ['--bruteforce']
         result = subprocess.run(command, cwd=self.root, env=self.environment,
@@ -303,8 +305,8 @@ class SubdomainCLITests(unittest.TestCase):
         self.assertEqual(report['subdomains'], [])
         self.assertEqual(report['subdomain_candidates'], [])
 
-    def test_default_deep_uses_compact_builtin_instead_of_installed_wordlist(self):
-        self.dns.wildcard = True
+    def test_default_deep_streams_discovered_wordlist(self):
+        (self.root / 'best-dns-wordlist.txt').write_text('dual\nv6\nabsent\n')
         start = len(self.proxy.requests)
         report_path = self.root / 'default-deep.json'
         command = [BINARY, '--subdomain', 'example.test', '--mode', 'deep', '--no-enrich',
@@ -313,18 +315,46 @@ class SubdomainCLITests(unittest.TestCase):
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, (result.stdout[-5000:], result.stderr))
         self.assert_local_activity(start)
-        match = re.search(r'\bbuiltin \((\d+) words\)', result.stdout)
-        self.assertIsNotNone(match, result.stdout)
-        self.assertGreater(int(match.group(1)), 0)
-        self.assertLessEqual(int(match.group(1)), 512)
-        self.assertNotIn('streaming:', result.stdout)
-        self.assertNotIn('best-dns-wordlist.txt', result.stdout)
+        self.assertIn('streaming:', result.stdout)
+        self.assertIn('best-dns-wordlist.txt', result.stdout)
+        self.assertNotRegex(result.stdout, r'\bbuiltin \(\d+ words\)')
         queried = [name for name, _ in self.dns.requests
                    if name.endswith('.example.test') and not name.startswith('dnxwc-')]
-        self.assertEqual(queried, [])
+        self.assertEqual(set(queried), {'dual.example.test', 'v6.example.test', 'absent.example.test'})
         report = json.loads(report_path.read_text())
-        self.assertEqual(report['subdomains'], [])
+        self.assertEqual({row['sub'] for row in report['subdomains']},
+                         {'dual.example.test', 'v6.example.test'})
         self.assertEqual(report['subdomain_candidates'], [])
+
+    def test_default_fast_keeps_builtin_when_large_wordlist_is_available(self):
+        (self.root / 'best-dns-wordlist.txt').write_text('discovered-only\n')
+        start = len(self.proxy.requests)
+        report_path = self.root / 'default-fast.json'
+        command = [BINARY, '--subdomain', 'example.test', '--mode', 'fast', '--no-enrich',
+                   '--no-deep-passive', '--no-permutations', '--output', str(report_path), '--format', 'json']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, (result.stdout[-5000:], result.stderr))
+        self.assert_local_activity(start)
+        match = re.search(r'\bbuiltin \((\d+) words\)', result.stdout)
+        self.assertIsNotNone(match, result.stdout)
+        self.assertLessEqual(int(match.group(1)), 512)
+        self.assertNotIn('streaming:', result.stdout)
+        self.assertNotIn('discovered-only.example.test', {name for name, _ in self.dns.requests})
+
+    def test_bruteforce_fast_uses_discovered_wordlist(self):
+        (self.root / 'best-dns-wordlist.txt').write_text('dual\nv6\nabsent\n')
+        start = len(self.proxy.requests)
+        command = [BINARY, '--subdomain', 'example.test', '--mode', 'fast', '--bruteforce',
+                   '--no-enrich', '--no-deep-passive', '--no-permutations', '--quiet',
+                   '--output', '-', '--format', 'json']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        self.assert_local_activity(start)
+        queried = {name for name, _ in self.dns.requests
+                   if name.endswith('.example.test') and not name.startswith('dnxwc-')}
+        self.assertEqual(queried, {'dual.example.test', 'v6.example.test', 'absent.example.test'})
 
     def test_servfail_is_exported_as_failure_in_all_formats(self):
         for fmt in ('json', 'csv', 'txt'):

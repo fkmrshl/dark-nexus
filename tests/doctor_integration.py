@@ -8,9 +8,7 @@ import sys
 import tempfile
 
 CORE = ('dig', 'whois', 'host', 'ping', 'curl', 'openssl', 'getent')
-OPTIONAL = ('sherlock', 'maigret', 'holehe', 'theHarvester', 'phoneinfoga')
-EXPECTED_IDS = ({'core.' + name for name in CORE}
-                | {'optional.' + name for name in OPTIONAL} | {'wordlist', 'raw'})
+EXPECTED_IDS = {'core.' + name for name in CORE} | {'wordlist', 'raw'}
 
 
 def require(condition, detail):
@@ -42,7 +40,7 @@ def main():
             result.chmod(0o755)
             return result
 
-        for name in CORE + OPTIONAL + ('locate',):
+        for name in CORE + ('locate',):
             executable(tools, name)
         environment = dict(os.environ, PATH=str(tools), HOME=str(home), TERM='dumb',
                            NO_COLOR='1', DARK_NEXUS_TEST_MARKER=str(marker))
@@ -96,8 +94,6 @@ def main():
         baseline, records = report(*json_args)
         for name in CORE:
             require(records['core.' + name]['status'] == 'ok', records)
-        for name in OPTIONAL:
-            require(records['optional.' + name]['status'] == 'ok', records)
         for arguments in [('--doctor', '--json', '-'), ('doctor', '--output', '-'),
                           ('doctor', '--json', '-', '--color', 'always'),
                           ('--doctor', '--output', '-', '--no-color', '--no-log')]:

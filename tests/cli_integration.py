@@ -55,8 +55,9 @@ print('Domain Name: example.test')
     assert 'Usage:' in help_result.stdout and '\x1b' not in help_result.stdout
     assert not list(root.glob('*.log'))
     run('--version')
-    run('--list-modules')
-    for module in ['portscan', 'subdomain', 'traceroute', 'osint', 'dns', 'whois',
+    assert 'osint' not in run('--list-modules').stdout.lower()
+    assert 'osint' not in help_result.stdout.lower()
+    for module in ['portscan', 'subdomain', 'traceroute', 'dns', 'whois',
                    'netscan', 'site', 'ip-intel', 'os-detect', 'recon']:
         run('--help', module)
         run('--' + module, '--help')
@@ -73,7 +74,11 @@ print('Domain Name: example.test')
                       ('--subdomain', 'example.test', '--bruteforce', '--passive-only'),
                       ('--dns', 'example.test', '--bruteforce'),
                       ('--dns', 'example.test', '--passive-only'),
-                      ('--osint', 'invalid value')]:
+                      ('--osint', 'username'), ('--help', 'osint'),
+                      ('--subdomain', 'example.test', '--js', '--no-http'),
+                      ('--subdomain', 'example.test', '--no-enrich', '--tech'),
+                      ('--subdomain', 'example.test', '--no-cname', '--service-hints'),
+                      ('--subdomain', 'example.test', '--permutations', '--passive-only')]:
         run(*arguments, code=2)
     fifo = root / 'wordlist-fifo'
     os.mkfifo(fifo)

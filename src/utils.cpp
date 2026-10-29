@@ -7,10 +7,6 @@ bool valid_target(const std::string& s) {
     return InputGuard::is_valid_host(s);
 }
 
-bool valid_username(const std::string& s) {
-    return InputGuard::is_valid_username(s);
-}
-
 bool valid_port(int p) {
     return InputGuard::is_valid_port(p);
 }

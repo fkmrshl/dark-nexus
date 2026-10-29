@@ -12,6 +12,7 @@ from pathlib import Path
 import shlex
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -71,22 +72,34 @@ else:
 print('fixture CMake: visible output')
 ''')
         fake_cmake.chmod(0o755)
+        forbidden = self.root / 'unexpected-package-command'
+        for name in ('python', 'python3', 'pip', 'pip3', 'go'):
+            command = tools / name
+            script = '#!/bin/bash\n'
+            if name.startswith('python'):
+                script += 'if [[ "${1:-}" != -m ]]; then exec ' + shlex.quote(sys.executable) + ' "$@"; fi\n'
+            script += 'printf "%s\\n" "$0 $*" >> ' + shlex.quote(str(forbidden)) + '\nexit 99\n'
+            command.write_text(script)
+            command.chmod(0o755)
         env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'])
         return source, env
 
-    def install(self, *, piped=False, changes=None, code=0):
+    def install(self, *, piped=False, changes=None, code=0, legacy_flag=True):
         source, env = self.fixture()
         env.update(changes or {})
         prefix = self.root / 'install'
-        (prefix / 'bin').mkdir(parents=True)
+        (prefix / 'bin').mkdir(parents=True, exist_ok=True)
         old = prefix / 'bin' / 'dark-nexus'
         old.write_text('old executable')
-        args = ['--skip-deps', '--skip-helpers', '--prefix', str(prefix), '--source', str(source)]
+        args = ['--skip-deps', '--prefix', str(prefix), '--source', str(source)]
+        if legacy_flag:
+            args.append('--skip-helpers')
         command = ['bash', '-s', '--', *args] if piped else ['bash', str(INSTALLER), *args]
         result = subprocess.run(command, input=INSTALLER.read_text() if piped else '',
                                 env=env, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         self.assertEqual((source / 'dark-nexus' / 'keep').read_text(), 'untouched')
+        self.assertFalse((self.root / 'unexpected-package-command').exists())
         # Clean up just the log created by this test invocation.
         for line in result.stdout.splitlines():
             if line.startswith('Log: /tmp/dark-nexus-install.'):
@@ -225,13 +238,20 @@ dnx_packages Core cmake''', code=23)
         self.assertEqual((prefix / 'bin/dark-nexus').read_text(), 'old executable')
         self.assertFalse((prefix / 'share').exists())
 
-    def test_helper_failure_is_optional(self):
-        result = self.shell(f'''DNX_SKIP_HELPERS=0
-DNX_SKIP_DEPS=1
-DNX_PREFIX={shlex.quote(str(self.root / 'optional'))}
-dnx_run() {{ return 19; }}
-dnx_helpers''')
-        self.assertIn('already installed', result.stderr)
+    def test_default_install_never_provisions_language_packages(self):
+        result, prefix = self.install(legacy_flag=False)
+        self.assertIn('Installation complete', result.stdout)
+        self.assertEqual(sorted(path.name for path in (prefix / 'bin').iterdir()), ['dark-nexus'])
+
+    def test_core_dependencies_remain_available_without_language_packages(self):
+        for family in ('debian', 'arch', 'fedora', 'suse'):
+            with self.subTest(family=family):
+                output = self.shell(f'''DNX_FAMILY={family}
+dnx_packages() {{ printf '%s\\n' "$*"; }}
+dnx_dependencies''').stdout
+                for tool in ('cmake', 'git', 'curl', 'whois', 'openssl'):
+                    self.assertIn(tool, output)
+                self.assertFalse(re.search(r'\b(?:python\S*|pip\S*|golang|go)\b', output), output)
 
     def test_termination_stops_child_processes_and_preserves_old_binary(self):
         source, env = self.fixture()
@@ -263,14 +283,16 @@ dnx_helpers''')
                 process.kill()
                 process.communicate()
 
-    def test_existing_unrelated_helper_is_preserved(self):
-        target = self.root / 'bin' / 'sherlock'
-        target.parent.mkdir()
+    def test_existing_unrelated_files_are_preserved(self):
+        target = self.root / 'install/bin/user-tool'
+        target.parent.mkdir(parents=True)
         target.write_text('user-tool')
-        self.shell(f'''DNX_PREFIX={shlex.quote(str(self.root))}
-DNX_HELPERS={shlex.quote(str(self.root / 'helpers'))}
-dnx_link_helper /other/bin/sherlock sherlock''')
+        environment = self.root / 'install/share/user-environment/keep'
+        environment.parent.mkdir(parents=True)
+        environment.write_text('user-environment')
+        self.install(legacy_flag=False)
         self.assertEqual(target.read_text(), 'user-tool')
+        self.assertEqual(environment.read_text(), 'user-environment')
 
     def terminal_install(self, *, changes=None, args=None, code=0, columns=80, cancel=False):
         source, env = self.fixture()
@@ -327,9 +349,9 @@ dnx_link_helper /other/bin/sherlock sherlock''')
 
     def test_terminal_panel_has_real_counts_and_completes(self):
         output, log, prefix = self.terminal_install()
-        self.assertIn('4/6 Compile', output)
+        self.assertIn('4/5 Compile', output)
         self.assertIn('4/4 tasks', output)
-        self.assertIn('6/6 Complete', output)
+        self.assertIn('5/5 Complete', output)
         self.assertIn('\x1b[?25l', output)
         self.assertIn('\x1b[?25h', output)
         self.assertIn('\x1b[36m', output)
@@ -340,7 +362,7 @@ dnx_link_helper /other/bin/sherlock sherlock''')
     def test_terminal_panel_no_color(self):
         output, _, _ = self.terminal_install(changes={'NO_COLOR': ''})
         self.assertNotIn('\x1b[36m', output)
-        self.assertIn('6/6 Complete', output)
+        self.assertIn('5/5 Complete', output)
         self.assertIn('\x1b[?25h', output)
 
     def test_terminal_plain_option(self):
@@ -364,17 +386,17 @@ dnx_link_helper /other/bin/sherlock sherlock''')
         self.assertIn('Recent output:', output)
         self.assertIn('failed (exit 9)', output)
         self.assertIn('\x1b[?25h', output)
-        self.assertNotIn('6/6 Complete', output)
+        self.assertNotIn('5/5 Complete', output)
         self.assertEqual((prefix / 'bin/dark-nexus').read_text(), 'old executable')
 
     def test_terminal_cancel_restores_cursor(self):
         output, _, prefix = self.terminal_install(cancel=True, code=143)
         self.assertIn('\x1b[?25h', output)
-        self.assertNotIn('6/6 Complete', output)
+        self.assertNotIn('5/5 Complete', output)
         self.assertEqual((prefix / 'bin/dark-nexus').read_text(), 'old executable')
 
     def test_progress_does_not_advance_with_elapsed_time(self):
-        output = self.shell('''DNX_COLUMNS=80 DNX_PHASE=3 DNX_PHASES=6
+        output = self.shell('''DNX_COLUMNS=80 DNX_PHASE=3 DNX_PHASES=5
 DNX_TASK_DONE=0 DNX_TASK_TOTAL=0 DNX_STAGE_TITLE=Configure DNX_OPERATION=Waiting
 DNX_UI_COLOR='' DNX_UI_RESET='' DNX_UI_UNICODE=0 DNX_STAGE_SECONDS=$SECONDS
 dnx_ui_draw 0
@@ -387,7 +409,7 @@ dnx_ui_draw 99''').stdout
     def test_terminal_batches_logs_and_preserves_partial_lines(self):
         command = "printf partial; sleep 0.2; printf '%s\\n' '-result'; for ((i=1;i<=1000;i++)); do echo \"compiler line $i\"; done"
         result = self.shell('''DNX_UI=1 DNX_UI_COLOR='' DNX_UI_RESET='' DNX_UI_UNICODE=0
-DNX_PHASE=4 DNX_PHASES=6 DNX_STAGE_TITLE=Compile DNX_STAGE_SECONDS=$SECONDS
+DNX_PHASE=4 DNX_PHASES=5 DNX_STAGE_TITLE=Compile DNX_STAGE_SECONDS=$SECONDS
 dnx_run fixture 5 bash -c ''' + shlex.quote(command))
         log = self.log.read_text()
         self.assertIn('partial-result', log)

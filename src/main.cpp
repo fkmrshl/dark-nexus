@@ -2,7 +2,6 @@
 #include "doctor.hpp"
 #include "environment.hpp"
 #include "dark_nexus.hpp"
-#include "osint.hpp"
 #include "output.hpp"
 #include "security.hpp"
 #include "terminal.hpp"
@@ -48,10 +47,7 @@ void require_helper(const std::string& helper) {
 }
 
 void validate_target(const cli::Options& options) {
-    if (options.module == "osint") {
-        if (osint::detect_input_type(options.target) == osint::InputType::Unknown)
-            throw cli::Error("OSINT target must be a username, email address or phone number");
-    } else if (options.module == "site") {
+    if (options.module == "site") {
         if (!InputGuard::is_safe_url(options.target) && !valid_target(options.target))
             throw cli::Error("site target must be a hostname or an http(s) URL");
     } else if (options.module == "dns" || options.module == "whois") {
@@ -85,20 +81,29 @@ void run_module(const cli::Options& options) {
     // Domain modules keep the original domain: MX/TXT/WHOIS are not IP queries.
     if (module == "dns") return dns_lookup(target, options.timeout_ms ? options.timeout_ms : 6000);
     if (module == "whois") return whois_lookup(target, options.timeout_ms ? options.timeout_ms : 10000);
-    if (module == "osint") return osint_scan(target);
     if (module == "site") return site_lookup(target);
     if (module == "subdomain") {
         std::string wordlist = options.wordlist;
-        if (wordlist.empty() && options.bruteforce) {
+        if (wordlist.empty() && !options.passive_only && (options.deep || options.bruteforce)) {
             wordlist = auto_find_wordlist();
             if (wordlist.empty()) throw std::runtime_error(
-                "--bruteforce could not find a readable DNS wordlist; use --wordlist PATH "
-                "or reinstall the project wordlist");
+                "deep / --bruteforce requires a readable DNS wordlist; use --wordlist PATH, "
+                "reinstall the project wordlist, or choose --passive-only");
         }
+        const bool enrich = !options.no_enrich;
+        SubdomainFeatures features;
+        features.http = enrich && !options.no_http;
+        features.cname = enrich && (options.deep || options.cname || options.service_hints) && !options.no_cname;
+        features.tech = features.http && (options.deep || options.tech) && !options.no_tech;
+        features.js = features.http && !options.passive_only && (options.deep || options.js) && !options.no_js;
+        features.service_hints = features.http && features.cname &&
+            (options.deep || options.service_hints) && !options.no_service_hints;
+        features.full_addresses = options.full_addresses;
         return subdomain_scan(target, wordlist, options.threads ? options.threads : 200,
-                              options.deep && !options.no_permutations && !options.passive_only,
-                              options.deep, !options.no_enrich, !options.no_deep_passive,
-                              options.passive_only);
+                              (options.deep || options.permutations) && !options.no_permutations && !options.passive_only,
+                              options.deep, enrich,
+                              (options.deep || options.deep_passive) && !options.no_deep_passive,
+                              options.passive_only, features);
     }
 
     const auto family = family_for(options.family);
@@ -198,7 +203,7 @@ int main(int argc, char** argv) {
         }
         const bool has_results = !g_result.dns_records.empty() || !g_result.whois_records.empty() ||
             !g_result.ports.empty() || !g_result.subdomains.empty() ||
-            !g_result.subdomain_candidates.empty() || !g_result.osint.empty() ||
+            !g_result.subdomain_candidates.empty() ||
             !g_result.trace.empty() || !g_result.open_ports.empty() || !g_result.os_guess.empty() ||
             !g_result.geo_country.empty() || !g_result.geo_city.empty();
         g_result.status = interrupted ? "cancelled" : g_result.errors.empty() ? "complete" :

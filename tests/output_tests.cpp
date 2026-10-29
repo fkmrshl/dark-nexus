@@ -27,6 +27,8 @@ int main() {
     std::ostringstream json_out;
     if (!OutputWriter::write_stream(result, json_out, "json")) return 1;
     const auto parsed = json::parse(json_out.str());
+    if (parsed.at("schema_version") != "3.0") return 1;
+    if (parsed.contains("osint") || parsed.contains("osint_hits")) return 1;
     if (parsed.at("ports").at(0).at("port") != 443 || parsed.at("dns_records").size() != 1) return 1;
     if (parsed.at("subdomains").at(0).at("ipv6").at(0) != "2001:db8::42" ||
         parsed.at("subdomains").at(0).at("wildcard_match") != true) return 1;
@@ -38,6 +40,9 @@ int main() {
     if (roundtrip.status != "partial" || roundtrip.whois_records != result.whois_records ||
         roundtrip.errors != result.errors || roundtrip.warnings != result.warnings) return 1;
     auto legacy = parsed;
+    legacy["schema_version"] = "2.0";
+    legacy["osint"] = json::array({{{"platform", "legacy fixture"}, {"url", "https://example.test/legacy"}}});
+    legacy["osint_hits"] = {"https://example.test/legacy"};
     legacy["subdomains"][0].erase("ipv6");
     legacy["subdomains"][0].erase("wildcard_match");
     legacy["subdomains"][0].erase("dns_status");
@@ -48,6 +53,10 @@ int main() {
     if (!old_report.subdomain_candidates.empty() || old_report.subdomains.at(0).dns_status != "resolved") return 1;
     if (old_report.status != "complete" || !old_report.errors.empty() ||
         !old_report.warnings.empty() || !old_report.whois_records.empty()) return 1;
+    const auto legacy_roundtrip = json(old_report);
+    if (legacy_roundtrip.at("schema_version") != "3.0" ||
+        legacy_roundtrip.contains("osint") || legacy_roundtrip.contains("osint_hits") ||
+        legacy_roundtrip.at("subdomains").size() != 1) return 1;
     std::ostringstream csv_out, text_out;
     if (!OutputWriter::write_stream(result, csv_out, "csv") ||
         csv_out.str().find("record_type,target,identifier,value,details\n") != 0 ||

@@ -348,7 +348,8 @@ void subdomain_scan(const std::string& domain,
                     bool deep_passive,
                     bool do_enrich,
                     bool use_deep_passive_sources,
-                    bool passive_only)
+                    bool passive_only,
+                    std::optional<SubdomainFeatures> requested_features)
 {
     std::string scan_domain = domain;
     std::transform(scan_domain.begin(), scan_domain.end(), scan_domain.begin(),
@@ -356,9 +357,27 @@ void subdomain_scan(const std::string& domain,
     if (!scan_domain.empty() && scan_domain.back() == '.') scan_domain.pop_back();
     if (!dns_query::valid_name(scan_domain)) throw std::runtime_error("invalid scan domain");
     if (g_cancel_token.cancelled) return;
+    auto features = requested_features.value_or(SubdomainFeatures{
+        do_enrich, do_enrich && deep_passive, do_enrich && deep_passive,
+        do_enrich && deep_passive, do_enrich && deep_passive});
+    if (!do_enrich) features = {false, false, false, false, false, features.full_addresses};
+    features.tech = features.tech && features.http;
+    features.js = features.js && features.http && !passive_only;
+    features.service_hints = features.service_hints && features.http && features.cname;
+    const bool enrich_active = features.http || features.cname;
 
     print_header("SUBDOMAIN SCAN // " + scan_domain);
     const auto value_color = terminal::style(terminal::Style::Value);
+    auto print_addresses = [&](const char* label, const std::vector<std::string>& addresses) {
+        if (addresses.empty()) return;
+        std::cout << "    " << value_color << label << ":  " << addresses.front() << RESET;
+        if (!features.full_addresses && addresses.size() > 1)
+            std::cout << DIM << " (+" << addresses.size() - 1 << ")" << RESET;
+        std::cout << '\n';
+        if (features.full_addresses)
+            for (std::size_t i = 1; i < addresses.size(); ++i)
+                std::cout << "           " << value_color << addresses[i] << RESET << '\n';
+    };
     CurlGlobalGuard curl_guard;
 
     auto& dns = DnsEngine::get();
@@ -372,13 +391,13 @@ void subdomain_scan(const std::string& domain,
         std::cout << "  using built-in DNS resolvers; optional resolvers.txt is read from the working directory\n";
     }
 
-    const int HTTP_WORKERS = do_enrich ? std::clamp(max_threads, 1, 512) : 1;
+    const int HTTP_WORKERS = enrich_active ? std::clamp(max_threads, 1, 512) : 1;
     const int HTTP_TIMEOUT = deep_passive ? 5 : 3;
     const int DNS_BATCH_SIZE = 10000;
     const int DNS_CONCURRENCY = deep_passive ? 2000 : 1000;
 
     std::cout << BLOOD_RED << "  [*] mode: " << WHITE << (deep_passive ? "DEEP" : "FAST")
-              << BLOOD_RED << " | HTTP workers: " << WHITE << HTTP_WORKERS
+              << BLOOD_RED << " | enrichment workers: " << WHITE << HTTP_WORKERS
               << BLOOD_RED << " | DNS batch: " << WHITE << DNS_BATCH_SIZE
               << BLOOD_RED << " | DNS concurrency: " << WHITE << DNS_CONCURRENCY
               << BLOOD_RED << " | DNS channels: " << WHITE << dns.channel_count()
@@ -497,7 +516,7 @@ void subdomain_scan(const std::string& domain,
     passive_crtsh(scan_domain, passive_subs);
     std::cout << BLOOD_RED << "  [+] crt.sh +" << WHITE << passive_subs.size() << "\n" << RESET;
 
-    if (deep_passive && use_deep_passive_sources) {
+    if (use_deep_passive_sources) {
 
         struct PassiveTask { std::string name; std::function<void(std::set<std::string>&)> fn; };
         std::vector<PassiveTask> tasks = {
@@ -676,21 +695,23 @@ void subdomain_scan(const std::string& domain,
         SubResult result;
         { std::lock_guard<std::mutex> lock(state_mtx); result = results.at(index); }
         const auto& sub = result.sub;
-        if (do_enrich && !g_cancel_token.cancelled) {
-            if (deep_passive) result.cname = dns.resolve_cname(sub);
+        if (enrich_active && !g_cancel_token.cancelled) {
+            if (features.cname) result.cname = dns.resolve_cname(sub);
             if (g_cancel_token.cancelled) return;
-            http_jitter();
+            if (features.http) http_jitter();
             if (g_cancel_token.cancelled) return;
-            if (deep_passive) {
+            if (features.http && (deep_passive || features.tech)) {
                 auto response = fast_probe(sub, HTTP_TIMEOUT);
                 if (response.http_code > 0) {
                     result.http_code = std::to_string(response.http_code);
                     result.server = server_from_headers(response.headers);
                     result.title = parse_title(response.body);
-                    result.waf = detect_waf(response.headers, response.body, response.headers);
-                    result.tech = detect_tech(response.headers, response.body, response.headers);
+                    if (features.tech) {
+                        result.waf = detect_waf(response.headers, response.body, response.headers);
+                        result.tech = detect_tech(response.headers, response.body, response.headers);
+                    }
                 }
-            } else {
+            } else if (features.http) {
                 const auto code = fast_check(sub, HTTP_TIMEOUT);
                 if (code > 0) result.http_code = std::to_string(code);
             }
@@ -710,26 +731,20 @@ void subdomain_scan(const std::string& domain,
         }
         std::lock_guard<std::mutex> print_lock(g_print_mtx);
         std::cout << "  " << BOLD << sub << RESET;
-        if (!result.ips.empty()) {
-            std::cout << "  IPv4:";
-            for (const auto& ip : result.ips) std::cout << ' ' << value_color << ip << RESET;
-        }
-        if (!result.ipv6.empty()) {
-            std::cout << "  " << value_color << "IPv6:" << RESET;
-            for (const auto& ip : result.ipv6) std::cout << ' ' << value_color << ip << RESET;
-        }
-        if (!result.cname.empty())
-            std::cout << "  " << value_color << "CNAME: " << result.cname << RESET;
         if (!result.http_code.empty())
             std::cout << "  HTTP:" << value_color << result.http_code << RESET;
         std::cout << DIM << " (" << result.source << ")" << RESET << '\n';
+        print_addresses("IPv4", result.ips);
+        print_addresses("IPv6", result.ipv6);
+        if (!result.cname.empty())
+            std::cout << "    " << value_color << "CNAME: " << result.cname << RESET << '\n';
     };
 
     print_section("ASYNC DNS + DoH → PIPELINE HTTP");
     std::cout << BLOOD_RED << "  wordlist: " << WHITE
               << (passive_only ? "disabled" : stream_file_wordlist ? "streaming" : "builtin")
               << BLOOD_RED << " | passive: " << WHITE << passive_subs.size()
-              << BLOOD_RED << " | HTTP workers: " << WHITE << HTTP_WORKERS
+              << BLOOD_RED << " | enrichment workers: " << WHITE << HTTP_WORKERS
               << BLOOD_RED << " | DNS batch: " << WHITE << DNS_BATCH_SIZE
               << BLOOD_RED << " | DNS concurrency: " << WHITE << DNS_CONCURRENCY
               << BLOOD_RED << " | pipeline ON\n\n" << RESET;
@@ -807,7 +822,7 @@ void subdomain_scan(const std::string& domain,
             " candidates in a batch: " + failure_example);
         for (auto& item : pending) {
             if (g_cancel_token.cancelled) break;
-            if (do_enrich) { if (!http_pipe.push(std::move(item))) break; }
+            if (enrich_active) { if (!http_pipe.push(std::move(item))) break; }
         }
         if (!allow_passive_doh || g_cancel_token.cancelled) return;
         std::vector<std::string> fallback;
@@ -839,7 +854,7 @@ void subdomain_scan(const std::string& domain,
             const auto index = retain_dns(host, answer, provider, "passive");
             if (!answer.ipv4.empty() || !answer.ipv6.empty()) ++doh_used;
             if (!index) return;
-            if (do_enrich && !g_cancel_token.cancelled)
+            if (enrich_active && !g_cancel_token.cancelled)
                 http_pipe.push({*index});
         }));
         for (auto& future : futures) future.get();
@@ -883,7 +898,7 @@ void subdomain_scan(const std::string& domain,
         wordlist_batch_dedup.clear();
         {
             std::lock_guard<std::mutex> lk(g_print_mtx);
-            std::cout << BLOOD_RED << "\r  [dns] wordlist batch " << WHITE << wordlist_batches
+            std::cout << BLOOD_RED << "  [dns] wordlist batch " << WHITE << wordlist_batches
                       << BLOOD_RED << " size=" << WHITE << batch_size
                       << BLOOD_RED << " elapsed=" << WHITE << format_elapsed_seconds(elapsed) << BLOOD_RED << "s rate=" << WHITE << format_rate(rate) << BLOOD_RED << "/s"
                       << BLOOD_RED << " processed=" << WHITE << candidates_seen
@@ -891,7 +906,7 @@ void subdomain_scan(const std::string& domain,
                       << BLOOD_RED << " skipped=" << WHITE << candidates_skipped
                       << BLOOD_RED << " pipe=" << WHITE << http_pipe.size()
                       << BLOOD_RED << " found=" << WHITE << found_count.load()
-                      << "    " << RESET << std::flush;
+                      << RESET << '\n' << std::flush;
         }
         maybe_write_checkpoint(false, "wordlist-batch");
     };
@@ -909,6 +924,7 @@ void subdomain_scan(const std::string& domain,
     };
 
     if (passive_only) {
+        std::lock_guard<std::mutex> print_lock(g_print_mtx);
         std::cout << "  generated discovery disabled by --passive-only\n";
     } else if (stream_file_wordlist) {
         std::string line;
@@ -938,7 +954,10 @@ void subdomain_scan(const std::string& domain,
 
     std::set<std::string> found_snapshot;
     if (run_permutations && !passive_only && !g_cancel_token.cancelled) {
-        std::cout << BLOOD_RED << "  [*] waiting for base HTTP pipeline...\n" << RESET;
+        {
+            std::lock_guard<std::mutex> print_lock(g_print_mtx);
+            std::cout << BLOOD_RED << "  [*] waiting for base enrichment pipeline...\n" << RESET;
+        }
         http_pipe.wait_idle();
         maybe_write_checkpoint(true, "base-idle");
         std::lock_guard<std::mutex> lk(state_mtx);
@@ -1002,19 +1021,24 @@ void subdomain_scan(const std::string& domain,
         if (permutation_limit)
             subdomain_warning("Permutation candidate limit of 5000 reached; remaining generated variants were skipped");
         if (!g_cancel_token.cancelled) flush_perm_batch();
-        std::cout << BLOOD_RED << "  [=] permutations generated=" << WHITE << perm_generated
-                  << BLOOD_RED << " queued=" << WHITE << perm_queued
-                  << BLOOD_RED << " batches=" << WHITE << perm_batches << "\n" << RESET;
-        std::cout << BLOOD_RED << "  [+] permutations queued\n" << RESET;
+        {
+            std::lock_guard<std::mutex> print_lock(g_print_mtx);
+            std::cout << BLOOD_RED << "  [=] permutations generated=" << WHITE << perm_generated
+                      << BLOOD_RED << " queued=" << WHITE << perm_queued
+                      << BLOOD_RED << " batches=" << WHITE << perm_batches << "\n" << RESET;
+        }
     }
 
     std::vector<std::string> js_targets;
-    if (do_enrich && deep_passive && !passive_only && !g_cancel_token.cancelled) {
+    if (features.js && !g_cancel_token.cancelled) {
         size_t pipe_size = http_pipe.size();
         size_t found_size = current_found_size();
-        std::cout << BLOOD_RED << "  [*] waiting for permutation HTTP pipeline..."
-                  << BLOOD_RED << " pipe=" << WHITE << pipe_size
-                  << BLOOD_RED << " found=" << WHITE << found_size << "\n" << RESET;
+        {
+            std::lock_guard<std::mutex> print_lock(g_print_mtx);
+            std::cout << BLOOD_RED << "  [*] waiting for enrichment pipeline..."
+                      << BLOOD_RED << " pipe=" << WHITE << pipe_size
+                      << BLOOD_RED << " found=" << WHITE << found_size << "\n" << RESET;
+        }
         http_pipe.wait_idle();
         maybe_write_checkpoint(true, "permutation-idle");
         {
@@ -1027,7 +1051,7 @@ void subdomain_scan(const std::string& domain,
         }
         std::cout << BLOOD_RED << "  [*] JS targets: " << WHITE << js_targets.size() << "\n" << RESET;
     }
-    if (do_enrich && deep_passive && !js_targets.empty() && !g_cancel_token.cancelled) {
+    if (features.js && !js_targets.empty() && !g_cancel_token.cancelled) {
         print_section("JS SCRAPING");
         std::set<std::string> js_subs;
         scrape_js_subdomains(js_targets, scan_domain, js_subs);
@@ -1070,8 +1094,11 @@ void subdomain_scan(const std::string& domain,
     }
 
     maybe_write_checkpoint(true, "dns-complete");
-    std::cout << "\n" << BLOOD_RED << "  [*] DNS done. Waiting for "
-              << http_pipe.size() << " pending HTTP enrichments...\n" << RESET;
+    {
+        std::lock_guard<std::mutex> print_lock(g_print_mtx);
+        std::cout << "\n" << BLOOD_RED << "  [*] DNS done. Waiting for "
+                  << http_pipe.size() << " pending enrichments...\n" << RESET;
+    }
     http_pipe.close();
     for (auto& t : http_threads) t.join();
 
@@ -1095,6 +1122,10 @@ void subdomain_scan(const std::string& domain,
     }
 
     print_section("SUMMARY");
+    if (!features.full_addresses && std::any_of(results.begin(), results.end(), [](const auto& row) {
+            return row.dns_status == "resolved" && (row.ips.size() > 1 || row.ipv6.size() > 1);
+        }))
+        std::cout << "  Addresses: first per family (+N); use --full-addresses to display every address.\n";
     std::cout << "\n" << BLOOD_RED << BOLD
               << "  " << std::left << std::setw(42) << "SUBDOMAIN"
               << std::setw(16) << "IPv4" << std::setw(6) << "v6"
@@ -1123,13 +1154,9 @@ void subdomain_scan(const std::string& domain,
         if (ts.size()>12) ts=ts.substr(0,12);
         std::cout << (ts.empty() ? DIM : value_color) << std::setw(12) << (ts.empty()?"-":ts) << RESET;
         std::cout << WHITE << sanitize(r.title) << RESET << "\n";
-        if (r.ips.size() > 1) {
-            std::cout << "    -> " << value_color << "IPv4:  ";
-            for (const auto& ip : r.ips) std::cout << ip << ' ';
-            std::cout << RESET << '\n';
-        }
+        if (r.ips.size() > 1) print_addresses("IPv4", r.ips);
         if (!r.cname.empty()) { std::cout << "    -> " << value_color << "CNAME: " << r.cname << RESET << "\n"; cnt_cname++; }
-        if (!r.ipv6.empty())  { std::cout << "    -> " << value_color << "IPv6:  "; for (auto& a:r.ipv6) std::cout<<a<<" "; std::cout<<RESET<<"\n"; }
+        if (!r.ipv6.empty()) print_addresses("IPv6", r.ipv6);
         if (!r.tech.stack.empty()) { std::cout << "    -> stack: " << value_color; for (auto& s:r.tech.stack) std::cout<<s<<" "; std::cout<<RESET<<"\n"; }
         if (!r.server.empty()) server_stats[r.server]++;
         if (!r.waf.name.empty()) waf_stats[r.waf.name]++;
@@ -1151,7 +1178,7 @@ void subdomain_scan(const std::string& domain,
         [](const auto& scope) { return scope.second == WildcardState::Wildcard; }) << '\n';
     std::cout << BLOOD_RED << "  [wildcard filtered] " << WHITE << wildcard_filtered.load() << "\n" << RESET;
     std::cout << "  [unchecked skipped] " << unchecked_filtered << '\n';
-    std::cout << BLOOD_RED << "  [HTTP workers]    " << WHITE << HTTP_WORKERS           << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [enrich workers]  " << WHITE << HTTP_WORKERS           << "\n" << RESET;
 
     auto print_dist=[&](const std::map<std::string,int>& m, const std::string& label){
         if (m.empty()) return;
@@ -1168,7 +1195,7 @@ void subdomain_scan(const std::string& domain,
     print_dist(cms_stats,"CMS");
     print_dist(server_stats,"server distribution");
 
-    if (do_enrich && deep_passive && !g_cancel_token.cancelled) {
+    if (features.service_hints && !g_cancel_token.cancelled) {
         print_section("CNAME SERVICE HINTS");
         std::size_t inspected = 0;
         for (auto& result : results) {

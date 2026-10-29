@@ -14,7 +14,7 @@ Install or update with one command (Linux, with `curl` and `sudo`):
 curl -fsSLm120 https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install.sh | sudo bash
 ```
 
-Then run `dark-nexus --help`; no separate build command is needed. The installer downloads the source, installs missing dependencies, compiles and installs the application, installs the DNS wordlist, and attempts to configure raw socket capabilities. In a terminal it shows a compact progress panel with the current stage, elapsed time, recent activity and real compilation task counts. Full output is saved to the printed log path; redirected output stays plain. Optional OSINT helpers are attempted after the main application is installed; helper failures do not block it.
+Then run `dark-nexus --help`; no separate build command is needed. The installer downloads the source, installs missing dependencies, compiles and installs the application, installs the DNS wordlist, and attempts to configure raw socket capabilities. In a terminal it shows a compact progress panel with the current stage, elapsed time, recent activity and real compilation task counts. Full output is saved to the printed log path; redirected output stays plain.
 
 On Arch/CachyOS, the installer uses existing package databases and installs only missing packages. It does not launch a full system upgrade. See [installation troubleshooting](docs/install.md) for mirror errors, package locks, time limits, or a minimal installation.
 
@@ -57,7 +57,7 @@ cmake --build build --parallel 2
 ./build/dark_nexus --help
 ```
 
-CMake fetches c-ares and prefers installed curl and nlohmann/json packages, fetching them if needed. A local build runs as `./build/dark_nexus`; use that path in place of `dark-nexus` in the examples below. No system installation is needed to view help or use TCP connect scans. Source builds can use `--wordlist` or the built-in list.
+CMake fetches c-ares and prefers installed curl and nlohmann/json packages, fetching them if needed. A local build runs as `./build/dark_nexus`; use that path in place of `dark-nexus` in the examples below. No system installation is needed to view help or use TCP connect scans. Subdomain fast mode has a built-in list; deep mode requires an external list, supplied by the installer or selected with `--wordlist`.
 
 ### Install system-wide
 
@@ -114,12 +114,16 @@ dark-nexus --portscan 127.0.0.1 --ports 22,80,8000-8010 --connect --timeout 500
 <details>
 <summary><strong>Subdomains</strong> — domain discovery and web metadata</summary>
 
-Combine passive sources with A/AAAA resolution and a compact built-in wordlist. Deep mode adds passive sources and bounded follow-up discovery; it does not automatically load the installed large wordlist. Enable that list explicitly with `--bruteforce`, or select your own with `--wordlist PATH`. Wildcard DNS and inconclusive checks keep generated names out of the discovery list; independently sourced names remain separate candidates for review. IPv6-only observations and cancellation reports are supported. Both modes send DNS queries and, by default, HTTP requests. Service fingerprints require manual verification.
+Combine passive sources with A/AAAA resolution. Fast mode uses 322 built-in words. Deep mode streams an external DNS wordlist automatically and enables additional passive sources, bounded permutations, CNAME inspection, web metadata, technologies, JavaScript discovery and service hints. The installer supplies the large list; without a readable external list, deep stops with instructions instead of falling back to the small one. `--wordlist PATH` overrides either profile. Wildcard DNS and inconclusive checks keep generated names out of the discovery list; independently sourced names remain separate candidates for review. Both modes send DNS queries and, by default, HTTP requests. Service fingerprints require manual verification.
 
 ```sh
 dark-nexus --subdomain example.test --mode deep
+dark-nexus --subdomain example.test --mode deep --no-js --no-service-hints
+dark-nexus --subdomain example.test --mode fast --cname --tech
 dark-nexus --subdomain example.test --mode deep --passive-only --no-enrich
 ```
+
+Individual stages have `--stage` / `--no-stage` switches. Terminal output shows the first address per family and an extra-address count; `--full-addresses` shows all addresses. Saved reports always retain the full observed address lists.
 
 [Subdomain options](docs/cli.md#subdomains)
 
@@ -203,19 +207,6 @@ Extract a hostname from an HTTP(S) URL, resolve it, and run the IP intelligence 
 ```sh
 dark-nexus --site https://example.test/
 ```
-
-</details>
-
-<details>
-<summary><strong>OSINT</strong> — public account observations and identity hypotheses</summary>
-
-Detect username, email, or phone input and collect public observations, related candidates, confidence scores, and an identity graph summary. Available Sherlock, Maigret, Holehe, theHarvester, and PhoneInfoga helpers provide additional observations; missing helpers are skipped. Generated candidates are hypotheses, and confidence labels are heuristic. The module does not provide authenticated breach-database access by default.
-
-```sh
-dark-nexus --osint user@example.test
-```
-
-[Identity graph notes](docs/osint-identity-graph.md)
 
 </details>
 

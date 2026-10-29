@@ -31,7 +31,6 @@ Unknown options, missing values, repeated or conflicting flags, and options that
 | `--traceroute` | Hostname or IPv4 | Network path probes |
 | `--ip-intel` | Hostname or IPv4 | IP context and quick port checks |
 | `--site` | HTTP(S) URL or hostname | Resolve a website host and run IP intelligence |
-| `--osint` | Username, email, or phone | Public observations and identity hypotheses |
 | `--recon` | Hostname or IPv4 | Sequential IP intelligence, DNS, OS, and port checks |
 
 The IPv4 network scanner takes an address and scans hosts `.1` through `.254` in its containing /24. CIDR notation and three-octet prefixes are unsupported.
@@ -70,11 +69,11 @@ dark-nexus doctor --json -
 dark-nexus doctor --output - --format json
 ```
 
-Doctor checks the running version, core runtime helpers (`dig`, `whois`, `host`, `ping`, `curl`, `openssl`, `getent`), optional OSINT executables, known external DNS wordlist paths and the process's effective `CAP_NET_RAW`. It performs local file and capability checks only: no network requests, socket probes, helper execution, package installation or log files.
+Doctor checks the running version, core runtime helpers (`dig`, `whois`, `host`, `ping`, `curl`, `openssl`, `getent`), known external DNS wordlist paths and the process's effective `CAP_NET_RAW`. It performs local file and capability checks only: no network requests, socket probes, helper execution, package installation or log files.
 
-`ok` means a local prerequisite was detected; it does not certify that an external tool, API or network operation will succeed. Missing core helpers are marked `fail`, with the affected workflows and suggested remedies. Missing optional OSINT helpers, an external wordlist or raw capability are `warn`; the built-in wordlist and TCP connect mode remain available. Raw capability describes the current process before any scan-specific privilege drop and does not guarantee that host/container policy will permit raw sockets.
+`ok` means a local prerequisite was detected; it does not certify that an external tool, API or network operation will succeed. Missing core helpers are marked `fail`, with the affected workflows and suggested remedies. A missing external wordlist or raw capability is a `warn`; subdomain fast mode and TCP connect mode remain available. Deep mode requires an external list unless `--passive-only` is selected. Raw capability describes the current process before any scan-specific privilege drop and does not guarantee that host/container policy will permit raw sockets.
 
-Core executables are resolved using the runtime `PATH`. OSINT tools also use the module's standard fallback directories. Executables must be regular files with execute permission; symlinks to suitable files are accepted. Wordlists must be regular, readable and nonempty. Doctor searches known paths without invoking `locate`.
+Core executables are resolved using the runtime `PATH`. Executables must be regular files with execute permission; symlinks to suitable files are accepted. Wordlists must be regular, readable and nonempty. Doctor searches known paths without invoking `locate`.
 
 Default output is a compact text report. `--output -` defaults to JSON; `--json -` is shorthand. The independent JSON schema includes `schema_version`, `version`, aggregate `status` and `checks`. Each check has a stable `id`, `status`, `detail`, `remedy` and `workflows`. It does not use the scan-result schema.
 
@@ -151,23 +150,32 @@ dark-nexus --portscan 127.0.0.1 0U
 dark-nexus --subdomain example.test --mode fast --wordlist ./hosts.txt --no-enrich
 dark-nexus --subdomain example.test --mode deep --threads 64
 dark-nexus --subdomain example.test --mode deep --passive-only --no-enrich
-dark-nexus --subdomain example.test --mode deep --bruteforce
+dark-nexus --subdomain example.test --mode fast --cname --tech
+dark-nexus --subdomain example.test --mode deep --no-js --full-addresses
 ```
 
 | Option | Values / default |
 | --- | --- |
 | `--mode fast\|deep` | Enumeration profile; default `fast`; `F` and `D` are compatibility aliases |
 | `--wordlist PATH` | Explicit candidate wordlist; supported in both profiles |
-| `--bruteforce` | Explicitly select a discovered external DNS wordlist; `--wordlist` takes priority |
+| `--bruteforce` | Select a discovered external DNS wordlist in fast mode; already the default in deep; `--wordlist` takes priority |
 | `--passive-only` | Skip wordlists, generated permutations and JavaScript discovery; conflicts with `--wordlist` and `--bruteforce` |
-| `--threads N` | HTTP worker count, `1..512`; default `200` |
-| `--no-permutations` | Disable candidate permutation generation |
-| `--no-enrich` | Disable HTTP and web metadata enrichment |
-| `--no-deep-passive` | Disable the additional passive-source set |
+| `--threads N` | Enrichment worker count, `1..512`; default `200` |
+| `--permutations` / `--no-permutations` | Enable/disable bounded candidate permutations; deep default on |
+| `--deep-passive` / `--no-deep-passive` | Enable/disable the additional passive-source set; deep default on |
+| `--http` / `--no-http` | Enable/disable HTTP probes and metadata; both profiles default on |
+| `--cname` / `--no-cname` | Enable/disable CNAME inspection; deep default on |
+| `--tech` / `--no-tech` | Enable/disable technology and WAF detection; requires HTTP; deep default on |
+| `--js` / `--no-js` | Enable/disable bounded page/script discovery; requires HTTP; deep default on |
+| `--service-hints` / `--no-service-hints` | Enable/disable CNAME service hints; requires HTTP and enables CNAME; deep default on |
+| `--no-enrich` | Disable HTTP, CNAME, technology/WAF, JavaScript and service-hint stages |
+| `--full-addresses` | Display every observed IPv4/IPv6 address in the terminal; exports always keep all |
 
-Both profiles use a compact built-in wordlist unless overridden. Fast mode uses crt.sh and lighter enrichment. Deep mode adds passive sources, bounded permutations and richer enrichment; it does not automatically select an installed large list. Passive candidates are checked first. `--bruteforce` selects a discovered external list and reports an actionable error before DNS work if no readable list is available. An explicit `--wordlist` always takes priority. The `--no-*` flags override profile defaults regardless of argument order. `--threads` sets the HTTP pool, not DNS concurrency; the DNS pipeline manages its own concurrency.
+Fast mode uses 322 built-in words, crt.sh and lighter enrichment. Deep mode automatically selects and streams an external wordlist, plus additional passive sources, bounded permutations and richer enrichment. The installer supplies the large list. If none is readable, deep and `--bruteforce` report an actionable error before DNS work; neither silently falls back to the built-in list. `--passive-only` needs no wordlist. An explicit `--wordlist` always takes priority, including a deliberately small custom list. Passive candidates are checked first. Streaming processes the entire valid list in bounded batches; DNS batch size is not a total candidate limit. Wildcard-scope suppression can skip generation work.
 
-Both profiles perform active DNS resolution. `--passive-only` restricts candidate discovery to passive sources, but still contacts their APIs and resolves their candidate names; optional HTTP enrichment remains enabled unless `--no-enrich` is set. `--no-enrich` disables web enrichment; it does not disable DNS queries or requests to passive-source APIs. Deep mode can read optional `VT_API_KEY`, `ST_API_KEY`, `SHODAN_API_KEY`, and `CENSYS_API_ID`/`CENSYS_API_SECRET` environment variables. Missing credentials skip the corresponding sources. External services may be unavailable or rate limited.
+Stage switches override profile defaults regardless of argument order and can enable individual deep features in fast mode. Opposite switches for the same stage are rejected. `--no-http` conflicts with explicit `--tech`, `--js` and `--service-hints`; `--no-cname` conflicts with explicit `--service-hints`; `--no-enrich` conflicts with explicitly enabled enrichment stages. `--passive-only` conflicts with explicit `--permutations` and `--js` as well as wordlist selection. Disabled dependencies also disable dependent default stages. `--threads` sets the enrichment pool, not DNS concurrency; the DNS pipeline manages its own concurrency.
+
+Both profiles perform active DNS resolution. `--passive-only` restricts candidate discovery to passive sources, but still contacts their APIs and resolves their candidate names; optional enrichment remains enabled unless `--no-enrich` is set. `--no-enrich` does not disable candidate DNS queries or requests to passive-source APIs. Additional passive sources, enabled by deep or `--deep-passive`, can read optional `VT_API_KEY`, `ST_API_KEY`, `SHODAN_API_KEY`, and `CENSYS_API_ID`/`CENSYS_API_SECRET` environment variables. Missing credentials skip the corresponding sources. External services may be unavailable or rate limited.
 
 The module also writes its own `<domain>_subdomains.json`, `<domain>_subdomains.csv`, and checkpoint files in the working directory, independently of `--output`. These module files use a different layout from the common CLI report.
 
@@ -177,9 +185,9 @@ DNS observations are saved before optional enrichment. SIGINT/SIGTERM stop new w
 
 Wildcard checks use random names in the relevant parent scopes rather than matching candidates against a sampled IP list. Two or more observed positive probes mark a scope as wildcard even when addresses rotate or other probe replies fail; `wildcard_match` identifies this parent-scope condition. A scope is clear only when every probe completes with a valid negative or empty answer. With fewer than two positive probes, any positive, missing or failed reply makes the check inconclusive. Generated names in wildcard or inconclusive scopes are suppressed regardless of their IP addresses, and the affected generation work is skipped with aggregate diagnostics. This deliberately favors conservative output and may omit real names sharing such scopes; independently sourced observations remain available as candidates for manual review. Checks are bounded to 64 parent scopes, with six probes for the scan root and three per additional scope; untested scopes remain inconclusive. Newly encountered scopes are probed together with a five-second batch deadline, separately from resolver health checks. A finite probe sample cannot prove that wildcard DNS is absent everywhere. HTTP redirects, including status 308, do not promote a candidate to a discovery. CNAME service fingerprints are inspection hints requiring manual verification; `takeover_possible` does not establish exploitability.
 
-Deep permutations use at most 64 sorted resolved seeds and 5000 unique generated candidates per run. Variants preserve the seed's parent branch: `api.dev.example.test` can produce `api-test.dev.example.test`. Wildcard and uncertain candidates never become seeds. `--passive-only` disables this stage and JavaScript discovery.
+Enabled permutations use at most 64 sorted resolved seeds and 5000 unique generated candidates per run. Variants preserve the seed's parent branch: `api.dev.example.test` can produce `api-test.dev.example.test`. Wildcard and uncertain candidates never become seeds. `--passive-only` disables this stage and JavaScript discovery.
 
-Interactive subdomain output accents address values, IPv6, CNAME, HTTP status and metadata in green; uncertain counts and service hints remain warnings. `--no-color`, `NO_COLOR` and redirected output preserve plain text in automatic mode; `--color always` explicitly enables colors. Structured reports and module JSON/CSV/checkpoints never include these terminal styles.
+Interactive subdomain output accents address values, IPv6, CNAME, HTTP status and metadata in green; uncertain counts and service hints remain warnings. By default the terminal shows the first address per family with `(+N)` for additional observations. `--full-addresses` displays every address on separate detail lines. Common reports and module JSON/CSV/checkpoints always retain the complete observed address lists. Batch progress uses complete lines so worker results do not overwrite it. `--no-color`, `NO_COLOR` and redirected output preserve plain text in automatic mode; `--color always` explicitly enables colors. Structured reports never include these terminal styles.
 
 Explicit wordlists must be readable regular files. A list without valid candidates is an error and does not silently switch to the built-in list; a list skipped because wildcard checks prevented generation is reported as skipped. Module JSON/CSV and checkpoint files use independent atomic replacements; write failures are reported. Checkpoints are result snapshots, including a final snapshot after workers finish; they do not implement scan resumption. Their `count` includes both discoveries and review candidates, with separate `resolved_count` and `candidate_count`. Concurrent runs produce complete individual files, but the last successful writer wins and JSON/CSV/checkpoint files are not one transaction.
 
@@ -225,9 +233,11 @@ dark-nexus --portscan 127.0.0.1 --ports 8080 --connect --output result.data --fo
 
 Without `--format`, file extensions select JSON or CSV; other filenames select text. With `--output -`, the default format is JSON and stdout contains only the report, without ANSI escapes or progress messages; module status output goes to stderr unless `--quiet` is set. Use `--format` to override the filename. Diagnostic errors are written to stderr. Check the process exit status before consuming an export.
 
-CSV writes one table to the requested path or stdout, with columns `record_type,target,identifier,value,details`. Row types include `metadata`, `geo`, `os`, `port`, `subdomain`, `subdomain_candidate`, `osint`, `trace`, `dns`, `whois`, `warning` and `error`; `details` contains a JSON object with fields for that record. This replaces the previous separate `*_ports.csv`, `*_subdomains.csv`, and similar common-report files; the subdomain module's own files are independent.
+CSV writes one table to the requested path or stdout, with columns `record_type,target,identifier,value,details`. Row types include `metadata`, `geo`, `os`, `port`, `subdomain`, `subdomain_candidate`, `trace`, `dns`, `whois`, `warning` and `error`; `details` contains a JSON object with fields for that record. This replaces the previous separate `*_ports.csv`, `*_subdomains.csv`, and similar common-report files; the subdomain module's own files are independent.
 
 Exports contain fields populated in the shared scan result. They are not transcripts of the terminal report. DNS records use `dns_records`; WHOIS response lines use `whois_records`. Additive report fields `status` (`complete`, `partial`, `failed`, `cancelled`), `errors` and `warnings` describe command completion. Requested exports are finalized after module failures and cancellation, including partial observations. Reports written before these fields were introduced can still be read with their default values. Network-discovery and subdomain-specific output can contain additional data.
+
+New scans use common JSON schema `3.0`: the removed identity-investigation module and its `osint` / `osint_hits` fields are no longer exported. Legacy JSON can still be deserialized for its network fields; schema `2.0` is upgraded to `3.0`, and removed fields are ignored rather than preserved when re-exporting.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -242,7 +252,7 @@ A completed command can contain unavailable-source messages or incomplete observ
 
 Building requires Linux, a C++17 compiler, CMake 3.15+, Git, pkg-config, OpenSSL development files, liburing, and libcap. CMake fetches pinned c-ares, uses system curl and nlohmann/json when available, and fetches pinned fallbacks otherwise. The installer also provisions runtime helpers and wordlists.
 
-DNS checks use `dig`; WHOIS uses `whois`. Other workflows can use `host`, `ping`, `curl`, and `openssl`. OSINT can use installed Sherlock, Maigret, Holehe, theHarvester, and PhoneInfoga executables. Missing OSINT helpers are skipped without prompting or installation.
+DNS checks use `dig`; WHOIS uses `whois`. Other workflows can use `host`, `ping`, `curl`, and `openssl`. The installer provisions network dependencies and the DNS wordlist; it does not install account-lookup tools or Python/Go helper environments.
 
 Raw socket access uses root privileges or `CAP_NET_RAW`; the installer attempts to grant the capability to the installed executable. Connect port scans work without raw socket access. Results also depend on target responses, firewall behavior, DNS configuration, and external-source availability.
 

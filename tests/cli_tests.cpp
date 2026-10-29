@@ -45,6 +45,8 @@ void valid_cases() {
             {"--help", "doctor"}, {"--help=doctor"}, {"--doctor", "--help"}, {"doctor", "--help"}})
         check(cli::parse(args).doctor && cli::parse(args).help, "doctor help");
     check(cli::help("doctor").find("CAP_NET_RAW") != std::string::npos, "doctor detailed help");
+    check(cli::parse({"--subdomain", "example.test", "--full-addresses"}).full_addresses,
+          "complete address presentation is explicitly selectable");
     for (const auto& args : std::vector<std::vector<std::string>> {
             {"--help", "portscan"}, {"--help=portscan"},
             {"--portscan", "--help"}, {"--help", "--portscan"},
@@ -54,7 +56,7 @@ void valid_cases() {
     }
     const std::vector<std::string> names = {
         "portscan", "netscan", "os-detect", "ip-intel", "dns", "whois",
-        "site", "osint", "traceroute", "recon", "subdomain"
+        "site", "traceroute", "recon", "subdomain"
     };
     for (const auto& name : names) {
         const auto options = cli::parse({"--" + name, "example.com"});
@@ -107,8 +109,10 @@ void valid_cases() {
           cli::parse({"--whois", "example.test", "--timeout", "200"}).timeout_ms == 200,
           "DNS and WHOIS helper deadlines");
     check(cli::parse({"--dns", "x", "--color=auto", "--no-log"}).no_log, "explicit no logging");
-    check(cli::parse({"--osint", "--", "-username"}).target == "-username", "delimiter target");
-    check(cli::parse({"--osint=--help"}).target == "--help", "inline target can begin with dash");
+    check(cli::parse({"--whois", "--", "-name"}).target == "-name", "delimiter target");
+    check(cli::parse({"--whois=--help"}).target == "--help", "inline target can begin with dash");
+    check(cli::modules().find("osint") == std::string::npos && cli::help().find("osint") == std::string::npos,
+          "removed OSINT is absent from catalog and help");
 
     const auto sub = cli::parse({"--subdomain", "example.com", "--mode", "D", "--wordlist=names.txt",
                                 "--threads", "512", "--no-permutations", "--no-enrich", "--no-deep-passive"});
@@ -120,7 +124,7 @@ void valid_cases() {
     for (const auto& mode : {"fast", "deep"}) {
         const auto compact = cli::parse({"--subdomain", "example.test", "--mode", mode});
         check(compact.wordlist.empty() && !compact.bruteforce && !compact.passive_only,
-              std::string(mode) + " does not implicitly enable a large wordlist");
+              std::string(mode) + " leaves wordlist discovery to execution");
         const auto brute = cli::parse({"--subdomain", "example.test", "--mode", mode,
                                        "--bruteforce", "--wordlist", "selected.txt"});
         check(brute.bruteforce && brute.wordlist == "selected.txt",
@@ -139,6 +143,33 @@ void valid_cases() {
               cli::help("subdomain").find("--passive-only") != std::string::npos,
           "subdomain help documents discovery controls");
 
+    using Switch = bool cli::Options::*;
+    for (const auto& item : std::vector<std::pair<std::string, Switch>> {
+            {"permutations", &cli::Options::permutations}, {"deep-passive", &cli::Options::deep_passive},
+            {"http", &cli::Options::http}, {"js", &cli::Options::js}, {"cname", &cli::Options::cname},
+            {"tech", &cli::Options::tech}, {"service-hints", &cli::Options::service_hints}}) {
+        const auto enabled = cli::parse({"--subdomain", "x", "--mode", "fast", "--" + item.first});
+        check(enabled.*item.second && !enabled.deep, "fast profile explicitly enables " + item.first);
+        check(cli::help("subdomain").find("--" + item.first) != std::string::npos,
+              "help documents " + item.first);
+    }
+    for (const auto& item : std::vector<std::pair<std::string, Switch>> {
+            {"permutations", &cli::Options::no_permutations}, {"deep-passive", &cli::Options::no_deep_passive},
+            {"http", &cli::Options::no_http}, {"js", &cli::Options::no_js}, {"cname", &cli::Options::no_cname},
+            {"tech", &cli::Options::no_tech}, {"service-hints", &cli::Options::no_service_hints}}) {
+        check(cli::parse({"--subdomain", "x", "--mode", "deep", "--no-" + item.first}).*item.second,
+              "deep profile explicitly disables " + item.first);
+        check(cli::parse({"--no-" + item.first, "--subdomain", "x", "--mode", "deep"}).*item.second,
+              "stage override survives later profile " + item.first);
+    }
+    check(cli::parse({"--subdomain", "x", "--no-enrich", "--permutations", "--deep-passive"}).permutations,
+          "no-enrich permits DNS permutation and passive stages");
+    check(cli::parse({"--subdomain", "x", "--no-http", "--cname"}).cname,
+          "CNAME discovery is independent of HTTP");
+    check(cli::parse({"--subdomain", "x", "--passive-only", "--http", "--cname", "--tech"}).tech,
+          "passive-only permits metadata enrichment");
+    check(cli::parse({"--portscan", "x", "--http"}).http, "positive HTTP switch also applies to portscan");
+
     const auto trace = cli::parse({"--traceroute", "192.0.2.1", "--protocol=udp", "--max-hops=255",
                                   "--probes=10", "--parallel-hops=32", "--destination-port=65535",
                                   "--timeout=60000", "--no-rdns", "--no-asn", "--no-mtu"});
@@ -154,6 +185,30 @@ void valid_cases() {
 }
 
 void invalid_cases() {
+    rejects({"--osint", "username"}, "removed OSINT module is rejected");
+    rejects({"--help", "osint"}, "removed OSINT help is rejected");
+    for (const auto& name : {"permutations", "deep-passive", "http", "js", "cname", "tech", "service-hints"}) {
+        rejects({"--subdomain", "x", "--" + std::string(name), "--no-" + std::string(name)},
+                "opposite stage switches conflict " + std::string(name));
+        rejects({"--subdomain", "x", "--no-" + std::string(name), "--" + std::string(name)},
+                "opposite stage switches conflict in reverse order " + std::string(name));
+        rejects({"--subdomain", "x", "--" + std::string(name) + "=true"}, "stage switches reject values");
+        rejects({"--whois", "x", "--" + std::string(name)}, "stage switches reject unrelated module");
+    }
+    for (const auto& flag : {"--http", "--cname", "--tech", "--js", "--service-hints"}) {
+        rejects({"--subdomain", "x", "--no-enrich", flag}, "explicit enrichment conflicts with no-enrich");
+        rejects({"--subdomain", "x", flag, "--no-enrich"}, "no-enrich conflicts independent of order");
+    }
+    for (const auto& flag : {"--tech", "--js", "--service-hints"}) {
+        rejects({"--subdomain", "x", "--no-http", flag}, "HTTP dependent stage conflicts with no-http");
+        rejects({"--subdomain", "x", flag, "--no-http"}, "HTTP dependency conflict independent of order");
+    }
+    rejects({"--subdomain", "x", "--no-cname", "--service-hints"}, "service hints require CNAME");
+    rejects({"--subdomain", "x", "--service-hints", "--no-cname"}, "CNAME dependency independent of order");
+    for (const auto& flag : {"--permutations", "--js"}) {
+        rejects({"--subdomain", "x", "--passive-only", flag}, "passive-only disables active generation");
+        rejects({"--subdomain", "x", flag, "--passive-only"}, "passive-only conflict independent of order");
+    }
     for (const auto& args : std::vector<std::vector<std::string>> {
             {"doctor", "target"}, {"--doctor=target"}, {"--doctor", "doctor"},
             {"doctor", "--doctor"}, {"--doctor", "--version"}, {"doctor", "--list-modules"},

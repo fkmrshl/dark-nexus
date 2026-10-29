@@ -34,10 +34,10 @@ int Report::exit_code() const { return status() == "fail" ? 1 : 0; }
 Report inspect(const environment::Context& context) {
     Report report;
     const std::vector<std::pair<std::string, std::vector<std::string>>> core = {
-        {"dig", {"dns", "subdomain", "osint email", "traceroute ASN enrichment", "recon"}},
+        {"dig", {"dns", "subdomain", "traceroute ASN enrichment", "recon"}},
         {"whois", {"whois", "ip-intel", "site", "recon"}},
         {"host", {"ip-intel", "site", "recon"}}, {"ping", {"os-detect", "netscan", "recon"}},
-        {"curl", {"ip-intel", "site", "subdomain", "osint", "recon", "HTTP fallback"}},
+        {"curl", {"ip-intel", "site", "subdomain", "recon", "HTTP fallback"}},
         {"openssl", {"ip-intel certificate enrichment", "site", "recon"}},
         {"getent", {"subdomain system hostname-resolution fallback"}}
     };
@@ -48,18 +48,11 @@ Report inspect(const environment::Context& context) {
             path.empty() ? "Install " + tool.first + " with your distribution's package manager and ensure its directory is on PATH." : "",
             tool.second});
     }
-    for (const std::string name : {"sherlock", "maigret", "holehe", "theHarvester", "phoneinfoga"}) {
-        const auto path = environment::find_osint_tool(name, context);
-        report.checks.push_back({"optional." + name, path.empty() ? "warn" : "ok",
-            path.empty() ? name + ": optional OSINT helper not found" : path,
-            path.empty() ? "Install this helper separately if needed; built-in OSINT sources remain available." : "",
-            {"osint"}});
-    }
     const auto wordlist = environment::find_wordlist(context);
     report.checks.push_back({"wordlist", wordlist.empty() ? "warn" : "ok",
         wordlist.empty() ? "No readable, non-empty DNS wordlist found in known locations; built-in words remain available." : wordlist,
         wordlist.empty() ? "Use --subdomain DOMAIN --wordlist PATH, or install best-dns-wordlist.txt in /usr/share/wordlists/dark-nexus/." : "",
-        {"subdomain --bruteforce"}});
+        {"subdomain deep / --bruteforce"}});
 
     struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
     struct __user_cap_data_struct data[2] = {};

@@ -50,24 +50,6 @@ struct InputGuard {
         return p >= 1 && p <= 65535;
     }
 
-    static bool is_valid_username(const std::string& s) {
-        if (s.empty() || s.size() > 64) return false;
-        static const std::regex re(R"(^[a-zA-Z0-9_\-\.]{1,64}$)");
-        return std::regex_match(s, re);
-    }
-
-    static bool is_valid_email(const std::string& s) {
-        if (s.empty() || s.size() > 254) return false;
-        static const std::regex re(R"(^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$)");
-        return std::regex_match(s, re);
-    }
-
-    static bool is_valid_phone(const std::string& s) {
-        if (s.size() < 7 || s.size() > 20) return false;
-        size_t start = (s[0] == '+') ? 1 : 0;
-        return std::all_of(s.begin() + start, s.end(), ::isdigit);
-    }
-
     static bool is_safe_path(const std::string& s) {
         if (s.empty() || s.size() > MAX_PATH_LEN) return false;
         if (s.find("..") != std::string::npos) return false;

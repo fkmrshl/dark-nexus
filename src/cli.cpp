@@ -18,7 +18,6 @@ const std::vector<std::pair<std::string, std::string>>& catalog() {
         {"whois", "Query domain or IP registration data"},
         {"ip-intel", "Collect IP, network and service information"},
         {"site", "Resolve a website URL and collect IP information"},
-        {"osint", "Search public sources for a username, email or phone"},
         {"traceroute", "Measure the route to a host"},
         {"os-detect", "Estimate an operating system from network signals"},
         {"netscan", "Discover hosts on an IPv4 /24 network"},
@@ -265,8 +264,11 @@ Options parse(const std::vector<std::string>& args) {
             switch_option(options.no_tls, "no-tls");
             scope("portscan");
         } else if (flag == "--no-http") {
-            switch_option(options.no_http, "no-http");
-            scope("portscan");
+            switch_option(options.no_http, "http");
+            scope("portscan subdomain");
+        } else if (flag == "--http") {
+            switch_option(options.http, "http");
+            scope("portscan subdomain");
         } else if (flag == "--mode") {
             once("mode", flag);
             const auto mode = value();
@@ -284,14 +286,29 @@ Options parse(const std::vector<std::string>& args) {
         } else if (flag == "--passive-only") {
             switch_option(options.passive_only, "passive-only");
             scope("subdomain");
-        } else if (flag == "--no-permutations") {
-            switch_option(options.no_permutations, "no-permutations");
+        } else if (flag == "--full-addresses") {
+            switch_option(options.full_addresses, "full-addresses");
+            scope("subdomain");
+        } else if (flag == "--permutations" || flag == "--no-permutations") {
+            switch_option(flag == "--permutations" ? options.permutations : options.no_permutations, "permutations");
             scope("subdomain");
         } else if (flag == "--no-enrich") {
             switch_option(options.no_enrich, "no-enrich");
             scope("subdomain");
-        } else if (flag == "--no-deep-passive") {
-            switch_option(options.no_deep_passive, "no-deep-passive");
+        } else if (flag == "--deep-passive" || flag == "--no-deep-passive") {
+            switch_option(flag == "--deep-passive" ? options.deep_passive : options.no_deep_passive, "deep-passive");
+            scope("subdomain");
+        } else if (flag == "--js" || flag == "--no-js") {
+            switch_option(flag == "--js" ? options.js : options.no_js, "js");
+            scope("subdomain");
+        } else if (flag == "--cname" || flag == "--no-cname") {
+            switch_option(flag == "--cname" ? options.cname : options.no_cname, "cname");
+            scope("subdomain");
+        } else if (flag == "--tech" || flag == "--no-tech") {
+            switch_option(flag == "--tech" ? options.tech : options.no_tech, "tech");
+            scope("subdomain");
+        } else if (flag == "--service-hints" || flag == "--no-service-hints") {
+            switch_option(flag == "--service-hints" ? options.service_hints : options.no_service_hints, "service-hints");
             scope("subdomain");
         } else if (flag == "--protocol") {
             once("protocol", flag);
@@ -396,6 +413,14 @@ Options parse(const std::vector<std::string>& args) {
     if (options.udp && seen.count("retries")) throw Error("--retries is only available for TCP scans");
     if (options.passive_only && (!options.wordlist.empty() || options.bruteforce))
         throw Error("--passive-only conflicts with --wordlist and --bruteforce");
+    if (options.passive_only && (options.js || options.permutations))
+        throw Error("--passive-only conflicts with --js and --permutations");
+    if (options.no_enrich && (options.http || options.cname || options.tech || options.js || options.service_hints))
+        throw Error("--no-enrich conflicts with explicitly enabled enrichment stages");
+    if (options.no_http && (options.tech || options.js || options.service_hints))
+        throw Error("--tech, --js and --service-hints require HTTP; remove --no-http");
+    if (options.no_cname && options.service_hints)
+        throw Error("--service-hints requires CNAME lookup; remove --no-cname");
     for (const auto& item : scoped) {
         std::istringstream names(item.second);
         std::string name;
@@ -429,7 +454,7 @@ std::string help(const std::string& module) {
         return "dark-nexus doctor | local environment\n\n"
                "Usage: dark-nexus doctor [--json -] [--no-color]\n"
                "       dark-nexus --doctor [--output - --format json]\n\n"
-               "Inspect core helper paths, optional OSINT helpers, DNS wordlists and\n"
+               "Inspect core network helper paths, DNS wordlists and\n"
                "effective CAP_NET_RAW metadata. No helpers are executed, no network\n"
                "requests are sent, and no system files are changed.\n\n"
                "Missing core helpers: exit 1 (affected workflows are listed).\n"
@@ -494,16 +519,23 @@ std::string help(const std::string& module) {
         out << "\nSubdomain options\n"
             << "      --mode MODE          fast (default) or deep; F/D are accepted\n"
             << "      --wordlist PATH      Explicit DNS wordlist (either profile)\n"
-            << "      --bruteforce         Use a discovered DNS wordlist; --wordlist takes priority\n"
+            << "      --bruteforce         Use the large discovered wordlist in fast mode too\n"
             << "      --passive-only       Skip wordlist, permutations and JavaScript discovery\n"
-            << "      --threads N          HTTP pipeline workers, 1..512 (default: 200)\n"
-            << "      --no-permutations    Skip generated name permutations\n"
-            << "      --no-enrich          Skip HTTP and technology enrichment\n"
-            << "      --no-deep-passive    Skip additional passive sources in deep mode\n"
-            << "\nBoth profiles default to a compact built-in wordlist. Deep does not\n"
-            << "automatically load installed large lists. --bruteforce requires a readable\n"
-            << "discovered wordlist or an explicit --wordlist PATH. --passive-only\n"
-            << "conflicts with both; passive names still receive DNS and optional HTTP checks.\n"
+            << "      --threads N          Enrichment workers, 1..512 (default: 200)\n"
+            << "      --permutations / --no-permutations   Bounded name variants\n"
+            << "      --deep-passive / --no-deep-passive   Additional passive sources\n"
+            << "      --http / --no-http                   HTTP metadata checks\n"
+            << "      --cname / --no-cname                 CNAME DNS annotations\n"
+            << "      --tech / --no-tech                   Technology/WAF (requires HTTP)\n"
+            << "      --js / --no-js                       Script discovery (requires HTTP)\n"
+            << "      --service-hints / --no-service-hints Service inspection (HTTP + CNAME)\n"
+            << "      --no-enrich          Disable HTTP, CNAME, tech, JS and service hints\n"
+            << "      --full-addresses     Print every address; compact console shows +N otherwise\n"
+            << "\nFast defaults to the compact built-in wordlist and HTTP checks. Deep\n"
+            << "requires the installed large wordlist and enables all stages above.\n"
+            << "--wordlist PATH overrides automatic selection; --passive-only skips\n"
+            << "wordlists, permutations and JS discovery. Optional stages can also be\n"
+            << "enabled in fast mode. Wildcard protection always remains enabled.\n"
             << "\nExample: dark-nexus --subdomain example.com --mode deep --output names.json\n";
     } else if (module == "traceroute") {
         out << "\nTraceroute options\n"

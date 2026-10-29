@@ -15,7 +15,7 @@ Usage: sudo bash install.sh [options]
   --prefix DIR    Install under DIR (default: /usr/local)
   --source DIR    Build a local checkout instead of downloading source
   --skip-deps     Use existing system dependencies; do not run a package manager
-  --skip-helpers  Skip optional OSINT helpers
+  --skip-helpers  Accepted for compatibility; no effect
   --no-progress   Print full live output instead of the terminal progress panel
   -h, --help      Show this help
 
@@ -28,7 +28,7 @@ HELP
 
 # Only the renderer writes the animated panel. Pipes and CI keep plain logs.
 dnx_ui_init() {
-    DNX_UI=0 DNX_UI_UNICODE=0 DNX_UI_COLOR='' DNX_UI_RESET='' DNX_PHASE=0 DNX_PHASES=6
+    DNX_UI=0 DNX_UI_UNICODE=0 DNX_UI_COLOR='' DNX_UI_RESET='' DNX_PHASE=0 DNX_PHASES=5
     DNX_STAGE_TITLE=Starting
     if [[ -t 1 && "${TERM:-dumb}" != dumb && "${DNX_NO_PROGRESS:-0}" == 0 && "${DARK_NEXUS_PROGRESS:-auto}" != 0 ]]; then
         DNX_UI=1
@@ -380,60 +380,11 @@ dnx_install_binary() {
     dnx_message "Wordlist: $wordlist_dir/best-dns-wordlist.txt"
 }
 
-dnx_link_helper() {
-    local executable=$1 destination="$DNX_PREFIX/bin/$2" existing
-    if [[ -e "$destination" || -L "$destination" ]]; then
-        existing=$(readlink "$destination" 2>/dev/null || true)
-        if [[ "$existing" != "$DNX_HELPERS/bin/"* ]]; then
-            dnx_warn "Keeping existing $destination"
-            return 0
-        fi
-    fi
-    ln -sfn -- "$executable" "$destination"
-}
-
-dnx_helpers() {
-    local entry binary package python
-    if (( DNX_SKIP_HELPERS )); then dnx_message 'Optional OSINT helpers skipped.'; return 0; fi
-    if (( ! DNX_SKIP_DEPS )); then
-        case "$DNX_FAMILY" in
-            debian) dnx_packages 'Optional Python dependencies' python3 python3-pip python3-venv || { dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'; return 0; } ;;
-            arch) dnx_packages 'Optional Python dependencies' python python-pip || { dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'; return 0; } ;;
-            fedora|suse) dnx_packages 'Optional Python dependencies' python3 python3-pip || { dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'; return 0; } ;;
-        esac
-    fi
-    if ! command -v python3 >/dev/null 2>&1; then dnx_warn 'Optional Python helpers skipped: python3 is not installed.'; return 0; fi
-    if [[ "$DNX_PREFIX" == /usr/local ]]; then DNX_HELPERS=/opt/dark-nexus-osint
-    else DNX_HELPERS="$DNX_PREFIX/share/dark-nexus/osint-venv"; fi
-    if [[ ! -x "$DNX_HELPERS/bin/python" ]]; then
-        if ! dnx_run 'Create optional OSINT environment' 60 python3 -m venv "$DNX_HELPERS"; then
-            dnx_warn 'Optional helpers skipped; Dark Nexus is already installed.'
-            return 0
-        fi
-    fi
-    python="$DNX_HELPERS/bin/python"
-    for entry in sherlock:sherlock-project maigret:maigret holehe:holehe theHarvester:theHarvester; do
-        binary=${entry%%:*}; package=${entry#*:}
-        if [[ ! -x "$DNX_HELPERS/bin/$binary" ]]; then
-            if ! dnx_run "Optional $binary (up to 5 minutes)" 300 "$python" -m pip install --disable-pip-version-check --no-input --retries 1 --timeout 30 "$package"; then
-                dnx_warn "Optional $binary skipped; continuing."
-                continue
-            fi
-        fi
-        if [[ -x "$DNX_HELPERS/bin/$binary" ]]; then dnx_link_helper "$DNX_HELPERS/bin/$binary" "$binary" || dnx_warn "Could not link optional $binary"; fi
-    done
-    if command -v go >/dev/null 2>&1 && ! command -v phoneinfoga >/dev/null 2>&1 && [[ ! -e "$DNX_PREFIX/bin/phoneinfoga" && ! -L "$DNX_PREFIX/bin/phoneinfoga" ]]; then
-        dnx_run 'Optional PhoneInfoga (up to 5 minutes)' 300 env GOBIN="$DNX_PREFIX/bin" go install github.com/sundowndev/phoneinfoga/v2@latest || dnx_warn 'Optional PhoneInfoga skipped.'
-    fi
-    return 0
-}
-
 dnx_main() {
     local script_path=${BASH_SOURCE[0]:-} family_id='' family_like='' jobs argument
     DNX_PREFIX=/usr/local
     DNX_LOCAL_SOURCE=''
     DNX_SKIP_DEPS=0
-    DNX_SKIP_HELPERS=0
     DNX_NO_PROGRESS=0
     DNX_WORK=''
     DNX_LOG=''
@@ -447,7 +398,7 @@ dnx_main() {
         case "$argument" in
             -h|--help) dnx_help; return 0 ;;
             --skip-deps) DNX_SKIP_DEPS=1 ;;
-            --skip-helpers) DNX_SKIP_HELPERS=1 ;;
+            --skip-helpers) : ;;
             --no-progress) DNX_NO_PROGRESS=1 ;;
             --prefix|--source)
                 (( $# >= 2 )) && [[ -n "$2" && "$2" != --* ]] || { dnx_die "$argument needs a value" 2; return 2; }
@@ -485,7 +436,7 @@ dnx_main() {
     trap dnx_cleanup EXIT
     trap 'dnx_interrupt 130' INT
     trap 'dnx_interrupt 143' TERM
-    # Package managers and helpers cannot consume the script pipe or prompt on stdin.
+    # Child commands cannot consume the script pipe or prompt on stdin.
     exec </dev/null
     export GIT_TERMINAL_PROMPT=0
     export NINJA_STATUS='[%f/%t] '
@@ -507,9 +458,6 @@ dnx_main() {
     dnx_stage_done
     dnx_stage 5 Install
     dnx_install_binary
-    dnx_stage_done
-    dnx_stage 6 Helpers
-    dnx_helpers
     dnx_stage_done
     dnx_ui_complete
     printf '\nInstallation complete. Run: %s/bin/dark-nexus --help\n' "$DNX_PREFIX"

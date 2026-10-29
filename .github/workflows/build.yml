@@ -89,7 +89,7 @@ jobs:
           runuser -u dnx-ci -- bash -euo pipefail -c '
             prefix=$(mktemp -d /tmp/dark-nexus-ci.XXXXXX)
             trap '\''rm -rf -- "$prefix"'\'' EXIT
-            bash install.sh --skip-deps --skip-helpers --no-progress \
+            bash install.sh --skip-deps --no-progress \
               --source "$PWD" --prefix "$prefix"
             "$prefix/bin/dark-nexus" --version
             "$prefix/bin/dark-nexus" --help

@@ -58,10 +58,7 @@ int main() {
         context.path = (root / "bin").string();
         check(!environment::find_in_path((root / "working-tool").string(), context).empty(), "explicit executable path");
         file(root / "home/.local/bin/local-helper");
-        check(environment::find_in_path("local-helper", context).empty(), "core helper never uses OSINT fallback");
-        check(environment::find_osint_tool("local-helper", context) == (root / "home/.local/bin/local-helper").string(), "OSINT local bin fallback");
-        file(root / "home/.local/share/dark-nexus/osint-venv/bin/venv-helper");
-        check(!environment::find_osint_tool("venv-helper", context).empty(), "OSINT venv fallback");
+        check(environment::find_in_path("local-helper", context).empty(), "core helper follows PATH without implicit home fallback");
         file(root / "prefix/share/wordlists/dark-nexus/best-dns-wordlist.txt", "www\n", false);
         const auto detected = environment::find_wordlist(context);
         check(detected == (root / "prefix/share/wordlists/dark-nexus/best-dns-wordlist.txt").string(),
@@ -77,7 +74,7 @@ int main() {
 
         for (const auto* name : {"whois", "host", "ping", "curl", "openssl", "getent"}) file(root / "bin" / name);
         auto report = doctor::inspect(context);
-        check(report.checks.size() == 14, "all fourteen environment checks present");
+        check(report.checks.size() == 9, "all nine environment checks present");
         check(report.exit_code() == 0, "optional warnings do not fail readiness");
         for (const auto* name : {"dig", "whois", "host", "ping", "curl", "openssl", "getent"})
             check(find(report, std::string("core.") + name).status == "ok", "core executable detected");
@@ -89,7 +86,7 @@ int main() {
         check(doctor::write_json(report, serialized), "JSON report writes successfully");
         const auto parsed = nlohmann::json::parse(serialized.str());
         check(parsed.at("schema_version") == 1 && parsed.at("status") == "fail", "stable report schema and aggregate status");
-        check(parsed.at("checks").size() == 14 && serialized.str().find('\033') == std::string::npos, "JSON report contains all checks without ANSI");
+        check(parsed.at("checks").size() == 9 && serialized.str().find('\033') == std::string::npos, "JSON report contains all checks without ANSI");
         std::ostringstream text;
         check(doctor::write_text(report, text) && text.str().find("Affects:") != std::string::npos, "text report explains affected workflows");
         std::ostringstream failed;

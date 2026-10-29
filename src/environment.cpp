@@ -57,21 +57,6 @@ std::string find_in_path(const std::string& name, const Context& context) {
     return "";
 }
 
-std::string find_osint_tool(const std::string& name, const Context& context) {
-    const auto from_path = find_in_path(name, context);
-    if (!from_path.empty() || name.find('/') != std::string::npos) return from_path;
-    std::vector<std::string> directories = {"/usr/local/bin", "/opt/dark-nexus-osint/bin"};
-    if (!context.home.empty()) {
-        directories.push_back(join(context.home, ".local/bin"));
-        directories.push_back(join(context.home, ".local/share/dark-nexus/osint-venv/bin"));
-    }
-    for (const auto& directory : directories) {
-        const auto candidate = join(directory, name);
-        if (executable_file(candidate)) return candidate;
-    }
-    return "";
-}
-
 std::string find_wordlist(const Context& context) {
     std::vector<std::string> candidates = {"./best-dns-wordlist.txt"};
     if (!context.executable.empty()) {
