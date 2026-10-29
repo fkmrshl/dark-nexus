@@ -15,6 +15,10 @@ int main() {
     subdomain.ipv6 = {"2001:db8::42"};
     subdomain.wildcard_match = true;
     result.subdomains.push_back(subdomain);
+    SubEntry candidate = subdomain;
+    candidate.sub = "uncertain.example.test";
+    candidate.dns_status = "wildcard";
+    result.subdomain_candidates.push_back(candidate);
     result.dns_records.push_back("example.test. 60 IN A 127.0.0.1");
     result.whois_records = {"Repeated: one", "Repeated: two"};
     result.status = "partial";
@@ -29,14 +33,19 @@ int main() {
     if (parsed.at("status") != "partial" || parsed.at("whois_records").size() != 2 ||
         parsed.at("errors").size() != 1 || parsed.at("warnings").size() != 1) return 1;
     const auto roundtrip = parsed.get<ScanResult>();
+    if (roundtrip.subdomain_candidates.size() != 1 ||
+        roundtrip.subdomain_candidates[0].dns_status != "wildcard") return 1;
     if (roundtrip.status != "partial" || roundtrip.whois_records != result.whois_records ||
         roundtrip.errors != result.errors || roundtrip.warnings != result.warnings) return 1;
     auto legacy = parsed;
     legacy["subdomains"][0].erase("ipv6");
     legacy["subdomains"][0].erase("wildcard_match");
+    legacy["subdomains"][0].erase("dns_status");
+    legacy.erase("subdomain_candidates");
     for (const auto* field : {"status", "errors", "warnings", "whois_records"}) legacy.erase(field);
     const auto old_report = legacy.get<ScanResult>();
     if (!old_report.subdomains.at(0).ipv6.empty() || old_report.subdomains.at(0).wildcard_match) return 1;
+    if (!old_report.subdomain_candidates.empty() || old_report.subdomains.at(0).dns_status != "resolved") return 1;
     if (old_report.status != "complete" || !old_report.errors.empty() ||
         !old_report.warnings.empty() || !old_report.whois_records.empty()) return 1;
     std::ostringstream csv_out, text_out;
@@ -47,12 +56,16 @@ int main() {
         csv_out.str().find("whois,example.test,,Repeated: two,") == std::string::npos ||
         csv_out.str().find("error,example.test,") == std::string::npos ||
         csv_out.str().find("warning,example.test,") == std::string::npos) return 1;
+    if (csv_out.str().find("subdomain_candidate,example.test,uncertain.example.test,wildcard,") == std::string::npos)
+        return 1;
     if (!OutputWriter::write_stream(result, text_out, "txt") ||
         text_out.str().find("443/tcp") == std::string::npos ||
         text_out.str().find("Status: partial") == std::string::npos ||
         text_out.str().find("Repeated: two") == std::string::npos ||
         text_out.str().find("2001:db8::42") == std::string::npos ||
         text_out.str().find("Error: helper failed") == std::string::npos) return 1;
+    if (text_out.str().find("Uncertain subdomain candidates") == std::string::npos ||
+        text_out.str().find("uncertain.example.test  [wildcard]") == std::string::npos) return 1;
     if (OutputWriter::format_for("report.JSON") != "json" ||
         OutputWriter::format_for("-") != "json" ||
         OutputWriter::format_for("report.txt", "csv") != "csv") return 1;

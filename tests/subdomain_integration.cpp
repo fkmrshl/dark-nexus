@@ -5,6 +5,7 @@
 #include "subdomain_common.hpp"
 #include "atomic_file.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <csignal>
@@ -22,6 +23,13 @@ std::atomic<bool> finished{false};
 bool wildcard_probe(const std::string& host) { return host.rfind("dnxwc-", 0) == 0; }
 bool provider_fixture() { return scenario == "doh-provider-keep" || scenario == "doh-provider-merge"; }
 
+bool classification_fixture() {
+    return scenario == "wildcard" || scenario == "rotating-wildcard" ||
+           scenario == "nested-wildcard" || scenario == "root-wildcard-child-clear" ||
+           scenario == "probe-failure" || scenario == "probe-mixed" ||
+           scenario == "probe-missing" || scenario == "scope-budget";
+}
+
 long fixture_http() {
     if (g_cancel_token.cancelled) ++http_after_cancel;
     const int call = ++http_calls;
@@ -35,11 +43,23 @@ long fixture_http() {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         return 0;
     }
-    return 200;
+    return scenario == "rotating-wildcard" ? 308 : 200;
 }
 
 void passive_fixture(std::set<std::string>& output) {
     if (scenario == "duplicate-family" || provider_fixture()) output.insert("www.example.test");
+    if (scenario == "wildcard" || scenario == "rotating-wildcard" ||
+        scenario == "probe-failure" || scenario == "probe-mixed" || scenario == "probe-missing" ||
+        scenario == "passive-first" || scenario == "passive-only")
+        output.insert("observed.example.test");
+    if (scenario == "nested-wildcard" || scenario == "root-wildcard-child-clear")
+        output.insert("observed.api.example.test");
+    if (scenario == "scope-budget" || scenario == "permutation-budget") {
+        for (int index = 0; index < 100; ++index)
+            output.insert(scenario == "scope-budget" ?
+                "observed.scope" + std::to_string(index) + ".example.test" :
+                "seed" + std::to_string(1000 + index) + "unit.example.test");
+    }
     if (scenario != "passive-invalid") return;
     output.insert({"VALID.EXAMPLE.TEST.", "foreign.test", "evilexample.test",
                    "bad host.example.test", "https://url.example.test", "bad..example.test"});
@@ -67,7 +87,21 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int, int
         }
         auto& answer = output[host];
         if (wildcard_probe(host)) {
-            if (scenario == "wildcard") answer.ipv4 = {"192.0.2.20"};
+            const auto parent = host.substr(host.find('.') + 1);
+            if (scenario == "wildcard" || scenario == "rotating-wildcard" ||
+                (scenario == "nested-wildcard" && parent == "api.example.test") ||
+                (scenario == "root-wildcard-child-clear" && parent == "example.test"))
+                answer.ipv4 = {scenario == "root-wildcard-child-clear" ? "192.0.2.20" :
+                    "192.0.2." + std::to_string(40 + requested_names.size() % 6)};
+            if (scenario == "probe-failure") {
+                answer.failed = true;
+                answer.error = "fixture wildcard probe timeout";
+            }
+            if (scenario == "probe-mixed") {
+                const auto positives = std::count_if(requested_names.begin(), requested_names.end(), wildcard_probe);
+                if (positives == 1) answer.ipv4 = {"192.0.2.40"};
+            }
+            if (scenario == "probe-missing") output.erase(host);
             continue;
         }
         if (scenario == "dns-failure" || (provider_fixture() && host == "www.example.test")) {
@@ -119,7 +153,7 @@ CurlResponse fast_probe(const std::string&, int) {
     CurlResponse response;
     response.http_code = fixture_http();
     response.transport_code = 0;
-    response.success = response.http_code == 200;
+    response.success = response.http_code > 0;
     response.headers = "Server: fixture\r\n";
     response.body = "<title>café Москва, \"quoted\"</title>";
     return response;
@@ -227,8 +261,10 @@ int main(int argc, char** argv) {
             for (auto& writer : writers) writer.join();
             if (failures) throw std::runtime_error("concurrent atomic writer failed");
         } else {
-            const bool enrich = scenario == "cancel" || scenario == "worker-throw" || scenario == "unicode";
-            subdomain_scan("example.test", "wordlist.txt", 1, false, scenario == "unicode", enrich, false);
+            const bool enrich = scenario == "cancel" || scenario == "worker-throw" || scenario == "unicode" ||
+                                classification_fixture();
+            subdomain_scan("example.test", "wordlist.txt", 1, scenario == "permutation-budget",
+                           scenario == "unicode", enrich, false, scenario == "passive-only");
         }
     } catch (const std::exception& error) {
         g_result.errors.push_back(error.what());
@@ -238,7 +274,7 @@ int main(int argc, char** argv) {
     g_result.duration_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start).count());
     g_result.status = g_cancel_token.cancelled ? "cancelled" : g_result.errors.empty() ? "complete" :
-                      g_result.subdomains.empty() ? "failed" : "partial";
+                      g_result.subdomains.empty() && g_result.subdomain_candidates.empty() ? "failed" : "partial";
     nlohmann::json result = g_result;
     result["fixture"] = {{"http_calls", http_calls.load()}, {"active_http", active_http.load()},
                           {"http_after_cancel", http_after_cancel.load()}, {"requested", requested_names}};

@@ -98,6 +98,7 @@ struct SubEntry {
     std::string title;
     bool takeover_possible = false;
     bool wildcard_match = false;
+    std::string dns_status = "resolved";
 };
 
 struct OsintEntry {
@@ -141,6 +142,7 @@ struct ScanResult {
     std::string os_guess;
     std::vector<PortEntry> ports;
     std::vector<SubEntry> subdomains;
+    std::vector<SubEntry> subdomain_candidates;
     std::vector<OsintEntry> osint;
     std::vector<TraceHop> trace;
     std::vector<std::string> dns_records;
@@ -240,5 +242,6 @@ void subdomain_scan(const std::string& domain,
                     bool run_permutations = true,
                     bool deep_passive = true,
                     bool do_enrich = true,
-                    bool use_deep_passive_sources = true);
+                    bool use_deep_passive_sources = true,
+                    bool passive_only = false);
 std::string auto_find_wordlist();

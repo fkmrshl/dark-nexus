@@ -278,6 +278,12 @@ Options parse(const std::vector<std::string>& args) {
             once("wordlist", flag);
             options.wordlist = value();
             scope("subdomain");
+        } else if (flag == "--bruteforce") {
+            switch_option(options.bruteforce, "bruteforce");
+            scope("subdomain");
+        } else if (flag == "--passive-only") {
+            switch_option(options.passive_only, "passive-only");
+            scope("subdomain");
         } else if (flag == "--no-permutations") {
             switch_option(options.no_permutations, "no-permutations");
             scope("subdomain");
@@ -388,6 +394,8 @@ Options parse(const std::vector<std::string>& args) {
     if (!options.format.empty() && options.output.empty()) throw Error("--format requires --output");
     if (options.udp && options.connect) throw Error("--udp conflicts with --connect");
     if (options.udp && seen.count("retries")) throw Error("--retries is only available for TCP scans");
+    if (options.passive_only && (!options.wordlist.empty() || options.bruteforce))
+        throw Error("--passive-only conflicts with --wordlist and --bruteforce");
     for (const auto& item : scoped) {
         std::istringstream names(item.second);
         std::string name;
@@ -485,11 +493,17 @@ std::string help(const std::string& module) {
     } else if (module == "subdomain") {
         out << "\nSubdomain options\n"
             << "      --mode MODE          fast (default) or deep; F/D are accepted\n"
-            << "      --wordlist PATH      Custom DNS wordlist (available in either mode)\n"
+            << "      --wordlist PATH      Explicit DNS wordlist (either profile)\n"
+            << "      --bruteforce         Use a discovered DNS wordlist; --wordlist takes priority\n"
+            << "      --passive-only       Skip wordlist, permutations and JavaScript discovery\n"
             << "      --threads N          HTTP pipeline workers, 1..512 (default: 200)\n"
             << "      --no-permutations    Skip generated name permutations\n"
             << "      --no-enrich          Skip HTTP and technology enrichment\n"
             << "      --no-deep-passive    Skip additional passive sources in deep mode\n"
+            << "\nBoth profiles default to a compact built-in wordlist. Deep does not\n"
+            << "automatically load installed large lists. --bruteforce requires a readable\n"
+            << "discovered wordlist or an explicit --wordlist PATH. --passive-only\n"
+            << "conflicts with both; passive names still receive DNS and optional HTTP checks.\n"
             << "\nExample: dark-nexus --subdomain example.com --mode deep --output names.json\n";
     } else if (module == "traceroute") {
         out << "\nTraceroute options\n"

@@ -16,7 +16,7 @@ public:
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PortEntry, port, protocol, service, banner, version, risk, latency_ms, tls, tls_version, tls_cn, tls_expired, vulns)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubEntry, sub, ips, ipv6, cname, http_code, server, waf, language, cms, source, title, takeover_possible, wildcard_match)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubEntry, sub, ips, ipv6, cname, http_code, server, waf, language, cms, source, title, takeover_possible, wildcard_match, dns_status)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OsintEntry, platform, url, category, certainty, confidence, evidence, source)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TraceHop, ttl, addr, hostname, avg_rtt_ms, loss_pct, asn)
 
@@ -47,6 +47,7 @@ namespace nlohmann {
                 {"os", r.os_guess},
                 {"ports", r.ports},
                 {"subdomains", r.subdomains},
+                {"subdomain_candidates", r.subdomain_candidates},
                 {"osint", r.osint},
                 {"trace", r.trace},
                 {"dns_records", r.dns_records},
@@ -76,6 +77,7 @@ namespace nlohmann {
             j.at("os").get_to(r.os_guess);
             j.at("ports").get_to(r.ports);
             j.at("subdomains").get_to(r.subdomains);
+            r.subdomain_candidates = j.value("subdomain_candidates", std::vector<SubEntry>{});
             j.at("osint").get_to(r.osint);
             j.at("trace").get_to(r.trace);
             j.at("dns_records").get_to(r.dns_records);

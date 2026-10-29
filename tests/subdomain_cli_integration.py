@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import signal
 import socket
 import socketserver
@@ -50,6 +51,7 @@ class LocalDNS:
         self.held = threading.Event()
         self.requests = []
         self.errors = []
+        self.wildcard = False
         self.worker = threading.Thread(target=self.serve, daemon=True)
         self.worker.start()
 
@@ -70,7 +72,12 @@ class LocalDNS:
                 rcode, address = 0, None
                 if name == 'example.com' and rtype == 1:
                     address = '192.0.2.1'
-                elif name.endswith('.invalid') or name.startswith('dnxwc-'):
+                elif name.endswith('.invalid'):
+                    rcode = 3
+                elif self.wildcard and name.endswith('.example.test'):
+                    if rtype == 1:
+                        address = f'192.0.2.{40 + len(self.requests) % 6}'
+                elif name.startswith('dnxwc-'):
                     rcode = 3
                 elif name in ('dual.example.test', 'good.example.test'):
                     address = '192.0.2.20' if rtype == 1 else '2001:db8::20' if rtype == 28 else None
@@ -212,6 +219,82 @@ class SubdomainCLITests(unittest.TestCase):
                     self.assertEqual(json.loads(rows[0]['details'])['status'], 'complete')
                 else:
                     self.assertIn('Status: complete', result.stdout)
+
+    def test_deep_mode_does_not_turn_rotating_wildcard_into_wordlist_findings(self):
+        self.dns.wildcard = True
+        start = len(self.proxy.requests)
+        command = self.command(('www', 'mail', 'host123')) + ['--mode', 'deep']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        self.assert_local_activity(start)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['subdomains'], [])
+        self.assertEqual(report['subdomain_candidates'], [])
+        self.assertTrue(any('wildcard' in warning.lower() for warning in report['warnings']))
+        candidate_names = {'www.example.test', 'mail.example.test', 'host123.example.test'}
+        self.assertFalse(any(name in candidate_names for name, _ in self.dns.requests))
+        probes = [(name, rtype) for name, rtype in self.dns.requests if name.startswith('dnxwc-')]
+        self.assertGreaterEqual(len({name for name, _ in probes}), 2)
+        module = json.loads((self.root / 'example.test_subdomains.json').read_text())
+        self.assertEqual(module, [])
+        checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+        self.assertEqual(checkpoint['count'], 0)
+        self.assertEqual(checkpoint['resolved_count'], 0)
+        self.assertEqual(checkpoint['candidate_count'], 0)
+
+    def test_bruteforce_respects_explicit_wordlist_instead_of_discovered_list(self):
+        start = len(self.proxy.requests)
+        command = self.command(('dual', 'v6', 'absent')) + ['--bruteforce']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        self.assert_local_activity(start)
+        queried = {name for name, _ in self.dns.requests
+                   if name.endswith('.example.test') and not name.startswith('dnxwc-')}
+        self.assertEqual(queried, {'dual.example.test', 'v6.example.test', 'absent.example.test'})
+        report = json.loads(result.stdout)
+        self.assertEqual({row['sub'] for row in report['subdomains']},
+                         {'dual.example.test', 'v6.example.test'})
+
+    def test_passive_only_never_runs_builtin_or_installed_wordlists(self):
+        start = len(self.proxy.requests)
+        command = [BINARY, '--subdomain', 'example.test', '--mode', 'deep', '--passive-only',
+                   '--no-enrich', '--no-deep-passive', '--quiet', '--output', '-', '--format', 'json']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        self.assert_local_activity(start)
+        queried = [name for name, _ in self.dns.requests
+                   if name.endswith('.example.test') and not name.startswith('dnxwc-')]
+        self.assertEqual(queried, [])
+        report = json.loads(result.stdout)
+        self.assertEqual(report['subdomains'], [])
+        self.assertEqual(report['subdomain_candidates'], [])
+
+    def test_default_deep_uses_compact_builtin_instead_of_installed_wordlist(self):
+        self.dns.wildcard = True
+        start = len(self.proxy.requests)
+        report_path = self.root / 'default-deep.json'
+        command = [BINARY, '--subdomain', 'example.test', '--mode', 'deep', '--no-enrich',
+                   '--no-deep-passive', '--no-permutations', '--output', str(report_path), '--format', 'json']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, (result.stdout[-5000:], result.stderr))
+        self.assert_local_activity(start)
+        match = re.search(r'\bbuiltin \((\d+) words\)', result.stdout)
+        self.assertIsNotNone(match, result.stdout)
+        self.assertGreater(int(match.group(1)), 0)
+        self.assertLessEqual(int(match.group(1)), 512)
+        self.assertNotIn('streaming:', result.stdout)
+        self.assertNotIn('best-dns-wordlist.txt', result.stdout)
+        queried = [name for name, _ in self.dns.requests
+                   if name.endswith('.example.test') and not name.startswith('dnxwc-')]
+        self.assertEqual(queried, [])
+        report = json.loads(report_path.read_text())
+        self.assertEqual(report['subdomains'], [])
+        self.assertEqual(report['subdomain_candidates'], [])
 
     def test_servfail_is_exported_as_failure_in_all_formats(self):
         for fmt in ('json', 'csv', 'txt'):

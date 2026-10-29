@@ -132,13 +132,101 @@ class SubdomainPipelineTests(unittest.TestCase):
                 self.assertTrue(report['errors'])
                 self.assertFalse(any(not name.startswith('dnxwc-') for name in report['fixture']['requested']))
 
-    def test_wildcard_matches_are_retained_as_uncertain(self):
-        report, _ = self.run_fixture('wildcard')
-        self.assertEqual(report['status'], 'complete')
-        self.assertEqual(len(report['subdomains']), 2)
-        self.assertTrue(all(row['wildcard_match'] for row in report['subdomains']))
-        self.assertTrue(all(row['wildcard_match'] for row in self.module_json()))
-        self.assertTrue(any('wildcard' in warning.lower() for warning in report['warnings']))
+    def candidate_names(self, report):
+        return {row['sub'] for row in report['subdomain_candidates']}
+
+    def non_probe_names(self, report):
+        return [name for name in report['fixture']['requested'] if not name.startswith('dnxwc-')]
+
+    def test_wildcard_scope_skips_generated_dns_and_retains_passive_evidence_separately(self):
+        for scenario in ('wildcard', 'rotating-wildcard'):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario)
+                self.assertEqual(report['status'], 'complete')
+                self.assertEqual(report['subdomains'], [])
+                self.assertEqual(self.candidate_names(report), {'observed.example.test'})
+                self.assertEqual(self.non_probe_names(report), ['observed.example.test'])
+                self.assertEqual(report['fixture']['http_calls'], 0)
+                candidate = report['subdomain_candidates'][0]
+                self.assertTrue(candidate['wildcard_match'])
+                self.assertEqual(candidate['dns_status'], 'wildcard')
+                self.assertEqual(candidate['ips'], ['192.0.2.20'])
+                module = self.module_json()
+                self.assertEqual(len(module), 1)
+                self.assertEqual(module[0]['dns_status'], 'wildcard')
+                self.assertTrue(any('wildcard' in warning.lower() for warning in report['warnings']))
+                checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+                self.assertEqual(checkpoint['count'], 1)
+                self.assertEqual(checkpoint['resolved_count'], 0)
+                self.assertEqual(checkpoint['candidate_count'], 1)
+                csv_rows = list(csv.DictReader(io.StringIO((self.root / 'example.test_subdomains.csv').read_text())))
+                self.assertEqual(csv_rows[0]['dns_status'], 'wildcard')
+
+    def test_child_wildcard_is_checked_even_when_root_probes_are_negative(self):
+        report, _ = self.run_fixture('nested-wildcard', words=('www', 'host.api'))
+        self.assertEqual({row['sub'] for row in report['subdomains']}, {'www.example.test'})
+        self.assertEqual(self.candidate_names(report), {'observed.api.example.test'})
+        self.assertNotIn('host.api.example.test', self.non_probe_names(report))
+        self.assertTrue(any(name.startswith('dnxwc-') and name.endswith('.api.example.test')
+                            for name in report['fixture']['requested']))
+        self.assertEqual(report['fixture']['http_calls'], 1)
+
+    def test_clear_child_scope_is_not_rejected_by_root_wildcard_or_shared_ip(self):
+        report, _ = self.run_fixture('root-wildcard-child-clear', words=('www', 'host.api'))
+        self.assertEqual({row['sub'] for row in report['subdomains']},
+                         {'observed.api.example.test', 'host.api.example.test'})
+        self.assertEqual(report['subdomain_candidates'], [])
+        self.assertNotIn('www.example.test', self.non_probe_names(report))
+        self.assertTrue(all(row['dns_status'] == 'resolved' and not row['wildcard_match']
+                            for row in report['subdomains']))
+        self.assertEqual(report['fixture']['http_calls'], 2)
+
+    def test_incomplete_wildcard_probes_never_become_a_clear_scope(self):
+        for scenario in ('probe-failure', 'probe-mixed', 'probe-missing'):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario)
+                self.assertEqual(report['subdomains'], [])
+                self.assertEqual(self.candidate_names(report), {'observed.example.test'})
+                self.assertEqual(self.non_probe_names(report), ['observed.example.test'])
+                row = report['subdomain_candidates'][0]
+                self.assertEqual(row['dns_status'], 'uncertain')
+                self.assertFalse(row['wildcard_match'])
+                self.assertEqual(report['fixture']['http_calls'], 0)
+                self.assertTrue(report['warnings'])
+
+    def test_scope_probe_budget_keeps_unprobed_passive_names_uncertain(self):
+        report, _ = self.run_fixture('scope-budget', words=('www',))
+        probes = [name for name in report['fixture']['requested'] if name.startswith('dnxwc-')]
+        parents = {name.split('.', 1)[1] for name in probes}
+        self.assertLessEqual(len(parents), 64)
+        self.assertLessEqual(len(probes), 6 + 63 * 3)
+        candidates = report['subdomain_candidates']
+        self.assertGreaterEqual(len(candidates), 37)
+        self.assertTrue(all(row['dns_status'] == 'uncertain' for row in candidates))
+        self.assertEqual(len(report['subdomains']) + len(candidates), 101)
+        self.assertLessEqual(report['fixture']['http_calls'], 64)
+
+    def test_passive_names_are_resolved_before_explicit_wordlist(self):
+        report, _ = self.run_fixture('passive-first')
+        queried = self.non_probe_names(report)
+        self.assertEqual(queried[0], 'observed.example.test')
+        self.assertEqual(set(queried), {'observed.example.test', 'www.example.test', 'mail.example.test'})
+
+    def test_passive_only_disables_explicit_wordlist_and_permutations(self):
+        report, _ = self.run_fixture('passive-only')
+        self.assertEqual(self.non_probe_names(report), ['observed.example.test'])
+        self.assertEqual([row['sub'] for row in report['subdomains']], ['observed.example.test'])
+
+    def test_permutation_queries_are_bounded_after_passive_results(self):
+        report, _ = self.run_fixture('permutation-budget', words=('www',))
+        queried = self.non_probe_names(report)
+        self.assertEqual(set(queried[:100]), {f'seed{1000 + index}unit.example.test' for index in range(100)})
+        self.assertLessEqual(len(queried), 100 + 1 + 5000)
+        self.assertGreater(len(queried), 101)
+        mutated_seeds = {f'seed{1000 + index}unit' for index in range(100)
+                         if any(f'seed{1000 + index}unit' in name.split('.', 1)[0]
+                                for name in queried[101:])}
+        self.assertLessEqual(len(mutated_seeds), 64)
 
     def test_unicode_and_csv_quotes_survive_module_exports(self):
         report, _ = self.run_fixture('unicode')

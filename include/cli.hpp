@@ -30,6 +30,7 @@ struct Options {
     bool udp = false, connect = false, no_tls = false, no_http = false;
     bool deep = false, no_permutations = false, no_enrich = false;
     bool no_deep_passive = false;
+    bool bruteforce = false, passive_only = false;
     std::string protocol = "icmp";
     int max_hops = 40, probes = 5, parallel_hops = 8;
     int destination_port = 33434;

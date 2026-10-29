@@ -37,6 +37,8 @@ void write_csv_report(const ScanResult& result, std::ostream& out) {
         csv_row(out, "port", result, std::to_string(port.port), port.service, json(port));
     for (const auto& subdomain : result.subdomains)
         csv_row(out, "subdomain", result, subdomain.sub, subdomain.title, json(subdomain));
+    for (const auto& candidate : result.subdomain_candidates)
+        csv_row(out, "subdomain_candidate", result, candidate.sub, candidate.dns_status, json(candidate));
     for (const auto& hit : result.osint)
         csv_row(out, "osint", result, hit.platform, hit.url, json(hit));
     for (const auto& hop : result.trace)
@@ -74,6 +76,15 @@ void write_text_report(const ScanResult& r, std::ostream& out) {
             for (const auto& ip : s.ipv6) out << "  " << sanitize(ip);
             if (s.wildcard_match) out << "  [possible wildcard]";
             out << "  " << sanitize(s.title) << '\n';
+        }
+    }
+    if (!r.subdomain_candidates.empty()) {
+        out << "\nUncertain subdomain candidates (excluded from resolved results)\n";
+        for (const auto& s : r.subdomain_candidates) {
+            out << sanitize(s.sub) << "  [" << sanitize(s.dns_status) << ']';
+            for (const auto& ip : s.ips) out << "  " << sanitize(ip);
+            for (const auto& ip : s.ipv6) out << "  " << sanitize(ip);
+            out << '\n';
         }
     }
     if (!r.osint.empty()) {

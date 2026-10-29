@@ -89,10 +89,16 @@ void run_module(const cli::Options& options) {
     if (module == "site") return site_lookup(target);
     if (module == "subdomain") {
         std::string wordlist = options.wordlist;
-        if (wordlist.empty() && options.deep) wordlist = auto_find_wordlist();
+        if (wordlist.empty() && options.bruteforce) {
+            wordlist = auto_find_wordlist();
+            if (wordlist.empty()) throw std::runtime_error(
+                "--bruteforce could not find a readable DNS wordlist; use --wordlist PATH "
+                "or reinstall the project wordlist");
+        }
         return subdomain_scan(target, wordlist, options.threads ? options.threads : 200,
-                              options.deep && !options.no_permutations,
-                              options.deep, !options.no_enrich, !options.no_deep_passive);
+                              options.deep && !options.no_permutations && !options.passive_only,
+                              options.deep, !options.no_enrich, !options.no_deep_passive,
+                              options.passive_only);
     }
 
     const auto family = family_for(options.family);
@@ -191,7 +197,8 @@ int main(int argc, char** argv) {
             }
         }
         const bool has_results = !g_result.dns_records.empty() || !g_result.whois_records.empty() ||
-            !g_result.ports.empty() || !g_result.subdomains.empty() || !g_result.osint.empty() ||
+            !g_result.ports.empty() || !g_result.subdomains.empty() ||
+            !g_result.subdomain_candidates.empty() || !g_result.osint.empty() ||
             !g_result.trace.empty() || !g_result.open_ports.empty() || !g_result.os_guess.empty() ||
             !g_result.geo_country.empty() || !g_result.geo_city.empty();
         g_result.status = interrupted ? "cancelled" : g_result.errors.empty() ? "complete" :

@@ -67,6 +67,12 @@ print('Domain Name: example.test')
                       ('--portscan', '127.0.0.1', '--ipv4', '--ipv6'),
                       ('--dns', 'example.test', '--format', 'json'),
                       ('--subdomain', 'example.test', '--wordlist', '/no/such/wordlist'),
+                      ('--subdomain', 'example.test', '--passive-only', '--wordlist', 'hosts.txt'),
+                      ('--subdomain', 'example.test', '--wordlist', 'hosts.txt', '--passive-only'),
+                      ('--subdomain', 'example.test', '--passive-only', '--bruteforce'),
+                      ('--subdomain', 'example.test', '--bruteforce', '--passive-only'),
+                      ('--dns', 'example.test', '--bruteforce'),
+                      ('--dns', 'example.test', '--passive-only'),
                       ('--osint', 'invalid value')]:
         run(*arguments, code=2)
     fifo = root / 'wordlist-fifo'

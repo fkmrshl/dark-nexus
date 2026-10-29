@@ -59,7 +59,7 @@ Report inspect(const environment::Context& context) {
     report.checks.push_back({"wordlist", wordlist.empty() ? "warn" : "ok",
         wordlist.empty() ? "No readable, non-empty DNS wordlist found in known locations; built-in words remain available." : wordlist,
         wordlist.empty() ? "Use --subdomain DOMAIN --wordlist PATH, or install best-dns-wordlist.txt in /usr/share/wordlists/dark-nexus/." : "",
-        {"subdomain deep mode"}});
+        {"subdomain --bruteforce"}});
 
     struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
     struct __user_cap_data_struct data[2] = {};

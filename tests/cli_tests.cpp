@@ -117,6 +117,27 @@ void valid_cases() {
     check(!cli::parse({"--subdomain", "x", "--mode=F", "--wordlist", "names.txt"}).deep,
           "wordlist with fast mode");
     check(cli::parse({"--subdomain", "x", "--mode=deep"}).deep, "long deep mode");
+    for (const auto& mode : {"fast", "deep"}) {
+        const auto compact = cli::parse({"--subdomain", "example.test", "--mode", mode});
+        check(compact.wordlist.empty() && !compact.bruteforce && !compact.passive_only,
+              std::string(mode) + " does not implicitly enable a large wordlist");
+        const auto brute = cli::parse({"--subdomain", "example.test", "--mode", mode,
+                                       "--bruteforce", "--wordlist", "selected.txt"});
+        check(brute.bruteforce && brute.wordlist == "selected.txt",
+              std::string(mode) + " preserves explicit wordlist with brute force");
+        const auto passive = cli::parse({"--passive-only", "--subdomain", "example.test",
+                                         "--mode", mode, "--no-enrich"});
+        check(passive.passive_only && passive.no_enrich && !passive.bruteforce &&
+                  passive.wordlist.empty(), std::string(mode) + " passive candidate profile");
+    }
+    check(cli::parse({"--bruteforce", "--subdomain", "example.test"}).bruteforce,
+          "brute force switch before module");
+    check(cli::parse({"--subdomain", "example.test", "--wordlist=selected.txt",
+                       "--bruteforce"}).wordlist == "selected.txt",
+          "explicit wordlist takes priority independent of flag order");
+    check(cli::help("subdomain").find("--bruteforce") != std::string::npos &&
+              cli::help("subdomain").find("--passive-only") != std::string::npos,
+          "subdomain help documents discovery controls");
 
     const auto trace = cli::parse({"--traceroute", "192.0.2.1", "--protocol=udp", "--max-hops=255",
                                   "--probes=10", "--parallel-hops=32", "--destination-port=65535",
@@ -169,6 +190,14 @@ void invalid_cases() {
         {"--portscan", "x", "--top-ports", "500"},
         {"--portscan", "x", "--timing=3", "-T4"},
         {"--subdomain", "x", "--mode="}, {"--subdomain", "x", "--mode", "other"},
+        {"--subdomain", "x", "--passive-only", "--bruteforce"},
+        {"--subdomain", "x", "--bruteforce", "--passive-only"},
+        {"--subdomain", "x", "--passive-only", "--wordlist", "a"},
+        {"--subdomain", "x", "--wordlist", "a", "--passive-only"},
+        {"--subdomain", "x", "--bruteforce=true"},
+        {"--subdomain", "x", "--passive-only=false"},
+        {"--subdomain", "x", "--bruteforce", "--bruteforce"},
+        {"--subdomain", "x", "--passive-only", "--passive-only"},
         {"--subdomain", "x", "--wordlist"}, {"--traceroute", "x", "--protocol=all"},
         {"--traceroute", "x", "--protocol=ICMP"},
         {"--portscan", "x", "--", "--help"}
@@ -224,6 +253,7 @@ void invalid_cases() {
     }
     for (const auto& item : std::vector<std::pair<std::string, std::string>> {
             {"--threads", "2"}, {"--mode", "deep"}, {"--wordlist", "a"},
+            {"--bruteforce", ""}, {"--passive-only", ""},
             {"--no-permutations", ""}, {"--no-enrich", ""}, {"--no-deep-passive", ""},
             {"--protocol", "tcp"}, {"--max-hops", "2"}, {"--probes", "2"},
             {"--parallel-hops", "2"}, {"--destination-port", "80"},

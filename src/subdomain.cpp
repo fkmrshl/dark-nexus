@@ -132,6 +132,7 @@ struct SubResult {
     WAFInfo  waf;
     TechInfo tech;
     bool wildcard_match = false;
+    std::string dns_status = "resolved";
     bool takeover_possible = false;
     std::size_t report_index = 0;
 };
@@ -199,7 +200,8 @@ static nlohmann::json result_row(const SubResult& r) {
         {"cname", r.cname}, {"http_code", r.http_code}, {"server", r.server}, {"title", r.title},
         {"waf", r.waf.name}, {"language", r.tech.language}, {"cms", r.tech.cms},
         {"stack", r.tech.stack}, {"doh_fallback", r.doh_fallback},
-        {"wildcard_match", r.wildcard_match}, {"takeover_possible", r.takeover_possible}};
+        {"wildcard_match", r.wildcard_match}, {"dns_status", r.dns_status},
+        {"takeover_possible", r.takeover_possible}};
 }
 
 static std::string json_text(const nlohmann::json& value) {
@@ -210,7 +212,7 @@ static void export_results(const std::vector<SubResult>& results, const std::str
     nlohmann::json output = nlohmann::json::array();
     for (const auto& result : results) output.push_back(result_row(result));
     std::ostringstream csv;
-    csv << "subdomain,ipv4,cname,http_code,server,title,waf,language,cms,source,ipv6,wildcard_match,takeover_possible\r\n";
+    csv << "subdomain,ipv4,cname,http_code,server,title,waf,language,cms,source,ipv6,wildcard_match,takeover_possible,dns_status\r\n";
     auto join = [](const std::vector<std::string>& values) {
         std::string text;
         for (const auto& value : values) { if (!text.empty()) text += ' '; text += value; }
@@ -226,7 +228,7 @@ static void export_results(const std::vector<SubResult>& results, const std::str
             << quote(r.http_code) << ',' << quote(r.server) << ',' << quote(r.title) << ','
             << quote(r.waf.name) << ',' << quote(r.tech.language) << ',' << quote(r.tech.cms) << ','
             << quote(r.source) << ',' << quote(join(r.ipv6)) << ',' << (r.wildcard_match ? "true" : "false")
-            << ',' << (r.takeover_possible ? "true" : "false") << "\r\n";
+            << ',' << (r.takeover_possible ? "true" : "false") << ',' << quote(r.dns_status) << "\r\n";
     for (const auto& report : std::vector<std::pair<std::string, std::string>>{
             {domain + "_subdomains.json", json_text(output)}, {domain + "_subdomains.csv", csv.str()}}) {
         std::string error;
@@ -267,6 +269,10 @@ static bool write_checkpoint_json(const std::vector<SubResult>& results,
             {"domain", domain},
             {"saved_at", checkpoint_timestamp_utc()},
             {"count", results.size()},
+            {"resolved_count", std::count_if(results.begin(), results.end(),
+                [](const auto& row) { return row.dns_status == "resolved"; })},
+            {"candidate_count", std::count_if(results.begin(), results.end(),
+                [](const auto& row) { return row.dns_status != "resolved"; })},
             {"results", std::move(result_rows)}
         };
 
@@ -326,7 +332,8 @@ void subdomain_scan(const std::string& domain,
                     bool run_permutations,
                     bool deep_passive,
                     bool do_enrich,
-                    bool use_deep_passive_sources)
+                    bool use_deep_passive_sources,
+                    bool passive_only)
 {
     std::string scan_domain = domain;
     std::transform(scan_domain.begin(), scan_domain.end(), scan_domain.begin(),
@@ -364,7 +371,7 @@ void subdomain_scan(const std::string& domain,
     print_section("WORDLIST");
     std::ifstream wordlist_stream;
     bool stream_file_wordlist = false;
-    if (!wordlist_path.empty()) {
+    if (!passive_only && !wordlist_path.empty()) {
             std::error_code error;
             if (!std::filesystem::is_regular_file(wordlist_path, error))
                 throw std::runtime_error("wordlist must be a readable regular file: " + wordlist_path);
@@ -377,7 +384,9 @@ void subdomain_scan(const std::string& domain,
                 throw std::runtime_error("cannot read wordlist: " + wordlist_path);
             }
     }
-    if (!stream_file_wordlist) {
+    if (passive_only) {
+        std::cout << "  disabled by --passive-only\n";
+    } else if (!stream_file_wordlist) {
         std::cout << BLOOD_RED << "  [*] builtin (" << WHITE << builtin_wordlist().size()
                   << BLOOD_RED << " words)\n" << RESET;
     }
@@ -385,26 +394,12 @@ void subdomain_scan(const std::string& domain,
     print_section("WILDCARD CHECK");
     struct NormalizedIpSet {
         std::vector<std::string> ips;
-        std::string              signature;
-    };
-    struct WildcardFingerprint {
-        bool active = false;
-        std::unordered_set<std::string> ip_union;
-        std::unordered_map<std::string, size_t> ip_frequency;
-        std::unordered_set<std::string> signatures;
-        std::vector<std::string> probes;
-        size_t positive_probes = 0;
     };
 
     auto normalize_ip_set = [](std::vector<std::string> ips) {
         std::sort(ips.begin(), ips.end());
         ips.erase(std::unique(ips.begin(), ips.end()), ips.end());
-        std::string signature;
-        for (const auto& ip : ips) {
-            if (!signature.empty()) signature.push_back('|');
-            signature += ip;
-        }
-        return NormalizedIpSet{std::move(ips), std::move(signature)};
+        return NormalizedIpSet{std::move(ips)};
     };
 
     auto random_dns_token = []() {
@@ -415,58 +410,68 @@ void subdomain_scan(const std::string& domain,
         return token;
     };
 
-    WildcardFingerprint wildcard_fp;
-    {
-        auto& probes = wildcard_fp.probes;
-        const auto one_label_token = random_dns_token();
-        const auto two_label_token = random_dns_token();
-        const auto parent_token = random_dns_token();
-        probes.reserve(12);
-        for (int i=0; i<8; i++) {
-            probes.push_back("dnxwc-" + one_label_token + "-" + std::to_string(i) + "." + scan_domain);
-        }
-        for (int i=0; i<4; i++) {
-            probes.push_back("dnxwc-" + two_label_token + "-" + std::to_string(i) +
-                             ".dnxwc-" + parent_token + "." + scan_domain);
-        }
-        auto wc = dns.resolve_batch_checked(probes, 10);
-        bool failed_probe = false;
-        for (auto& [h, answer] : wc) {
-            failed_probe = failed_probe || answer.failed;
-            auto addresses = std::move(answer.ipv4);
-            addresses.insert(addresses.end(), answer.ipv6.begin(), answer.ipv6.end());
-            auto normalized = normalize_ip_set(std::move(addresses));
-            if (normalized.ips.empty()) continue;
-            wildcard_fp.positive_probes++;
-            for (const auto& ip : normalized.ips) {
-                wildcard_fp.ip_union.insert(ip);
-                wildcard_fp.ip_frequency[ip]++;
+    enum class WildcardState { Clear, Wildcard, Unknown };
+    std::unordered_map<std::string, WildcardState> wildcard_scopes;
+    constexpr std::size_t max_wildcard_scopes = 64;
+    auto scope_for = [](const std::string& host) { return host.substr(host.find('.') + 1); };
+    bool scope_limit_warned = false;
+    auto prepare_scopes = [&](const std::vector<std::string>& parents) {
+        std::map<std::string, std::vector<std::string>> pending;
+        std::vector<std::string> probes;
+        for (const auto& parent : parents) {
+            if (g_cancel_token.cancelled) break;
+            if (wildcard_scopes.count(parent)) continue;
+            if (wildcard_scopes.size() >= max_wildcard_scopes) {
+                if (!scope_limit_warned) {
+                    scope_limit_warned = true;
+                    subdomain_warning("Wildcard scope limit of 64 reached; unchecked branches remain uncertain and generated candidates are skipped");
+                }
+                continue;
             }
-            wildcard_fp.signatures.insert(std::move(normalized.signature));
+            wildcard_scopes.emplace(parent, WildcardState::Unknown);
+            std::vector<std::string> names;
+            const int count = parent == scan_domain ? 6 : 3;
+            for (int i = 0; i < count; ++i) {
+                auto name = "dnxwc-" + random_dns_token() + "." + parent;
+                if (!dns_query::valid_name(name)) break;
+                names.push_back(std::move(name));
+            }
+            if (names.size() != static_cast<std::size_t>(count)) {
+                subdomain_warning("Wildcard scope cannot be probed within the DNS name length limit; branch remains uncertain");
+                continue;
+            }
+            probes.insert(probes.end(), names.begin(), names.end());
+            pending.emplace(parent, std::move(names));
         }
-        wildcard_fp.active = wildcard_fp.positive_probes >= 2;
-        if (failed_probe) subdomain_warning("Wildcard DNS check incomplete: resolver errors; absence cannot be established");
-    }
-    if (wildcard_fp.active) {
-        std::cout << BLOOD_RED << "  [!] wildcard DNS detected: "
-                  << WHITE << wildcard_fp.positive_probes << "/" << wildcard_fp.probes.size()
-                  << BLOOD_RED << " probes positive, " << WHITE << wildcard_fp.ip_union.size()
-                  << BLOOD_RED << " IPs, " << WHITE << wildcard_fp.signatures.size()
-                  << BLOOD_RED << " signatures\n" << RESET;
-    } else {
-        std::cout << "  no wildcard observed in completed probe answers\n";
-    }
-
-    auto looks_like_wildcard = [&](const std::vector<std::string>& candidate_ips,
-                                   const WildcardFingerprint& fp) {
-        if (!fp.active || candidate_ips.empty()) return false;
-        auto normalized = normalize_ip_set(candidate_ips);
-        if (normalized.ips.empty()) return false;
-        if (fp.signatures.count(normalized.signature)) return true;
-        for (const auto& ip : normalized.ips)
-            if (!fp.ip_union.count(ip)) return false;
-        return true;
+        if (probes.empty() || g_cancel_token.cancelled) return;
+        const auto answers = dns.resolve_batch_checked(probes, 64, 5000);
+        for (const auto& [parent, names] : pending) {
+            std::size_t positive = 0;
+            bool incomplete = false;
+            for (const auto& probe : names) {
+                const auto answer = answers.find(probe);
+                if (answer == answers.end()) { incomplete = true; continue; }
+                incomplete = incomplete || answer->second.failed;
+                if (!answer->second.ipv4.empty() || !answer->second.ipv6.empty()) ++positive;
+            }
+            const auto state = positive >= 2 ? WildcardState::Wildcard :
+                positive == 0 && !incomplete ? WildcardState::Clear : WildcardState::Unknown;
+            wildcard_scopes.at(parent) = state;
+            if (state == WildcardState::Wildcard) {
+                subdomain_warning("Wildcard DNS detected under " + parent +
+                    "; generated names are skipped regardless of address rotation, independent names remain uncertain");
+            } else if (state == WildcardState::Unknown) {
+                subdomain_warning("Wildcard DNS check incomplete or inconsistent under " + parent +
+                    "; generated names are skipped and independent names remain uncertain");
+            }
+        }
     };
+    prepare_scopes({scan_domain});
+    const auto root_wildcard = wildcard_scopes.count(scan_domain) ?
+        wildcard_scopes.at(scan_domain) : WildcardState::Unknown;
+    std::cout << "  " << (root_wildcard == WildcardState::Wildcard ? "wildcard DNS detected; generated names in this branch will be skipped" :
+        root_wildcard == WildcardState::Unknown ? "wildcard check inconclusive; generated names in this branch will be skipped" :
+        "no wildcard observed in completed root probes") << '\n';
 
     print_section("PASSIVE ENUM");
     if (g_cancel_token.cancelled) return;
@@ -530,8 +535,7 @@ void subdomain_scan(const std::string& domain,
     std::unordered_set<std::string> passive_set_uset(passive_subs.begin(), passive_subs.end());
     std::unordered_set<std::string> derived_dedup(passive_set_uset.begin(), passive_set_uset.end());
     auto current_found_size = [&]() {
-        std::lock_guard<std::mutex> lk(state_mtx);
-        return result_indices.size();
+        return static_cast<std::size_t>(found_count.load());
     };
     auto format_elapsed_seconds = [](std::chrono::steady_clock::duration elapsed) {
         std::ostringstream ss;
@@ -599,7 +603,13 @@ void subdomain_scan(const std::string& domain,
         entry.server = result.server; entry.title = result.title; entry.source = result.source;
         entry.waf = result.waf.name; entry.language = result.tech.language; entry.cms = result.tech.cms;
         entry.wildcard_match = result.wildcard_match; entry.takeover_possible = result.takeover_possible;
+        entry.dns_status = result.dns_status;
         return entry;
+    };
+    std::atomic<std::size_t> wildcard_filtered{0};
+    std::size_t unchecked_filtered = 0;
+    auto report_rows = [&](const SubResult& result) -> std::vector<SubEntry>& {
+        return result.dns_status == "resolved" ? g_result.subdomains : g_result.subdomain_candidates;
     };
     auto retain_dns = [&](const std::string& host, const DnsLookupResult& answer,
                           const std::string& provider, const std::string& source_hint) -> std::optional<std::size_t> {
@@ -613,33 +623,35 @@ void subdomain_scan(const std::string& domain,
             result.ipv6.insert(result.ipv6.end(), answer.ipv6.begin(), answer.ipv6.end());
             result.ips = normalize_ip_set(std::move(result.ips)).ips;
             result.ipv6 = normalize_ip_set(std::move(result.ipv6)).ips;
-            auto addresses = result.ips;
-            addresses.insert(addresses.end(), result.ipv6.begin(), result.ipv6.end());
-            result.wildcard_match = looks_like_wildcard(addresses, wildcard_fp);
             if (source_hint == "brute" && passive_set_uset.count(host)) result.source = "both";
             if (!provider.empty()) result.doh_fallback = provider;
             std::lock_guard<std::mutex> report_lock(g_result_mtx);
-            g_result.subdomains.at(result.report_index) = entry_from_result(result);
+            report_rows(result).at(result.report_index) = entry_from_result(result);
             return std::nullopt;
         }
         SubResult result;
         result.sub = host; result.ips = answer.ipv4; result.ipv6 = answer.ipv6;
         result.ips = normalize_ip_set(std::move(result.ips)).ips;
         result.ipv6 = normalize_ip_set(std::move(result.ipv6)).ips;
-        auto addresses = result.ips;
-        addresses.insert(addresses.end(), result.ipv6.begin(), result.ipv6.end());
-        result.wildcard_match = looks_like_wildcard(addresses, wildcard_fp);
+        const auto scope = wildcard_scopes.find(scope_for(host));
+        const auto classification = scope == wildcard_scopes.end() ? WildcardState::Unknown : scope->second;
+        result.wildcard_match = classification == WildcardState::Wildcard;
+        result.dns_status = result.wildcard_match ? "wildcard" :
+            classification == WildcardState::Clear ? "resolved" : "uncertain";
         const bool passive = passive_set_uset.count(host) != 0;
         result.source = passive && source_hint == "brute" ? "both" : passive ? "passive" : source_hint;
         result.doh_fallback = provider;
         {
             std::lock_guard<std::mutex> report_lock(g_result_mtx);
-            result.report_index = g_result.subdomains.size();
-            g_result.subdomains.push_back(entry_from_result(result));
+            auto& rows = report_rows(result);
+            result.report_index = rows.size();
+            rows.push_back(entry_from_result(result));
         }
+        const bool resolved = result.dns_status == "resolved";
         const auto index = results.size();
         results.push_back(std::move(result));
         result_indices.emplace(host, index);
+        if (!resolved) return std::nullopt;
         ++found_count;
         return index;
     };
@@ -677,6 +689,7 @@ void subdomain_scan(const std::string& domain,
             const auto& current = results.at(index);
             result.ips = current.ips; result.ipv6 = current.ipv6;
             result.wildcard_match = current.wildcard_match;
+            result.dns_status = current.dns_status;
             result.source = current.source; result.doh_fallback = current.doh_fallback;
             results.at(index) = result;
             std::lock_guard<std::mutex> report_lock(g_result_mtx);
@@ -725,10 +738,30 @@ void subdomain_scan(const std::string& domain,
     }
 
     std::size_t doh_attempts = 0;
-    auto resolve_and_queue_batch = [&](const std::vector<std::string>& batch,
+    auto resolve_and_queue_batch = [&](const std::vector<std::string>& input,
                                        const std::string& source_hint,
                                        bool allow_passive_doh,
                                        const std::string& resolved_doh_provider) {
+        if (input.empty() || g_cancel_token.cancelled) return;
+        std::vector<std::string> parents;
+        parents.reserve(input.size());
+        for (const auto& host : input) parents.push_back(scope_for(host));
+        prepare_scopes(parents);
+        std::vector<std::string> batch;
+        batch.reserve(input.size());
+        for (const auto& host : input) {
+            if (g_cancel_token.cancelled) break;
+            const auto cached = wildcard_scopes.find(scope_for(host));
+            const auto scope = cached == wildcard_scopes.end() ? WildcardState::Unknown : cached->second;
+            const bool independent = source_hint != "brute" || passive_set_uset.count(host) ||
+                resolved_doh_provider == "js";
+            if (!independent && scope != WildcardState::Clear) {
+                if (scope == WildcardState::Wildcard) ++wildcard_filtered;
+                else ++unchecked_filtered;
+                continue;
+            }
+            batch.push_back(host);
+        }
         if (batch.empty() || g_cancel_token.cancelled) return;
         auto answers = dns.resolve_batch_checked(batch, DNS_CONCURRENCY);
         std::vector<DnsPending> pending;
@@ -783,13 +816,29 @@ void subdomain_scan(const std::string& domain,
                 provider += provider_aaaa;
             }
             const auto index = retain_dns(host, answer, provider, "passive");
+            if (!answer.ipv4.empty() || !answer.ipv6.empty()) ++doh_used;
             if (!index) return;
-            ++doh_used;
             if (do_enrich && !g_cancel_token.cancelled)
                 http_pipe.push({*index});
         }));
         for (auto& future : futures) future.get();
     };
+
+    if (!g_cancel_token.cancelled && !passive_subs.empty()) {
+        std::cout << "  resolving " << passive_subs.size() << " passive candidates first...\n";
+        std::vector<std::string> passive_batch;
+        passive_batch.reserve(DNS_BATCH_SIZE);
+        for (const auto& sub : passive_subs) {
+            if (g_cancel_token.cancelled) break;
+            passive_batch.push_back(sub);
+            if (passive_batch.size() >= static_cast<std::size_t>(DNS_BATCH_SIZE)) {
+                resolve_and_queue_batch(passive_batch, "passive", true, "");
+                passive_batch.clear();
+            }
+        }
+        if (!g_cancel_token.cancelled)
+            resolve_and_queue_batch(passive_batch, "passive", true, "");
+    }
 
     std::vector<std::string> wordlist_batch;
     wordlist_batch.reserve(DNS_BATCH_SIZE);
@@ -838,7 +887,9 @@ void subdomain_scan(const std::string& domain,
         if ((int)wordlist_batch.size() >= DNS_BATCH_SIZE) flush_wordlist_batch();
     };
 
-    if (stream_file_wordlist) {
+    if (passive_only) {
+        std::cout << "  generated discovery disabled by --passive-only\n";
+    } else if (stream_file_wordlist) {
         std::string line;
         while (!g_cancel_token.cancelled && std::getline(wordlist_stream, line)) {
             queue_wordlist_candidate(line);
@@ -864,32 +915,19 @@ void subdomain_scan(const std::string& domain,
                   << BLOOD_RED << " batches=" << WHITE << wordlist_batches << "\n" << RESET;
     }
 
-    if (!g_cancel_token.cancelled && !passive_subs.empty()) {
-        std::cout << BLOOD_RED << "  [*] resolving " << WHITE << passive_subs.size()
-                  << BLOOD_RED << " passive candidates...\n" << RESET;
-        std::vector<std::string> passive_batch;
-        passive_batch.reserve(DNS_BATCH_SIZE);
-        for (const auto& sub : passive_subs) {
-            if (g_cancel_token.cancelled) break;
-            if (sub == scan_domain) continue;
-            passive_batch.push_back(sub);
-            if ((int)passive_batch.size() >= DNS_BATCH_SIZE) {
-                resolve_and_queue_batch(passive_batch, "passive", true, "");
-                passive_batch.clear();
-            }
-        }
-        if (!g_cancel_token.cancelled) {
-            resolve_and_queue_batch(passive_batch, "passive", true, "");
-        }
-    }
-
     std::set<std::string> found_snapshot;
-    if (run_permutations && !g_cancel_token.cancelled) {
+    if (run_permutations && !passive_only && !g_cancel_token.cancelled) {
         std::cout << BLOOD_RED << "  [*] waiting for base HTTP pipeline...\n" << RESET;
         http_pipe.wait_idle();
         maybe_write_checkpoint(true, "base-idle");
         std::lock_guard<std::mutex> lk(state_mtx);
-        for (const auto& entry : result_indices) found_snapshot.insert(entry.first);
+        for (const auto& result : results)
+            if (result.dns_status == "resolved") found_snapshot.insert(result.sub);
+        constexpr std::size_t max_seeds = 64;
+        if (found_snapshot.size() > max_seeds) {
+            found_snapshot.erase(std::next(found_snapshot.begin(), max_seeds), found_snapshot.end());
+            subdomain_warning("Permutation seed limit of 64 reached; remaining resolved names are not expanded");
+        }
     }
     if (run_permutations && !found_snapshot.empty() && !g_cancel_token.cancelled) {
         print_section("PERMUTATION ENGINE");
@@ -899,6 +937,7 @@ void subdomain_scan(const std::string& domain,
         size_t perm_generated = 0;
         size_t perm_queued = 0;
         size_t perm_batches = 0;
+        bool permutation_limit = false;
 
         auto flush_perm_batch = [&]() {
             if (perm_batch.empty() || g_cancel_token.cancelled) return;
@@ -931,6 +970,7 @@ void subdomain_scan(const std::string& domain,
         for_each_permutation_candidate(found_snapshot, scan_domain, [&](std::string&& candidate) {
             perm_generated++;
             if (g_cancel_token.cancelled) return;
+            if (perm_queued >= 5000) { permutation_limit = true; return; }
             if (!normalize_subdomain_name(candidate, scan_domain)) return;
             if (derived_dedup.insert(candidate).second) {
                 perm_batch.push_back(std::move(candidate));
@@ -938,6 +978,8 @@ void subdomain_scan(const std::string& domain,
                 if (perm_batch.size() >= static_cast<size_t>(DNS_BATCH_SIZE)) flush_perm_batch();
             }
         });
+        if (permutation_limit)
+            subdomain_warning("Permutation candidate limit of 5000 reached; remaining generated variants were skipped");
         if (!g_cancel_token.cancelled) flush_perm_batch();
         std::cout << BLOOD_RED << "  [=] permutations generated=" << WHITE << perm_generated
                   << BLOOD_RED << " queued=" << WHITE << perm_queued
@@ -946,7 +988,7 @@ void subdomain_scan(const std::string& domain,
     }
 
     std::vector<std::string> js_targets;
-    if (do_enrich && deep_passive && !g_cancel_token.cancelled) {
+    if (do_enrich && deep_passive && !passive_only && !g_cancel_token.cancelled) {
         size_t pipe_size = http_pipe.size();
         size_t found_size = current_found_size();
         std::cout << BLOOD_RED << "  [*] waiting for permutation HTTP pipeline..."
@@ -958,7 +1000,8 @@ void subdomain_scan(const std::string& domain,
             std::lock_guard<std::mutex> lk(state_mtx);
             js_targets.reserve(results.size());
             for (const auto& r : results) {
-                if (!r.http_code.empty() && r.http_code != "0") js_targets.push_back(r.sub);
+                if (r.dns_status == "resolved" && !r.http_code.empty() && r.http_code != "0")
+                    js_targets.push_back(r.sub);
             }
         }
         std::cout << BLOOD_RED << "  [*] JS targets: " << WHITE << js_targets.size() << "\n" << RESET;
@@ -1011,8 +1054,16 @@ void subdomain_scan(const std::string& domain,
     http_pipe.close();
     for (auto& t : http_threads) t.join();
 
-    if (std::any_of(results.begin(), results.end(), [](const auto& result) { return result.wildcard_match; }))
-        subdomain_warning("Some resolved names match wildcard DNS probes; they are retained with wildcard_match=true and need review");
+    if (wildcard_filtered.load())
+        subdomain_warning("Filtered " + std::to_string(wildcard_filtered.load()) +
+            " generated candidates matching wildcard DNS; shared-address names may require independent verification");
+    if (unchecked_filtered)
+        subdomain_warning("Skipped " + std::to_string(unchecked_filtered) +
+            " generated candidates in branches with inconclusive wildcard checks");
+    const auto candidate_count = results.size() - static_cast<std::size_t>(found_count.load());
+    if (candidate_count)
+        subdomain_warning(std::to_string(candidate_count) +
+            " independent DNS observations remain uncertain; see subdomain_candidates and module dns_status fields");
 
     std::cout << "\n";
 
@@ -1034,6 +1085,7 @@ void subdomain_scan(const std::string& domain,
     std::map<std::string,int> server_stats, waf_stats, lang_stats, cms_stats, source_stats;
 
     for (auto& r : results) {
+        if (r.dns_status != "resolved") continue;
         std::cout << BLOOD_RED << "  " << WHITE << std::left << std::setw(42) << r.sub;
         if (!r.ips.empty())  std::cout << WHITE << std::setw(16) << r.ips[0];
         else                 std::cout << BLOOD_RED << std::setw(16) << "-";
@@ -1060,13 +1112,17 @@ void subdomain_scan(const std::string& domain,
     }
 
     print_section("STATISTICS");
-    std::cout << BLOOD_RED << "  [total found]     " << WHITE << results.size()        << "\n" << RESET;
+    std::cout << BLOOD_RED << "  [resolved names]  " << WHITE << found_count.load() << "\n" << RESET;
+    std::cout << "  [uncertain names] " << candidate_count << " (excluded from resolved names)\n";
     std::cout << BLOOD_RED << "  [dns checked]     " << WHITE << dns_checked.load()    << "\n" << RESET;
     std::cout << BLOOD_RED << "  [DoH fallbacks]   " << WHITE << doh_used.load()       << "\n" << RESET;
     std::cout << BLOOD_RED << "  [with CNAME]      " << WHITE << cnt_cname             << "\n" << RESET;
     std::cout << BLOOD_RED << "  [with IPv6]       " << WHITE << cnt_ipv6              << "\n" << RESET;
     std::cout << BLOOD_RED << "  [behind WAF]      " << WHITE << cnt_waf               << "\n" << RESET;
-    std::cout << BLOOD_RED << "  [wildcard]        " << WHITE << (wildcard_fp.active?"YES":"no") << "\n" << RESET;
+    std::cout << "  [wildcard scopes] " << std::count_if(wildcard_scopes.begin(), wildcard_scopes.end(),
+        [](const auto& scope) { return scope.second == WildcardState::Wildcard; }) << '\n';
+    std::cout << BLOOD_RED << "  [wildcard filtered] " << WHITE << wildcard_filtered.load() << "\n" << RESET;
+    std::cout << "  [unchecked skipped] " << unchecked_filtered << '\n';
     std::cout << BLOOD_RED << "  [HTTP workers]    " << WHITE << HTTP_WORKERS           << "\n" << RESET;
 
     auto print_dist=[](const std::map<std::string,int>& m, const std::string& label){
@@ -1088,6 +1144,7 @@ void subdomain_scan(const std::string& domain,
         std::size_t inspected = 0;
         for (auto& result : results) {
             if (g_cancel_token.cancelled) break;
+            if (result.dns_status != "resolved") continue;
             if (result.cname.empty()) continue;
             if (inspected >= 64) { subdomain_warning("CNAME service inspection limit of 64 reached"); break; }
             for (const auto& signature : takeover_db()) {
@@ -1122,6 +1179,8 @@ void subdomain_scan(const std::string& domain,
         std::lock_guard<std::mutex> report_lock(g_result_mtx);
         std::sort(g_result.subdomains.begin(), g_result.subdomains.end(),
                   [](const auto& a, const auto& b) { return a.sub < b.sub; });
+        std::sort(g_result.subdomain_candidates.begin(), g_result.subdomain_candidates.end(),
+                  [](const auto& a, const auto& b) { return a.sub < b.sub; });
     }
 
     print_section("EXPORT");
@@ -1131,7 +1190,8 @@ void subdomain_scan(const std::string& domain,
     }
 
     LOG_INFO("subdomain_scan","done domain="+scan_domain
-        +" found="+std::to_string(results.size())
+        +" resolved="+std::to_string(found_count.load())
+        +" uncertain="+std::to_string(candidate_count)
         +" doh="+std::to_string(doh_used.load())
         +" workers="+std::to_string(HTTP_WORKERS));
 }
