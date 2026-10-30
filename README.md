@@ -16,7 +16,6 @@ curl -fsSLm120 https://raw.githubusercontent.com/fkmrshl/dark-nexus/main/install
 
 Then run `dark-nexus --help`; no separate build command is needed. The installer downloads the source, installs missing dependencies, compiles and installs the application, installs the DNS wordlist, and attempts to configure raw socket capabilities. In a terminal it shows a compact progress panel with the current stage, elapsed time, recent activity and real compilation task counts. Full output is saved to the printed log path; redirected output stays plain.
 
-On Arch/CachyOS, the installer uses existing package databases and installs only missing packages. It does not launch a full system upgrade. See [installation troubleshooting](docs/install.md) for mirror errors, package locks, time limits, or a minimal installation.
 
 For a local build or installation from a checkout:
 
