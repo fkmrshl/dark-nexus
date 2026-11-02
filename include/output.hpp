@@ -13,10 +13,14 @@ public:
     static bool write_json(const ScanResult& r, const std::string& path);
     static bool write_csv(const ScanResult& r, const std::string& path);
     static std::string to_json_str(const ScanResult& r);
+    static std::string completion_status(const ScanResult& r, bool cancelled);
+    static json subdomain_checkpoint(const ScanResult& r, bool final);
+    static bool write_subdomain_reports(ScanResult& r);
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PortEntry, port, protocol, service, banner, version, risk, latency_ms, tls, tls_version, tls_cn, tls_expired, vulns)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubEntry, sub, ips, ipv6, cname, http_code, server, waf, language, cms, source, title, takeover_possible, wildcard_match, dns_status)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubdomainHttpObservation, requested_url, effective_url, method, error, http_code, transport_code, success, cancelled, timed_out, truncated, callback_failed, headers_complete, body_complete, primary_ip, dns_pinned)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubEntry, sub, ips, ipv6, cname, http_code, server, waf, language, cms, source, stack, discovery_sources, doh_fallback, title, takeover_possible, wildcard_match, dns_status, http_observations)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TraceHop, ttl, addr, hostname, avg_rtt_ms, loss_pct, asn)
 
 namespace nlohmann {
@@ -47,6 +51,9 @@ namespace nlohmann {
                 {"ports", r.ports},
                 {"subdomains", r.subdomains},
                 {"subdomain_candidates", r.subdomain_candidates},
+                {"subdomain_counts", {{"resolved", r.subdomains.size()},
+                                      {"candidates", r.subdomain_candidates.size()},
+                                      {"total", r.subdomains.size() + r.subdomain_candidates.size()}}},
                 {"trace", r.trace},
                 {"dns_records", r.dns_records},
                 {"whois_records", r.whois_records}

@@ -23,6 +23,8 @@ struct Options {
     Family family = Family::Auto;
     int timing = 3, threads = 0, timeout_ms = 0, retries = -1;
     int banner_timeout_ms = 0;
+    int dns_concurrency = 0, dns_retries = 1, dns_timeout_ms = 500;
+    int js_workers = 4, js_budget_seconds = 30;
     std::vector<int> ports;
     std::set<int> exclude_ports;
     // Zero means that an explicit port list is present in ports.

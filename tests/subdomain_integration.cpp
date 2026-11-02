@@ -16,20 +16,23 @@ namespace {
 std::string scenario;
 std::mutex fixture_mutex;
 std::vector<std::string> requested_names;
+std::vector<int> candidate_concurrencies;
+std::vector<int> candidate_timeouts;
+std::vector<int> probe_concurrencies, probe_timeouts, probe_deadlines;
+std::map<std::string, std::vector<std::string>> http_addresses;
 std::map<std::string, int> request_counts;
 std::atomic<int> http_calls{0}, active_http{0}, http_after_cancel{0};
 std::atomic<int> head_calls{0}, get_calls{0}, cname_calls{0}, tech_calls{0}, waf_calls{0}, page_calls{0};
 std::atomic<bool> finished{false};
 
 bool wildcard_probe(const std::string& host) { return host.rfind("dnxwc-", 0) == 0; }
-bool provider_fixture() { return scenario == "doh-provider-keep" || scenario == "doh-provider-merge"; }
+bool provider_fixture() { return scenario == "doh-provider-keep" || scenario == "doh-provider-merge" || scenario == "doh-native-recovery"; }
 bool presentation_fixture() { return scenario.rfind("presentation", 0) == 0; }
 
 bool classification_fixture() {
     return scenario == "wildcard" || scenario == "rotating-wildcard" ||
            scenario == "nested-wildcard" || scenario == "root-wildcard-child-clear" ||
-           scenario == "probe-failure" || scenario == "probe-mixed" ||
-           scenario == "probe-missing" || scenario == "scope-budget";
+           scenario.rfind("probe-", 0) == 0 || scenario == "scope-budget";
 }
 
 long fixture_http() {
@@ -49,16 +52,18 @@ long fixture_http() {
 }
 
 void passive_fixture(std::set<std::string>& output) {
+    if (scenario == "js-overlap") output.insert("discovered.api.example.test");
     if (scenario == "duplicate-family" || provider_fixture()) output.insert("www.example.test");
+    if (scenario == "doh-native-recovery") output.insert({"kept.example.test", "second.example.test"});
     if (scenario == "wildcard" || scenario == "rotating-wildcard" ||
-        scenario == "probe-failure" || scenario == "probe-mixed" || scenario == "probe-missing" ||
+        scenario.rfind("probe-", 0) == 0 ||
         scenario == "passive-first" || scenario == "passive-only")
         output.insert("observed.example.test");
     if (scenario == "nested-wildcard" || scenario == "root-wildcard-child-clear")
         output.insert("observed.api.example.test");
-    if (scenario == "scope-budget" || scenario == "permutation-budget") {
+    if (scenario == "scope-budget" || scenario == "probe-deadline" || scenario == "permutation-budget") {
         for (int index = 0; index < 100; ++index)
-            output.insert(scenario == "scope-budget" ?
+            output.insert(scenario == "scope-budget" || scenario == "probe-deadline" ?
                 "observed.scope" + std::to_string(index) + ".example.test" :
                 "seed" + std::to_string(1000 + index) + "unit.example.test");
     }
@@ -78,8 +83,16 @@ int DnsEngine::max_per_channel_concurrency() const { return 1; }
 std::size_t DnsEngine::resolver_count() const { return 1; }
 
 std::unordered_map<std::string, DnsLookupResult>
-DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int, int) {
+DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency, int deadline_ms, int query_timeout_ms) {
     std::unordered_map<std::string, DnsLookupResult> output;
+    if (std::any_of(hosts.begin(), hosts.end(), [](const auto& host) { return !wildcard_probe(host); })) {
+        candidate_concurrencies.push_back(concurrency);
+        candidate_timeouts.push_back(query_timeout_ms);
+    } else {
+        probe_concurrencies.push_back(concurrency);
+        probe_timeouts.push_back(query_timeout_ms);
+        probe_deadlines.push_back(deadline_ms);
+    }
     for (const auto& host : hosts) {
         int calls;
         {
@@ -104,14 +117,56 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int, int
                 if (positives == 1) answer.ipv4 = {"192.0.2.40"};
             }
             if (scenario == "probe-missing") output.erase(host);
+            if (scenario == "probe-exhausted" || scenario == "probe-no-retry" ||
+                (scenario == "probe-transient" && calls == 1) ||
+                (scenario == "probe-two-retries" && calls <= 2) ||
+                (scenario == "probe-retry-positive" && calls == 1)) {
+                answer.failed = answer.ipv4_failed = answer.ipv6_failed = true;
+                answer.ipv4_retryable = answer.ipv6_retryable = true;
+                answer.ipv4_error = answer.ipv6_error = answer.error = "fixture temporary probe failure";
+            }
+            if (scenario == "probe-retry-positive" && calls > 1) answer.ipv4 = {"192.0.2.40"};
+            if (scenario == "probe-partial-transient" || scenario == "probe-partial-positive") {
+                if (calls == 1) {
+                    answer.failed = answer.ipv6_failed = answer.ipv6_retryable = true;
+                    answer.ipv6_error = answer.error = "fixture probe AAAA timeout";
+                    if (scenario == "probe-partial-positive" && host == requested_names.front())
+                        answer.ipv4 = {"192.0.2.40"};
+                } else {
+                    answer.failed = answer.ipv4_failed = answer.ipv4_retryable = true;
+                    answer.ipv4_error = answer.error = "fixture probe A timeout on repeat";
+                }
+            }
             continue;
         }
-        if (scenario == "dns-failure" || (provider_fixture() && host == "www.example.test")) {
+        if (scenario == "dns-permanent") {
+            answer.failed = answer.ipv4_failed = answer.ipv6_failed = true;
+            answer.ipv4_error = answer.ipv6_error = answer.error = "fixture malformed DNS response";
+        } else if (scenario == "dns-exhausted" || scenario == "dns-no-retry" ||
+            (scenario == "dns-two-retries" && calls <= 2) ||
+            (scenario == "dns-transient" && calls == 1)) {
+            answer.failed = answer.ipv4_failed = answer.ipv6_failed = true;
+            answer.ipv4_retryable = answer.ipv6_retryable = true;
+            answer.ipv4_error = answer.ipv6_error = answer.error = "fixture temporary DNS failure";
+        } else if (scenario == "dns-partial-transient") {
+            answer.failed = true;
+            if (calls == 1) {
+                answer.ipv4 = {"192.0.2.20"};
+                answer.ipv6_failed = answer.ipv6_retryable = true;
+                answer.ipv6_error = answer.error = "fixture AAAA timeout";
+            } else {
+                answer.ipv6 = {"2001:db8::20"};
+                answer.ipv4_failed = answer.ipv4_retryable = true;
+                answer.ipv4_error = answer.error = "fixture A timeout on repeat";
+            }
+        } else if (scenario == "dns-failure" || (provider_fixture() && host == "www.example.test" &&
+                   (scenario != "doh-native-recovery" || calls == 1)) ||
+                   (scenario == "doh-native-recovery" && (host == "kept.example.test" || (host == "second.example.test" && calls == 1)))) {
             answer.failed = true;
             answer.error = "fixture resolver timeout";
         } else if (scenario == "nxdomain" || (scenario == "streaming-tail" && host != "tailmarker.example.test")) {
             // A successful negative reply has no addresses and no error.
-        } else if (scenario == "ipv6" || (scenario == "duplicate-family" && calls > 1))
+        } else if (scenario == "ipv6" || scenario == "http-ipv6" || (scenario == "duplicate-family" && calls > 1))
             answer.ipv6 = {"2001:db8::20"};
         else if (scenario == "mixed-failure") {
             answer.failed = true;
@@ -158,26 +213,63 @@ void dns_extra_records(const std::string&, std::set<std::string>&) {}
 
 void http_jitter() {}
 long fast_check(const std::string&, int) { ++head_calls; return fixture_http(); }
-CurlResponse fast_probe(const std::string&, int) {
-    ++get_calls;
+CurlResponse fast_probe(const std::string& sub, int, bool head, const std::vector<std::string>& addresses) {
+    if (addresses.empty()) throw std::runtime_error("HTTP enrichment lost DNS addresses");
+    { std::lock_guard<std::mutex> lock(fixture_mutex); http_addresses[sub] = addresses; }
+    if (head) ++head_calls;
+    else ++get_calls;
     CurlResponse response;
+    response.primary_ip = addresses.front();
+    response.dns_pinned = true;
     response.http_code = fixture_http();
     response.transport_code = 0;
-    response.success = response.http_code > 0;
+    response.success = response.http_code >= 200 && response.http_code < 300;
+    response.headers_complete = response.body_complete = true;
+    response.requested_url = response.effective_url = "https://" + sub;
+    response.method = head ? "HEAD" : "GET";
     response.headers = "Server: fixture\r\n";
     if (presentation_fixture())
         response.headers = "HTTP/1.1 200 Connection established\r\nServer: proxy\r\n\r\nHTTP/2 200\r\n"
             "sErVeR: " + std::string(50000, 'x') + "\r\nsErVeR: fixture\r\n";
     response.body = "<title>café Москва, \"quoted\"</title>";
+    if (scenario == "js-relative" || scenario == "js-partial-script" || scenario == "js-overlap" || scenario == "js-http")
+        response.body = scenario == "js-overlap" ?
+            "<script src='https://www.example.test/assets/app.js'></script>" : "<script src='assets/app.js'></script>";
+    if (scenario == "js-http") response.requested_url = response.effective_url = "http://" + sub;
+    if (scenario == "js-partial-page") {
+        response.success = response.body_complete = false;
+        response.timed_out = true;
+        response.transport_code = 28;
+        response.error = "fixture partial JS page";
+    }
+    if (scenario == "http-truncated" || scenario == "http-timeout" || scenario == "http-headers-incomplete") {
+        response.success = response.body_complete = false;
+        response.truncated = scenario != "http-timeout";
+        response.timed_out = scenario == "http-timeout";
+        response.headers_complete = scenario != "http-headers-incomplete";
+        response.transport_code = response.timed_out ? 28 : 23;
+        response.error = response.timed_out ? "fixture body timeout" : "fixture capture limit";
+    }
+    if (scenario == "http-404") {
+        response.http_code = 404;
+        response.success = false;
+    }
+    response.attempts.push_back(response);
     return response;
 }
-CurlResponse libcurl_get(const std::string& url, const std::string&, const std::string&, int,
+CurlResponse libcurl_get(const std::string& raw_url, const std::string&, const std::string&, int,
                          const std::vector<std::string>&, SubdomainHttpMode) {
     ++page_calls;
+    auto url = raw_url;
+    if (!url.empty() && url.back() == '/') url.pop_back();
     if (provider_fixture()) {
         const bool cloudflare = url.rfind("https://cloudflare-dns.com/dns-query?", 0) == 0;
         const bool google = url.rfind("https://dns.google/resolve?", 0) == 0;
-        if ((!cloudflare && !google) || url.find("name=www.example.test&type=") == std::string::npos)
+        const auto name_start = url.find("name=");
+        const auto name_end = name_start == std::string::npos ? std::string::npos : url.find('&', name_start);
+        const auto name = name_start == std::string::npos || name_end == std::string::npos ? "" : url.substr(name_start + 5, name_end - name_start - 5);
+        if ((!cloudflare && !google) || (name != "www.example.test" &&
+            !(scenario == "doh-native-recovery" && (name == "kept.example.test" || name == "second.example.test"))))
             throw std::runtime_error("unexpected DoH request in provider fixture");
         const bool ipv6 = url.find("&type=AAAA") != std::string::npos;
         CurlResponse response;
@@ -191,7 +283,7 @@ CurlResponse libcurl_get(const std::string& url, const std::string&, const std::
         response.success = true;
         nlohmann::json answer = {{"Status", 0}, {"Answer", nlohmann::json::array()}};
         if (!ipv6 || scenario == "doh-provider-merge")
-            answer["Answer"].push_back({{"name", "www.example.test."}, {"type", ipv6 ? 28 : 1},
+            answer["Answer"].push_back({{"name", name + "."}, {"type", ipv6 ? 28 : 1},
                 {"TTL", 60}, {"data", ipv6 ? "2001:db8::42" : "192.0.2.42"}});
         response.body = answer.dump();
         return response;
@@ -202,18 +294,37 @@ CurlResponse libcurl_get(const std::string& url, const std::string&, const std::
     response.http_code = 200;
     response.transport_code = 0;
     response.success = true;
+    response.headers_complete = response.body_complete = true;
     response.body = "<title>café Москва, \"quoted\"</title>";
-    if (scenario == "js-relative") {
-        if (url == "https://www.example.test")
-            response.body = "<script src = 'assets/app.js'></script>";
-        else if (url == "https://www.example.test/assets/app.js")
+    if (scenario == "js-relative" || scenario == "js-partial-page" || scenario == "js-partial-script" || scenario == "js-overlap" || scenario == "js-http") {
+        if (url == "https://www.example.test" || (scenario == "js-overlap" && url == "https://discovered.api.example.test"))
+            response.body = scenario == "js-overlap" ?
+                "<script src = 'https://www.example.test/assets/app.js'></script>" :
+                "<script src = 'assets/app.js'></script>";
+        else if (url == "https://www.example.test/assets/app.js" ||
+                 (scenario == "js-http" && url == "http://www.example.test/assets/app.js"))
             response.body = "const endpoint = 'https://discovered.api.example.test/api';";
         else throw std::runtime_error("unexpected script URL in JS discovery fixture: " + url);
+        if ((scenario == "js-partial-page" && url == "https://www.example.test") ||
+            (scenario == "js-partial-script" && url != "https://www.example.test")) {
+            response.success = response.body_complete = false;
+            response.transport_code = 28;
+            response.timed_out = true;
+            response.error = "fixture partial JS transfer";
+        }
     }
     return response;
 }
+CurlResponse libcurl_get_deadline(const std::string& url, std::chrono::steady_clock::time_point deadline) {
+    if (std::chrono::steady_clock::now() >= deadline || g_cancel_token.cancelled) return {};
+    return libcurl_get(url, "", "fixture", 1, {}, SubdomainHttpMode::Verified);
+}
 WAFInfo detect_waf(const std::string&, const std::string&, const std::string&) { ++waf_calls; return {}; }
-TechInfo detect_tech(const std::string&, const std::string&, const std::string&) { ++tech_calls; return {}; }
+TechInfo detect_tech(const std::string&, const std::string&, const std::string&) {
+    ++tech_calls;
+    if (presentation_fixture()) return {{"FixtureStack"}, "FixtureCMS", "FixtureLanguage", ""};
+    return {};
+}
 std::string parse_title(const std::string&) { return "café Москва, \"quoted\""; }
 
 void subdomain_warning(const std::string& message) {
@@ -251,6 +362,8 @@ int main(int argc, char** argv) {
     scenario = argv[1];
     g_result.scan_type = "subdomain";
     g_result.target = "example.test";
+    g_result.start_time = "fixture-start";
+    g_result.status = "running";
     std::thread cancellation;
     if (scenario == "cancel") cancellation = std::thread([] {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -287,8 +400,8 @@ int main(int argc, char** argv) {
             if (failures) throw std::runtime_error("concurrent atomic writer failed");
         } else {
             const bool enrich = scenario == "cancel" || scenario == "worker-throw" || scenario == "unicode" ||
-                                presentation_fixture() || scenario == "js-relative" ||
-                                classification_fixture() || scenario.rfind("feature-", 0) == 0;
+                                presentation_fixture() || scenario.rfind("js-", 0) == 0 || scenario.rfind("http-", 0) == 0 ||
+                                classification_fixture() || provider_fixture() || scenario.rfind("feature-", 0) == 0;
             std::optional<SubdomainFeatures> features;
             if (scenario.rfind("feature-", 0) == 0) {
                 features = SubdomainFeatures{};
@@ -301,10 +414,15 @@ int main(int argc, char** argv) {
             } else if (scenario == "presentation") {
                 features = SubdomainFeatures{};
                 features->full_addresses = true;
+            } else if (scenario.rfind("http-", 0) == 0) {
+                features = SubdomainFeatures{true, false, true, false, false, false};
             }
             subdomain_scan("example.test", "wordlist.txt", 1, scenario == "permutation-budget",
-                           scenario == "unicode" || presentation_fixture() || scenario == "js-relative", enrich, false,
-                           scenario == "passive-only", features);
+                           scenario == "unicode" || presentation_fixture() || scenario.rfind("js-", 0) == 0, enrich, false,
+                           scenario == "passive-only", features, scenario == "probe-deadline" ? 16 : 128,
+                           scenario == "dns-no-retry" || scenario == "probe-no-retry" ? 0 :
+                           scenario == "dns-two-retries" || scenario == "probe-two-retries" ? 2 : 1,
+                           scenario == "probe-deadline" ? 5000 : 500);
         }
     } catch (const std::exception& error) {
         g_result.errors.push_back(error.what());
@@ -313,11 +431,16 @@ int main(int argc, char** argv) {
     if (cancellation.joinable()) cancellation.join();
     g_result.duration_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start).count());
-    g_result.status = g_cancel_token.cancelled ? "cancelled" : g_result.errors.empty() ? "complete" :
-                      g_result.subdomains.empty() && g_result.subdomain_candidates.empty() ? "failed" : "partial";
+    g_result.end_time = "fixture-end";
+    g_result.status = OutputWriter::completion_status(g_result, g_cancel_token.cancelled);
+    if (scenario.rfind("atomic-", 0) != 0) OutputWriter::write_subdomain_reports(g_result);
     nlohmann::json result = g_result;
     result["fixture"] = {{"http_calls", http_calls.load()}, {"active_http", active_http.load()},
                           {"http_after_cancel", http_after_cancel.load()}, {"requested", requested_names},
+                          {"dns_concurrencies", candidate_concurrencies},
+                          {"dns_timeouts", candidate_timeouts},
+                          {"probe_concurrencies", probe_concurrencies}, {"probe_timeouts", probe_timeouts},
+                          {"probe_deadlines", probe_deadlines}, {"http_addresses", http_addresses},
                           {"head_calls", head_calls.load()}, {"get_calls", get_calls.load()},
                           {"cname_calls", cname_calls.load()}, {"tech_calls", tech_calls.load()},
                           {"waf_calls", waf_calls.load()}, {"page_calls", page_calls.load()}};

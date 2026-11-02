@@ -1,8 +1,12 @@
 #include "output.hpp"
+#include "atomic_file.hpp"
 #include "security.hpp"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <array>
+#include <ctime>
+#include <sstream>
 
 namespace {
 std::string csv(const std::string& value) {
@@ -23,7 +27,10 @@ void write_csv_report(const ScanResult& result, std::ostream& out) {
     csv_row(out, "metadata", result, result.scan_type, result.tool_version,
             {{"schema_version", result.schema_version}, {"resolved_ip", result.resolved_ip},
              {"start_time", result.start_time}, {"end_time", result.end_time},
-             {"duration_ms", result.duration_ms}, {"status", result.status}});
+             {"duration_ms", result.duration_ms}, {"status", result.status},
+             {"subdomain_counts", {{"resolved", result.subdomains.size()},
+                                   {"candidates", result.subdomain_candidates.size()},
+                                   {"total", result.subdomains.size() + result.subdomain_candidates.size()}}}});
     for (const auto& error : result.errors)
         csv_row(out, "error", result, "", error, json::object());
     for (const auto& warning : result.warnings)
@@ -73,6 +80,9 @@ void write_text_report(const ScanResult& r, std::ostream& out) {
             for (const auto& ip : s.ips) out << "  " << sanitize(ip);
             for (const auto& ip : s.ipv6) out << "  " << sanitize(ip);
             if (s.wildcard_match) out << "  [possible wildcard]";
+            if (!s.http_code.empty()) out << "  HTTP " << sanitize(s.http_code);
+            if (!s.http_observations.empty() && !s.http_observations.back().body_complete)
+                out << "  [HTTP transfer incomplete: " << sanitize(s.http_observations.back().error) << ']';
             out << "  " << sanitize(s.title) << '\n';
         }
     }
@@ -132,8 +142,10 @@ bool OutputWriter::write_stream(const ScanResult& result, std::ostream& out, con
 
 bool OutputWriter::write(const ScanResult& result, const std::string& path, const std::string& format) {
     if (path.empty()) return false;
-    std::ofstream out(path);
-    return out && write_stream(result, out, format_for(path, format));
+    std::ostringstream out;
+    if (!write_stream(result, out, format_for(path, format))) return false;
+    std::string error;
+    return write_atomic_file(path, out.str(), error);
 }
 
 bool OutputWriter::write_json(const ScanResult& result, const std::string& path) {
@@ -142,4 +154,68 @@ bool OutputWriter::write_json(const ScanResult& result, const std::string& path)
 
 bool OutputWriter::write_csv(const ScanResult& result, const std::string& path) {
     return write(result, path, "csv");
+}
+
+std::string OutputWriter::completion_status(const ScanResult& r, bool cancelled) {
+    if (cancelled) return "cancelled";
+    if (r.errors.empty()) return "complete";
+    if (!r.ports.empty() || !r.subdomains.empty() || !r.subdomain_candidates.empty() ||
+        !r.trace.empty() || !r.dns_records.empty() || !r.whois_records.empty() ||
+        !r.open_ports.empty() || !r.os_guess.empty() || !r.geo_country.empty() || !r.geo_city.empty())
+        return "partial";
+    return "failed";
+}
+
+json OutputWriter::subdomain_checkpoint(const ScanResult& r, bool final) {
+    json report = r;
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    char timestamp[21] = {};
+    if (gmtime_r(&now, &utc) != nullptr)
+        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    report["checkpoint"] = {{"final", final}, {"saved_at", timestamp}};
+    if (!final) { report["status"] = "running"; report["end_time"] = ""; }
+    return report;
+}
+
+bool OutputWriter::write_subdomain_reports(ScanResult& r) {
+    const bool cancelled = r.status == "cancelled";
+    std::string domain = r.target;
+    std::transform(domain.begin(), domain.end(), domain.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (!domain.empty() && domain.back() == '.') domain.pop_back();
+    if (!InputGuard::is_valid_host(domain) || InputGuard::is_valid_ipv4(domain) ||
+        InputGuard::is_valid_ipv6(domain)) {
+        const std::string error = "invalid subdomain report target";
+        if (std::find(r.errors.begin(), r.errors.end(), error) == r.errors.end()) r.errors.push_back(error);
+        r.status = completion_status(r, cancelled);
+        return false;
+    }
+    r.target = domain;
+    const auto by_name = [](const SubEntry& a, const SubEntry& b) { return a.sub < b.sub; };
+    std::sort(r.subdomains.begin(), r.subdomains.end(), by_name);
+    std::sort(r.subdomain_candidates.begin(), r.subdomain_candidates.end(), by_name);
+    const std::array<std::string, 3> paths = {domain + "_subdomains.json", domain + "_subdomains.csv",
+                                               domain + "_subdomains_checkpoint.json"};
+    std::array<bool, 3> failed{};
+    for (std::size_t pass = 0; pass < paths.size() + 1; ++pass) {
+        bool new_failure = false;
+        for (std::size_t i = 0; i < paths.size(); ++i) {
+            if (failed[i]) continue;
+            std::ostringstream stream;
+            bool rendered = true;
+            if (i == 2) stream << subdomain_checkpoint(r, true).dump(2, ' ', false, json::error_handler_t::replace) << '\n';
+            else rendered = write_stream(r, stream, i == 0 ? "json" : "csv");
+            std::string error;
+            if (!rendered || !write_atomic_file(paths[i], stream.str(), error)) {
+                if (error.empty()) error = "cannot render " + paths[i];
+                if (std::find(r.errors.begin(), r.errors.end(), error) == r.errors.end()) r.errors.push_back(error);
+                failed[i] = true;
+                new_failure = true;
+                r.status = completion_status(r, cancelled);
+            }
+        }
+        if (!new_failure) break;
+    }
+    return std::none_of(failed.begin(), failed.end(), [](bool value) { return value; });
 }

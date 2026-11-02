@@ -51,6 +51,7 @@ class LocalDNS:
         self.stop = threading.Event()
         self.held = threading.Event()
         self.requests = []
+        self.query_counts = {}
         self.errors = []
         self.wildcard = False
         self.worker = threading.Thread(target=self.serve, daemon=True)
@@ -67,6 +68,8 @@ class LocalDNS:
             try:
                 name, rtype, end = question(packet)
                 self.requests.append((name, rtype))
+                key = (name, rtype)
+                self.query_counts[key] = self.query_counts.get(key, 0) + 1
                 if name == 'hold.example.test':
                     self.held.set()
                     continue
@@ -84,6 +87,12 @@ class LocalDNS:
                     address = '192.0.2.20' if rtype == 1 else '2001:db8::20' if rtype == 28 else None
                 elif name == 'v6.example.test':
                     address = '2001:db8::21' if rtype == 28 else None
+                elif name == 'flaky.example.test':
+                    if self.query_counts[key] == 1:
+                        continue  # First attempt times out; the bounded retry succeeds.
+                    address = '192.0.2.22' if rtype == 1 else '2001:db8::22' if rtype == 28 else None
+                elif name == 'flaky-negative.example.test':
+                    rcode = 2 if self.query_counts[key] == 1 else 3
                 elif name == 'fail.example.test':
                     rcode = 2
                 else:
@@ -178,6 +187,11 @@ class SubdomainCLITests(unittest.TestCase):
         self.assertEqual(result.returncode, code, (words, fmt, result.stdout[-5000:], result.stderr))
         self.assertNotIn('\x1b', result.stdout)
         self.assert_local_activity(start)
+        automatic = json.loads((self.root / 'example.test_subdomains.json').read_text())
+        if output == '-' and fmt == 'json':
+            self.assertEqual(automatic, json.loads(result.stdout))
+        if output == '-' and fmt == 'csv':
+            self.assertEqual((self.root / 'example.test_subdomains.csv').read_text(), result.stdout)
         return result
 
     def test_dual_stack_and_ipv6_only_results_in_all_formats(self):
@@ -220,6 +234,34 @@ class SubdomainCLITests(unittest.TestCase):
                     self.assertEqual(json.loads(rows[0]['details'])['status'], 'complete')
                 else:
                     self.assertIn('Status: complete', result.stdout)
+
+    def test_timed_out_names_recover_through_real_dns_retry(self):
+        report = json.loads(self.run_case(('flaky',)).stdout)
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['errors'], [])
+        self.assertEqual(report['subdomains'][0]['ips'], ['192.0.2.22'])
+        self.assertEqual(report['subdomains'][0]['ipv6'], ['2001:db8::22'])
+        for rtype in (1, 28):
+            self.assertEqual(self.dns.query_counts[('flaky.example.test', rtype)], 2)
+
+    def test_retry_can_complete_with_valid_negative_answer(self):
+        report = json.loads(self.run_case(('flaky-negative',)).stdout)
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['errors'], [])
+        self.assertEqual(report['subdomains'], [])
+
+    def test_cli_can_disable_dns_retries(self):
+        start = len(self.proxy.requests)
+        command = self.command(('flaky',)) + ['--dns-concurrency', '16', '--dns-retries', '0']
+        result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assert_local_activity(start)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(len(report['errors']), 1)
+        for rtype in (1, 28):
+            self.assertEqual(self.dns.query_counts[('flaky.example.test', rtype)], 1)
 
     def test_terminal_accents_respect_color_controls_and_keep_reports_clean(self):
         for color in ('always', 'never', 'auto'):
@@ -269,11 +311,9 @@ class SubdomainCLITests(unittest.TestCase):
         probes = [(name, rtype) for name, rtype in self.dns.requests if name.startswith('dnxwc-')]
         self.assertGreaterEqual(len({name for name, _ in probes}), 2)
         module = json.loads((self.root / 'example.test_subdomains.json').read_text())
-        self.assertEqual(module, [])
+        self.assertEqual(module, report)
         checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
-        self.assertEqual(checkpoint['count'], 0)
-        self.assertEqual(checkpoint['resolved_count'], 0)
-        self.assertEqual(checkpoint['candidate_count'], 0)
+        self.assertEqual(checkpoint['subdomain_counts'], {'resolved': 0, 'candidates': 0, 'total': 0})
 
     def test_bruteforce_respects_explicit_wordlist_instead_of_discovered_list(self):
         (self.root / 'best-dns-wordlist.txt').write_text('discovered-only\n')
@@ -379,7 +419,7 @@ class SubdomainCLITests(unittest.TestCase):
         self.assertEqual(report['status'], 'partial')
         self.assertEqual([row['sub'] for row in report['subdomains']], ['good.example.test'])
         module = json.loads((self.root / 'example.test_subdomains.json').read_text())
-        self.assertEqual([row['subdomain'] for row in module], ['good.example.test'])
+        self.assertEqual(module, report)
 
     def test_report_file_and_module_exports_are_usable(self):
         result = self.run_case(('dual', 'v6'), output=str(self.root / 'report.json'))
@@ -388,9 +428,54 @@ class SubdomainCLITests(unittest.TestCase):
         self.assertEqual(len(report['subdomains']), 2)
         module = json.loads((self.root / 'example.test_subdomains.json').read_text())
         checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
-        self.assertEqual(len(module), checkpoint['count'])
-        self.assertEqual(checkpoint['count'], 2)
-        self.assertTrue(all(row['ipv6'] for row in module))
+        self.assertEqual(module, report)
+        self.assertEqual(checkpoint['subdomain_counts']['total'], 2)
+        self.assertTrue(checkpoint.pop('checkpoint')['final'])
+        self.assertEqual(checkpoint, report)
+        self.assertTrue(all(row['ipv6'] for row in module['subdomains']))
+
+    def test_requested_export_failure_updates_automatic_reports(self):
+        destination = self.root / 'report.json'
+        destination.mkdir()
+        result = self.run_case(('dual',), code=1, output=str(destination))
+        self.assertEqual(result.stdout, '')
+        report = json.loads((self.root / 'example.test_subdomains.json').read_text())
+        self.assertEqual(report['status'], 'partial')
+        self.assertEqual(len(report['subdomains']), 1)
+        self.assertTrue(any('failed to write report' in error for error in report['errors']))
+        checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+        self.assertEqual(checkpoint['errors'], report['errors'])
+        self.assertTrue(destination.is_dir())
+
+    def test_conflicting_automatic_output_formats_are_rejected_before_scanning(self):
+        alias = self.root / 'alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        for filename, fmt in (('example.test_subdomains.json', 'csv'),
+                              ('example.test_subdomains.csv', 'json'),
+                              ('example.test_subdomains_checkpoint.json', 'csv')):
+            with self.subTest(filename=filename):
+                destination = self.root / filename
+                destination.write_text('previous content')
+                command = self.command(('dual',), fmt=fmt, output=str(alias / filename))
+                result = subprocess.run(command, cwd=self.root, env=self.environment,
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('conflicts with automatic', result.stderr)
+                self.assertEqual(destination.read_text(), 'previous content')
+        self.assertEqual(self.dns.requests, [])
+        self.assertEqual(self.proxy.requests, [])
+
+    def test_compatible_automatic_output_paths_are_written_once_with_correct_schema(self):
+        for filename, fmt in (('example.test_subdomains.json', 'json'),
+                              ('example.test_subdomains.csv', 'csv'),
+                              ('example.test_subdomains_checkpoint.json', 'json')):
+            with self.subTest(filename=filename):
+                result = self.run_case(('dual',), fmt=fmt, output=str(self.root / filename))
+                self.assertEqual(result.stdout, '')
+                canonical = json.loads((self.root / 'example.test_subdomains.json').read_text())
+                checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+                self.assertTrue(checkpoint.pop('checkpoint')['final'])
+                self.assertEqual(checkpoint, canonical)
 
     def test_signals_cancel_active_dns_and_preserve_json(self):
         for sig in (signal.SIGINT, signal.SIGTERM):

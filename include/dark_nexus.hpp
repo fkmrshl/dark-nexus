@@ -85,6 +85,15 @@ struct PortEntry {
     std::vector<std::string> vulns;
 };
 
+struct SubdomainHttpObservation {
+    std::string requested_url, effective_url, method, error, primary_ip;
+    bool dns_pinned = false;
+    long http_code = 0;
+    int transport_code = -1;
+    bool success = false, cancelled = false, timed_out = false, truncated = false;
+    bool callback_failed = false, headers_complete = false, body_complete = false;
+};
+
 struct SubEntry {
     std::string sub;
     std::vector<std::string> ips;
@@ -96,10 +105,13 @@ struct SubEntry {
     std::string language;
     std::string cms;
     std::string source;
+    std::vector<std::string> stack, discovery_sources;
+    std::string doh_fallback;
     std::string title;
     bool takeover_possible = false;
     bool wildcard_match = false;
     std::string dns_status = "resolved";
+    std::vector<SubdomainHttpObservation> http_observations;
 };
 
 struct TraceHop {
@@ -239,5 +251,10 @@ void subdomain_scan(const std::string& domain,
                     bool do_enrich = true,
                     bool use_deep_passive_sources = true,
                     bool passive_only = false,
-                    std::optional<SubdomainFeatures> requested_features = std::nullopt);
+                    std::optional<SubdomainFeatures> requested_features = std::nullopt,
+                    int dns_concurrency = 0,
+                    int dns_retries = 1,
+                    int dns_timeout_ms = 500,
+                    int js_workers = 4,
+                    int js_budget_seconds = 30);
 std::string auto_find_wordlist();

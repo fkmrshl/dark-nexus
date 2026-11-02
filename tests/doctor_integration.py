@@ -75,7 +75,7 @@ def main():
             data = json.loads(result.stdout)
             require(isinstance(data, dict), data)
             require(data.get('schema_version') == 1, data)
-            require(data.get('version') == '2.0.0', data)
+            require(data.get('version') == '2.1.0', data)
             require(data.get('status') in ('ok', 'warn', 'fail'), data)
             records = data.get('checks')
             require(isinstance(records, list), data)
@@ -106,7 +106,7 @@ def main():
         for arguments in [('doctor',), ('--doctor',)]:
             plain = run(*arguments)
             require('\x1b' not in plain.stdout and plain.stderr == '', plain)
-            require('2.0.0' in plain.stdout and all(name in plain.stdout for name in CORE), plain)
+            require('2.1.0' in plain.stdout and all(name in plain.stdout for name in CORE), plain)
         pipe_env = dict(environment, TERM='xterm-256color')
         pipe_env.pop('NO_COLOR')
         piped = run('doctor', env=pipe_env)

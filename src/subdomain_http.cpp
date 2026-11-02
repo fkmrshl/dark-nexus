@@ -2,11 +2,13 @@
 #include "../include/security.hpp"
 #include "../include/user_agents.hpp"
 #include <algorithm>
+#include <arpa/inet.h>
 #include <cctype>
 #include <chrono>
 #include <curl/curl.h>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <utility>
@@ -44,47 +46,76 @@ struct Transfer {
     CurlResponse response;
     std::size_t body_limit = 1024 * 1024, header_limit = 64 * 1024;
     std::size_t body_bytes = 0, header_bytes = 0;
+    bool target = false, final_header_block = false;
+    std::optional<std::chrono::steady_clock::time_point> deadline;
 };
+
+bool transfer_stopped(Transfer& transfer) {
+    if (g_cancel_token.cancelled.load(std::memory_order_relaxed)) {
+        transfer.response.cancelled = true;
+        return true;
+    }
+    if (transfer.deadline && std::chrono::steady_clock::now() >= *transfer.deadline) {
+        transfer.response.timed_out = true;
+        return true;
+    }
+    return false;
+}
 
 std::size_t body_callback(char* data, std::size_t size, std::size_t count, void* opaque) {
     auto& transfer = *static_cast<Transfer*>(opaque);
     if (size && count > std::numeric_limits<std::size_t>::max() / size) { transfer.response.truncated = true; return 0; }
     const auto bytes = size * count;
-    if (g_cancel_token.cancelled.load(std::memory_order_relaxed)) { transfer.response.cancelled = true; return 0; }
-    if (bytes > transfer.body_limit - transfer.body_bytes) { transfer.response.truncated = true; return 0; }
-    transfer.body_bytes += bytes;
-    try { transfer.response.body.append(data, bytes); }
+    if (transfer_stopped(transfer)) return 0;
+    const auto available = transfer.body_limit - transfer.body_bytes;
+    const auto captured = std::min(bytes, available);
+    if (bytes > available && !transfer.target) { transfer.response.truncated = true; return 0; }
+    try { transfer.response.body.append(data, captured); }
     catch (...) { transfer.response.callback_failed = true; return 0; }
+    transfer.body_bytes += captured;
+    if (captured != bytes) { transfer.response.truncated = true; return 0; }
     return bytes;
 }
 
 std::size_t header_callback(char* data, std::size_t size, std::size_t count, void* opaque) {
     auto& transfer = *static_cast<Transfer*>(opaque);
-    if (size && count > std::numeric_limits<std::size_t>::max() / size) { transfer.response.truncated = true; return 0; }
+    if (size && count > std::numeric_limits<std::size_t>::max() / size) { transfer.response.truncated = true; transfer.response.headers_complete = false; return 0; }
     const auto bytes = size * count;
-    if (g_cancel_token.cancelled.load(std::memory_order_relaxed)) { transfer.response.cancelled = true; return 0; }
-    if (bytes > transfer.header_limit - transfer.header_bytes) { transfer.response.truncated = true; return 0; }
+    if (transfer_stopped(transfer)) return 0;
+    if (bytes > transfer.header_limit - transfer.header_bytes) { transfer.response.truncated = true; transfer.response.headers_complete = false; return 0; }
     transfer.header_bytes += bytes;
-    if (bytes >= 5 && std::memcmp(data, "HTTP/", 5) == 0) {
+    const bool status_line = bytes >= 5 && std::memcmp(data, "HTTP/", 5) == 0;
+    // Trailer fields are bounded but must not replace the original response metadata.
+    if (transfer.response.headers_complete && !status_line) return bytes;
+    if (status_line) {
         transfer.response.headers.clear();
         transfer.response.body.clear();
+        transfer.response.headers_complete = false;
+        const auto* space = static_cast<const char*>(std::memchr(data, ' ', bytes));
+        transfer.final_header_block = space && static_cast<std::size_t>(space - data) + 3 < bytes &&
+            ((space[1] >= '2' && space[1] <= '9') || (space[1] == '1' && space[2] == '0' && space[3] == '1'));
     }
     try { transfer.response.headers.append(data, bytes); }
-    catch (...) { transfer.response.callback_failed = true; return 0; }
+    catch (...) { transfer.response.callback_failed = true; transfer.response.headers_complete = false; return 0; }
+    if ((bytes == 2 && data[0] == '\r' && data[1] == '\n') || (bytes == 1 && data[0] == '\n'))
+        transfer.response.headers_complete = transfer.final_header_block;
     return bytes;
 }
 
 int progress_callback(void* opaque, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-    if (!g_cancel_token.cancelled.load(std::memory_order_relaxed)) return 0;
-    static_cast<Transfer*>(opaque)->response.cancelled = true;
-    return 1;
+    return transfer_stopped(*static_cast<Transfer*>(opaque)) ? 1 : 0;
 }
 
 CurlResponse request(const std::string& url, const std::string& host, const std::string& ua, int timeout_s,
                      const std::vector<std::string>& headers, SubdomainHttpMode mode,
-                     const std::string* post = nullptr, const std::string& credentials = "", bool head = false) {
+                     const std::string* post = nullptr, const std::string& credentials = "", bool head = false,
+                     std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt,
+                     const std::vector<std::string>& addresses = {}) {
     Transfer transfer;
-    if (mode == SubdomainHttpMode::TargetProbe) transfer.body_limit = 50000;
+    transfer.deadline = deadline;
+    transfer.response.requested_url = url;
+    transfer.response.method = post ? "POST" : head ? "HEAD" : "GET";
+    if (mode == SubdomainHttpMode::TargetProbe) { transfer.body_limit = 50000; transfer.target = true; }
     if (g_cancel_token.cancelled.load(std::memory_order_relaxed)) {
         transfer.response.cancelled = true;
         transfer.response.error = "cancelled";
@@ -94,28 +125,85 @@ CurlResponse request(const std::string& url, const std::string& host, const std:
         transfer.response.error = "invalid HTTP URL or host";
         return transfer.response;
     }
-    CURL* handle = curl_easy_init();
+    long timeout_ms = static_cast<long>(std::clamp(timeout_s, 1, 60)) * 1000;
+    if (deadline) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            *deadline - std::chrono::steady_clock::now()).count();
+        if (remaining <= 0) {
+            transfer.response.timed_out = true;
+            transfer.response.transport_code = static_cast<int>(CURLE_OPERATION_TIMEDOUT);
+            transfer.response.error = "HTTP deadline exceeded";
+            return transfer.response;
+        }
+        timeout_ms = static_cast<long>(std::min<long long>(timeout_ms, remaining));
+    }
+    // Lists must outlive the easy handle that references them.
+    std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> fields(nullptr, &curl_slist_free_all);
+    std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> resolve(nullptr, &curl_slist_free_all);
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> owner(curl_easy_init(), &curl_easy_cleanup);
+    CURL* handle = owner.get();
     if (!handle) { transfer.response.error = "cannot initialize HTTP client"; return transfer.response; }
-    curl_slist* fields = nullptr;
     for (const auto& header : headers) {
         if (header.find_first_of("\r\n") != std::string::npos || header.find('\0') != std::string::npos) {
             transfer.response.error = "invalid HTTP header";
-            curl_slist_free_all(fields); curl_easy_cleanup(handle); return transfer.response;
+            return transfer.response;
         }
-        auto* next = curl_slist_append(fields, header.c_str());
+        auto* next = curl_slist_append(fields.get(), header.c_str());
         if (!next) {
             transfer.response.error = "cannot allocate HTTP headers";
-            curl_slist_free_all(fields); curl_easy_cleanup(handle); return transfer.response;
+            return transfer.response;
         }
-        fields = next;
+        fields.release();
+        fields.reset(next);
     }
-    const auto timeout_ms = static_cast<long>(std::clamp(timeout_s, 1, 60)) * 1000;
+    if (!addresses.empty()) {
+        if (addresses.size() > 256) { transfer.response.error = "too many pinned addresses"; return transfer.response; }
+        std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(curl_url(), &curl_url_cleanup);
+        if (!parsed || curl_url_set(parsed.get(), CURLUPART_URL, url.c_str(), 0) != CURLUE_OK) {
+            transfer.response.error = "cannot parse pinned URL"; return transfer.response;
+        }
+        char* raw_host = nullptr;
+        char* raw_port = nullptr;
+        const auto host_status = curl_url_get(parsed.get(), CURLUPART_HOST, &raw_host, 0);
+        const auto port_status = curl_url_get(parsed.get(), CURLUPART_PORT, &raw_port, CURLU_DEFAULT_PORT);
+        std::unique_ptr<char, decltype(&curl_free)> url_host(raw_host, &curl_free), url_port(raw_port, &curl_free);
+        if (host_status != CURLUE_OK || port_status != CURLUE_OK || !url_host || !url_port) {
+            transfer.response.error = "cannot parse pinned URL host or port"; return transfer.response;
+        }
+        // Pinned probes require a DNS name: libcurl can bypass resolve entries for IP literals.
+        std::string hostname(url_host.get());
+        if (hostname.size() >= 2 && hostname.front() == '[' && hostname.back() == ']')
+            hostname = hostname.substr(1, hostname.size() - 2);
+        unsigned char host_bytes[16];
+        if (inet_pton(AF_INET, hostname.c_str(), host_bytes) == 1 ||
+            inet_pton(AF_INET6, hostname.c_str(), host_bytes) == 1) {
+            transfer.response.error = "pinned HTTP request requires a DNS hostname"; return transfer.response;
+        }
+        std::string entry = std::string(url_host.get()) + ":" + url_port.get() + ":";
+        for (std::size_t i = 0; i < addresses.size(); ++i) {
+            unsigned char bytes[16];
+            const auto& address = addresses[i];
+            if (address.find('\0') != std::string::npos) { transfer.response.error = "invalid pinned address"; return transfer.response; }
+            const bool ipv4 = inet_pton(AF_INET, address.c_str(), bytes) == 1;
+            const bool ipv6 = inet_pton(AF_INET6, address.c_str(), bytes) == 1;
+            if (!ipv4 && !ipv6) { transfer.response.error = "invalid pinned address"; return transfer.response; }
+            if (i) entry += ',';
+            entry += ipv6 ? "[" + address + "]" : address;
+        }
+        resolve.reset(curl_slist_append(nullptr, entry.c_str()));
+        if (!resolve || curl_easy_setopt(handle, CURLOPT_RESOLVE, resolve.get()) != CURLE_OK ||
+            curl_easy_setopt(handle, CURLOPT_PROXY, "") != CURLE_OK) {
+            transfer.response.error = "cannot configure pinned HTTP request"; return transfer.response;
+        }
+        transfer.response.dns_pinned = true;
+    }
     curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
     curl_easy_setopt(handle, CURLOPT_USERAGENT, ua.c_str());
-    curl_easy_setopt(handle, CURLOPT_HTTPHEADER, fields);
+    curl_easy_setopt(handle, CURLOPT_HTTPHEADER, fields.get());
     curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(handle, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(handle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
     curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 3L);
 #if LIBCURL_VERSION_NUM >= 0x075500
     curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http,https");
@@ -127,7 +215,7 @@ CurlResponse request(const std::string& url, const std::string& host, const std:
     curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, timeout_ms);
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, std::min(timeout_ms, 3000L));
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
-    if (!head) curl_easy_setopt(handle, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(transfer.body_limit));
+    if (!head && mode == SubdomainHttpMode::Verified) curl_easy_setopt(handle, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(transfer.body_limit));
     curl_easy_setopt(handle, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, header_callback);
     curl_easy_setopt(handle, CURLOPT_HEADERDATA, &transfer);
@@ -145,22 +233,26 @@ CurlResponse request(const std::string& url, const std::string& host, const std:
     const auto result = curl_easy_perform(handle);
     transfer.response.transport_code = static_cast<int>(result);
     transfer.response.cancelled = transfer.response.cancelled || g_cancel_token.cancelled.load(std::memory_order_relaxed);
-    transfer.response.timed_out = result == CURLE_OPERATION_TIMEDOUT;
+    transfer.response.timed_out = transfer.response.timed_out || result == CURLE_OPERATION_TIMEDOUT;
     transfer.response.truncated = transfer.response.truncated || result == CURLE_FILESIZE_EXCEEDED;
     long code = 0;
     curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &code);
     char* effective = nullptr;
     if (curl_easy_getinfo(handle, CURLINFO_EFFECTIVE_URL, &effective) == CURLE_OK && effective)
         transfer.response.effective_url = effective;
-    if (result == CURLE_OK && !transfer.response.cancelled && !transfer.response.truncated && !transfer.response.callback_failed) {
-        transfer.response.http_code = code;
-        transfer.response.success = code >= 200 && code < 300;
-    } else {
+    char* primary_ip = nullptr;
+    if (curl_easy_getinfo(handle, CURLINFO_PRIMARY_IP, &primary_ip) == CURLE_OK && primary_ip)
+        transfer.response.primary_ip = primary_ip;
+    if (code == 101 || code >= 200) transfer.response.http_code = code;
+    transfer.response.body_complete = result == CURLE_OK && !transfer.response.cancelled &&
+        !transfer.response.truncated && !transfer.response.callback_failed && transfer.response.headers_complete;
+    transfer.response.success = transfer.response.body_complete && code >= 200 && code < 300;
+    if (!transfer.response.body_complete) {
         transfer.response.error = transfer.response.cancelled ? "cancelled" : transfer.response.callback_failed ? "cannot buffer HTTP response" :
-            transfer.response.truncated ? "HTTP response exceeded the capture limit" : curl_easy_strerror(result);
+            transfer.response.timed_out && deadline ? "HTTP deadline exceeded" :
+            transfer.response.truncated ? "HTTP response exceeded the capture limit" :
+            result != CURLE_OK ? curl_easy_strerror(result) : "incomplete HTTP headers";
     }
-    curl_slist_free_all(fields);
-    curl_easy_cleanup(handle);
     return transfer.response;
 }
 }
@@ -170,26 +262,35 @@ CurlResponse libcurl_get(const std::string& url, const std::string& host, const 
     return request(url, host, ua, timeout_s, headers, mode);
 }
 
+CurlResponse libcurl_get_deadline(const std::string& url, std::chrono::steady_clock::time_point deadline) {
+    return request(url, "", random_ua(), 5, {}, SubdomainHttpMode::Verified, nullptr, "", false, deadline);
+}
+
 CurlResponse libcurl_post(const std::string& url, const std::string& ua, int timeout_s,
                           const std::vector<std::string>& headers, const std::string& body,
                           const std::string& credentials) {
     return request(url, "", ua, timeout_s, headers, SubdomainHttpMode::Verified, &body, credentials);
 }
 
-CurlResponse fast_probe(const std::string& sub, int timeout_s) {
-    auto response = libcurl_get("https://" + sub, sub, random_ua(), timeout_s, {}, SubdomainHttpMode::TargetProbe);
-    if (response.http_code > 0 || response.cancelled) return response;
-    response = libcurl_get("http://" + sub, sub, random_ua(), timeout_s, {}, SubdomainHttpMode::TargetProbe);
-    if (!response.http_code && !response.cancelled) subdomain_warning("HTTP enrichment for " + sub + ": " + response.error);
+CurlResponse fast_probe(const std::string& sub, int timeout_s, bool head, const std::vector<std::string>& addresses) {
+    auto host = sub;
+    const auto colon = host.rfind(':');
+    if (colon != std::string::npos && host.find(':') == colon) host.resize(colon);
+    auto response = request("https://" + sub, host, random_ua(), timeout_s, {}, SubdomainHttpMode::TargetProbe, nullptr, "", head, std::nullopt, addresses);
+    std::vector<SubdomainHttpObservation> attempts;
+    attempts.push_back(response);
+    if (!response.http_code && !response.cancelled) {
+        response = request("http://" + sub, host, random_ua(), timeout_s, {}, SubdomainHttpMode::TargetProbe, nullptr, "", head, std::nullopt, addresses);
+        attempts.push_back(response);
+    }
+    response.attempts = std::move(attempts);
+    if (!response.cancelled && !response.body_complete)
+        subdomain_warning("HTTP enrichment for " + sub + ": " + response.error);
     return response;
 }
 
 long fast_check(const std::string& sub, int timeout_s) {
-    auto response = request("https://" + sub, sub, random_ua(), timeout_s, {}, SubdomainHttpMode::TargetProbe, nullptr, "", true);
-    if (response.http_code > 0 || response.cancelled) return response.http_code;
-    response = request("http://" + sub, sub, random_ua(), timeout_s, {}, SubdomainHttpMode::TargetProbe, nullptr, "", true);
-    if (!response.http_code && !response.cancelled) subdomain_warning("HTTP enrichment for " + sub + ": " + response.error);
-    return response.http_code;
+    return fast_probe(sub, timeout_s, true).http_code;
 }
 
 struct WAFSig {

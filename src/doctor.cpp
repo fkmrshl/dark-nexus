@@ -70,7 +70,7 @@ Report inspect(const environment::Context& context) {
 }
 
 bool write_text(const Report& report, std::ostream& output) {
-    output << "dark-nexus 2.0.0 | doctor | local environment\n"
+    output << "dark-nexus 2.1.0 | doctor | local environment\n"
            << "Checks file metadata and current capabilities; helpers are never executed.\n\n";
     for (const auto& check : report.checks) {
         const auto style = check.status == "ok" ? terminal::Style::Success :
@@ -95,7 +95,7 @@ bool write_json(const Report& report, std::ostream& output) {
     for (const auto& check : report.checks)
         checks.push_back({{"id", check.id}, {"status", check.status}, {"detail", check.detail},
                           {"remedy", check.remedy}, {"workflows", check.workflows}});
-    output << nlohmann::json({{"schema_version", 1}, {"version", "2.0.0"},
+    output << nlohmann::json({{"schema_version", 1}, {"version", "2.1.0"},
         {"status", report.status()}, {"checks", checks}}).dump(2, ' ', false,
         nlohmann::json::error_handler_t::replace) << '\n';
     output.flush();

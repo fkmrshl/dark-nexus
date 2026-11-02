@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the real subdomain pipeline with link-time DNS/HTTP fixtures only."""
 import csv
-import io
 import json
 import os
 from pathlib import Path
@@ -43,14 +42,41 @@ class SubdomainPipelineTests(unittest.TestCase):
         return report, time.monotonic() - started
 
     def module_json(self):
+        report = self.module_report()
+        return report['subdomains'] + report['subdomain_candidates']
+
+    def module_report(self):
         return json.loads((self.root / 'example.test_subdomains.json').read_text())
+
+    def module_csv(self):
+        with (self.root / 'example.test_subdomains.csv').open(newline='') as stream:
+            return [json.loads(row['details']) for row in csv.DictReader(stream)
+                    if row['record_type'] in ('subdomain', 'subdomain_candidate')]
 
     def test_dns_observations_are_exported_without_http(self):
         report, _ = self.run_fixture()
         self.assertEqual(report['status'], 'complete')
         self.assertEqual({row['sub'] for row in report['subdomains']}, {'www.example.test', 'mail.example.test'})
         self.assertEqual(report['fixture']['http_calls'], 0)
-        self.assertEqual({row['subdomain'] for row in self.module_json()}, {'www.example.test', 'mail.example.test'})
+        self.assertEqual({row['sub'] for row in self.module_json()}, {'www.example.test', 'mail.example.test'})
+
+    def test_automatic_exports_match_final_report_and_separate_candidates(self):
+        for scenario, code in (('success', 0), ('mixed-failure', 1), ('dns-failure', 1), ('wildcard', 0), ('cancel', 130)):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario, code=code)
+                canonical = {key: value for key, value in report.items() if key != 'fixture'}
+                automatic = self.module_report()
+                self.assertEqual(automatic, canonical)
+                self.assertEqual(automatic['schema_version'], '3.0')
+                self.assertNotIn('results', automatic)
+                expected_counts = {'resolved': len(report['subdomains']),
+                                   'candidates': len(report['subdomain_candidates']),
+                                   'total': len(report['subdomains']) + len(report['subdomain_candidates'])}
+                self.assertEqual(automatic['subdomain_counts'], expected_counts)
+                self.assertEqual(self.module_csv(), report['subdomains'] + report['subdomain_candidates'])
+                checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+                self.assertTrue(checkpoint.pop('checkpoint')['final'])
+                self.assertEqual(checkpoint, canonical)
 
     def test_wordlist_streaming_reaches_candidates_beyond_first_dns_batch(self):
         words = [f'unknown{index}' for index in range(10005)] + ['tailmarker']
@@ -110,6 +136,7 @@ class SubdomainPipelineTests(unittest.TestCase):
                 self.assertEqual(len(report['subdomains']), 2)
                 self.assertTrue(all(row['cname'] == 'edge.example.test' for row in report['subdomains']))
                 self.assertTrue(all(row['server'] == 'fixture' for row in report['subdomains']))
+                self.assertTrue(all(row['stack'] == ['FixtureStack'] for row in report['subdomains']))
                 for filename in ('fixture-report.json', 'example.test_subdomains.json',
                                  'example.test_subdomains.csv', 'example.test_subdomains_checkpoint.json'):
                     self.assertNotIn('\x1b', (self.root / filename).read_text())
@@ -121,13 +148,77 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertEqual(report['subdomain_candidates'], [])
         self.assertEqual(report['fixture']['http_calls'], 2)
         self.assertIn('discovered.api.example.test', report['fixture']['requested'])
+        discovered = next(row for row in report['subdomains'] if row['sub'] == 'discovered.api.example.test')
+        self.assertEqual(discovered['source'], 'js')
+        self.assertEqual(discovered['discovery_sources'], ['js'])
+        self.assertEqual(discovered['doh_fallback'], '')
+        self.assertEqual(report['fixture']['page_calls'], 1, 'cached HTML should leave only one script fetch')
+        self.assertIn('cached=1', self.last_stdout)
+
+    def test_js_discovery_reuses_successful_http_scheme(self):
+        report, _ = self.run_fixture('js-http', words=('www',))
+        self.assertEqual({row['sub'] for row in report['subdomains']},
+                         {'www.example.test', 'discovered.api.example.test'})
+        self.assertEqual(report['fixture']['page_calls'], 1)
+        self.assertEqual(report['subdomains'][1]['http_observations'][0]['requested_url'][:7], 'http://')
 
     def test_compact_console_keeps_additional_addresses_in_reports(self):
         report, _ = self.run_fixture('presentation-compact')
         self.assertIn('192.0.2.20 (+1)', self.last_stdout)
         self.assertNotIn('192.0.2.21', self.last_stdout)
         self.assertTrue(all(row['ips'] == ['192.0.2.20', '192.0.2.21'] for row in report['subdomains']))
-        self.assertTrue(all(row['ipv4'] == ['192.0.2.20', '192.0.2.21'] for row in self.module_json()))
+        self.assertTrue(all(row['ips'] == ['192.0.2.20', '192.0.2.21'] for row in self.module_json()))
+
+    def test_js_observation_adds_source_without_repeating_successful_dns(self):
+        report, _ = self.run_fixture('js-overlap', words=('www',))
+        observed = next(row for row in report['subdomains'] if row['sub'] == 'discovered.api.example.test')
+        self.assertEqual(observed['discovery_sources'], ['js', 'passive'])
+        self.assertEqual(observed['source'], 'both')
+        self.assertEqual(observed['doh_fallback'], '')
+        self.assertEqual(self.non_probe_names(report).count('discovered.api.example.test'), 1)
+
+    def test_partial_http_keeps_status_and_diagnostics_in_every_report(self):
+        for scenario in ('http-truncated', 'http-timeout', 'http-headers-incomplete'):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario)
+                self.assertEqual(report['status'], 'complete')
+                rows = report['subdomains']
+                self.assertEqual(len(rows), 2)
+                for row in rows:
+                    self.assertEqual(row['http_code'], '200')
+                    self.assertEqual(row['title'], '')
+                    expected_server = '' if scenario == 'http-headers-incomplete' else 'fixture'
+                    self.assertEqual(row['server'], expected_server)
+                    observation = row['http_observations'][0]
+                    self.assertEqual(observation['http_code'], 200)
+                    self.assertFalse(observation['body_complete'])
+                    self.assertEqual(observation['timed_out'], scenario == 'http-timeout')
+                    self.assertEqual(observation['truncated'], scenario != 'http-timeout')
+                by_name = {row['sub']: row['http_observations'] for row in rows}
+                for row in self.module_json():
+                    self.assertEqual(row['http_observations'], by_name[row['sub']])
+                checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+                for row in checkpoint['subdomains']:
+                    self.assertEqual(row['http_observations'], by_name[row['sub']])
+                for row in self.module_csv():
+                    self.assertEqual(row['http_observations'], by_name[row['sub']])
+                self.assertIn('[HTTP transfer incomplete]', self.last_stdout)
+
+    def test_complete_404_keeps_its_status_and_title(self):
+        report, _ = self.run_fixture('http-404')
+        for row in report['subdomains']:
+            self.assertEqual(row['http_code'], '404')
+            self.assertIn('café', row['title'])
+            observation = row['http_observations'][0]
+            self.assertTrue(observation['body_complete'])
+            self.assertFalse(observation['success'])
+
+    def test_partial_js_page_or_script_is_not_used_for_discovery(self):
+        for scenario in ('js-partial-page', 'js-partial-script'):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario, words=('www',))
+                self.assertEqual({row['sub'] for row in report['subdomains']}, {'www.example.test'})
+                self.assertNotIn('discovered.api.example.test', report['fixture']['requested'])
 
     def test_dns_operational_failure_differs_from_negative_answer(self):
         negative, _ = self.run_fixture('nxdomain')
@@ -146,13 +237,59 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertTrue(all(row['ips'] == ['192.0.2.20'] for row in report['subdomains']))
         self.assertTrue(report['errors'])
 
+    def test_temporary_failures_recover_at_lower_concurrency(self):
+        report, _ = self.run_fixture('dns-transient')
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['errors'], [])
+        self.assertEqual(len(report['subdomains']), 2)
+        self.assertEqual(len(self.non_probe_names(report)), 4)
+        initial, retry = report['fixture']['dns_concurrencies']
+        self.assertEqual(initial, 128)
+        self.assertLess(retry, initial)
+        self.assertEqual(report['fixture']['dns_timeouts'], [500, 1000])
+        self.assertIn('[dns recovered]', self.last_stdout)
+
+    def test_retry_preserves_previously_successful_family(self):
+        report, _ = self.run_fixture('dns-partial-transient')
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['errors'], [])
+        self.assertEqual(len(report['subdomains']), 2)
+        for row in report['subdomains']:
+            self.assertEqual(row['ips'], ['192.0.2.20'])
+            self.assertEqual(row['ipv6'], ['2001:db8::20'])
+
+    def test_retry_budget_and_disabling_retries_are_respected(self):
+        for scenario, queries in (('dns-exhausted', 4), ('dns-no-retry', 2), ('dns-failure', 2), ('dns-permanent', 2)):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario, code=1)
+                self.assertEqual(report['status'], 'failed')
+                self.assertEqual(len(self.non_probe_names(report)), queries)
+                self.assertEqual(len(report['errors']), 1)
+
+    def test_two_retries_can_recover_without_adding_an_extra_attempt(self):
+        report, _ = self.run_fixture('dns-two-retries')
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['errors'], [])
+        self.assertEqual(len(self.non_probe_names(report)), 6)
+        self.assertEqual(report['fixture']['dns_timeouts'], [500, 1000, 1500])
+
+    def test_dns_failures_across_batches_produce_one_summary(self):
+        words = [f'host{index}' for index in range(10005)]
+        report, _ = self.run_fixture('dns-exhausted', words=words, code=1)
+        self.assertEqual(len(report['errors']), 1)
+        self.assertIn('10005 candidate checks', report['errors'][0])
+        self.assertEqual(len(self.non_probe_names(report)), len(words) * 2)
+        first, first_retry, second, second_retry = report['fixture']['dns_concurrencies']
+        self.assertLess(second, first)
+        self.assertLessEqual(second_retry, first_retry)
+
     def test_repeated_hostname_keeps_addresses_observed_in_later_batches(self):
         report, _ = self.run_fixture('duplicate-family')
         rows = [row for row in report['subdomains'] if row['sub'] == 'www.example.test']
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['ips'], ['192.0.2.20'])
         self.assertEqual(rows[0]['ipv6'], ['2001:db8::20'])
-        module_rows = [row for row in self.module_json() if row['subdomain'] == 'www.example.test']
+        module_rows = [row for row in self.module_json() if row['sub'] == 'www.example.test']
         self.assertEqual(module_rows[0]['ipv6'], ['2001:db8::20'])
 
     def test_doh_provider_names_describe_only_families_with_addresses(self):
@@ -162,10 +299,42 @@ class SubdomainPipelineTests(unittest.TestCase):
                 report, _ = self.run_fixture(scenario, words=('mail',), code=1)
                 self.assertEqual(report['status'], 'partial')
                 self.assertTrue(report['errors'])
-                row = next(row for row in self.module_json() if row['subdomain'] == 'www.example.test')
+                row = next(row for row in self.module_json() if row['sub'] == 'www.example.test')
                 self.assertEqual(row['doh_fallback'], expected)
-                self.assertEqual(row['ipv4'], ['192.0.2.42'])
+                self.assertEqual(row['ips'], ['192.0.2.42'])
                 self.assertEqual(row['ipv6'], ['2001:db8::42'] if scenario == 'doh-provider-merge' else [])
+                self.assertEqual(row['dns_status'], 'uncertain')
+                self.assertFalse(row['wildcard_match'])
+                self.assertEqual(self.candidate_names(report), {'www.example.test'})
+                self.assertEqual({row['sub'] for row in report['subdomains']}, {'mail.example.test'})
+                self.assertEqual(report['fixture']['http_calls'], 1)
+                self.assertNotIn('www.example.test', report['fixture']['http_addresses'])
+                self.assertTrue(any('DoH observations remain uncertain' in warning for warning in report['warnings']))
+
+    def test_native_recovery_promotes_doh_candidates_without_mixing_addresses(self):
+        report, _ = self.run_fixture('doh-native-recovery', words=('www', 'second', 'kept'), code=1)
+        self.assertEqual(report['status'], 'partial')  # Earlier native failures remain in run diagnostics.
+        self.assertEqual({row['sub'] for row in report['subdomains']}, {'www.example.test', 'second.example.test'})
+        self.assertEqual(self.candidate_names(report), {'kept.example.test'})
+        self.assertEqual(report['subdomain_counts'], {'resolved': 2, 'candidates': 1, 'total': 3})
+        self.assertEqual(report['fixture']['http_calls'], 2)
+        for row in report['subdomains']:
+            self.assertEqual(row['ips'], ['192.0.2.20'])
+            self.assertEqual(row['doh_fallback'], '')
+            self.assertEqual(set(row['discovery_sources']), {'passive', 'brute'})
+            self.assertEqual(report['fixture']['http_addresses'][row['sub']], ['192.0.2.20'])
+        self.assertEqual(report['subdomain_candidates'][0]['ips'], ['192.0.2.42'])
+
+    def test_http_enrichment_receives_both_dns_families_and_exports_selected_peer(self):
+        for scenario, expected in (('presentation', ['192.0.2.20', '192.0.2.21', '2001:db8::20']),
+                                   ('http-ipv6', ['2001:db8::20'])):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario, words=('www',))
+                self.assertEqual(report['fixture']['http_addresses']['www.example.test'], expected)
+                for rows in (report['subdomains'], self.module_json(), self.module_csv()):
+                    observation = rows[0]['http_observations'][0]
+                    self.assertTrue(observation['dns_pinned'])
+                    self.assertEqual(observation['primary_ip'], expected[0])
 
     def test_cancellation_discards_queue_but_retains_discovered_dns(self):
         words = [f'host{index}' for index in range(2500)]
@@ -174,10 +343,11 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertEqual(len(report['subdomains']), len(words))
         self.assertGreater(report['fixture']['http_calls'], 0)
         self.assertLess(report['fixture']['http_calls'], 10)
-        self.assertLess(elapsed, 4)
+        # Bound scan/worker shutdown; final report serialization is amplified by sanitizers.
+        self.assertLess(report['duration_ms'], 4000)
         self.assertEqual(len(self.module_json()), len(words))
         checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
-        self.assertEqual(checkpoint['count'], len(words))
+        self.assertEqual(checkpoint['subdomain_counts']['total'], len(words))
 
     def test_worker_exception_preserves_dns_instead_of_terminating(self):
         report, _ = self.run_fixture('worker-throw', code=1)
@@ -226,10 +396,8 @@ class SubdomainPipelineTests(unittest.TestCase):
                 self.assertEqual(module[0]['dns_status'], 'wildcard')
                 self.assertTrue(any('wildcard' in warning.lower() for warning in report['warnings']))
                 checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
-                self.assertEqual(checkpoint['count'], 1)
-                self.assertEqual(checkpoint['resolved_count'], 0)
-                self.assertEqual(checkpoint['candidate_count'], 1)
-                csv_rows = list(csv.DictReader(io.StringIO((self.root / 'example.test_subdomains.csv').read_text())))
+                self.assertEqual(checkpoint['subdomain_counts'], {'resolved': 0, 'candidates': 1, 'total': 1})
+                csv_rows = self.module_csv()
                 self.assertEqual(csv_rows[0]['dns_status'], 'wildcard')
 
     def test_child_wildcard_is_checked_even_when_root_probes_are_negative(self):
@@ -264,6 +432,38 @@ class SubdomainPipelineTests(unittest.TestCase):
                 self.assertEqual(report['fixture']['http_calls'], 0)
                 self.assertTrue(report['warnings'])
 
+    def test_temporary_wildcard_failures_recover_without_erasing_successful_families(self):
+        for scenario in ('probe-transient', 'probe-partial-transient', 'probe-two-retries'):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario)
+                self.assertEqual({row['sub'] for row in report['subdomains']},
+                                 {'www.example.test', 'mail.example.test', 'observed.example.test'})
+                self.assertEqual(report['subdomain_candidates'], [])
+                self.assertEqual(report['fixture']['probe_timeouts'],
+                                 [500, 1000, 1500] if scenario == 'probe-two-retries' else [500, 1000])
+                self.assertLess(report['fixture']['probe_concurrencies'][1], report['fixture']['probe_concurrencies'][0])
+                self.assertIn('[wildcard retry ', self.last_stdout)
+
+    def test_wildcard_retry_budget_and_positive_evidence_remain_conservative(self):
+        for scenario, attempts, status in (('probe-no-retry', 1, 'uncertain'),
+                                          ('probe-exhausted', 2, 'uncertain'),
+                                          ('probe-partial-positive', 2, 'uncertain'),
+                                          ('probe-retry-positive', 2, 'wildcard')):
+            with self.subTest(scenario=scenario):
+                report, _ = self.run_fixture(scenario)
+                self.assertEqual(report['subdomains'], [])
+                self.assertEqual(self.candidate_names(report), {'observed.example.test'})
+                self.assertEqual(report['subdomain_candidates'][0]['dns_status'], status)
+                self.assertEqual(len(report['fixture']['probe_timeouts']), attempts)
+                self.assertEqual(report['fixture']['http_calls'], 0)
+
+    def test_wildcard_batch_deadline_accounts_for_queued_queries_and_remains_bounded(self):
+        report, _ = self.run_fixture('probe-deadline', words=('www',))
+        self.assertEqual(report['fixture']['probe_concurrencies'], [16, 16])
+        self.assertEqual(report['fixture']['probe_timeouts'], [5000, 5000])
+        self.assertEqual(report['fixture']['probe_deadlines'], [6000, 30000])
+        self.assertTrue(report['subdomain_candidates'])  # Untested scopes exceed the independent 64-scope ceiling.
+
     def test_scope_probe_budget_keeps_unprobed_passive_names_uncertain(self):
         report, _ = self.run_fixture('scope-budget', words=('www',))
         probes = [name for name in report['fixture']['requested'] if name.startswith('dnxwc-')]
@@ -297,13 +497,15 @@ class SubdomainPipelineTests(unittest.TestCase):
                          if any(f'seed{1000 + index}unit' in name.split('.', 1)[0]
                                 for name in queried[101:])}
         self.assertLessEqual(len(mutated_seeds), 64)
+        generated = [row for row in report['subdomains'] if 'permutation' in row['discovery_sources']]
+        self.assertTrue(generated)
 
     def test_unicode_and_csv_quotes_survive_module_exports(self):
         report, _ = self.run_fixture('unicode')
         expected = 'café Москва, "quoted"'
         self.assertTrue(all(row['title'] == expected for row in report['subdomains']))
         self.assertTrue(all(row['title'] == expected for row in self.module_json()))
-        rows = list(csv.DictReader(io.StringIO((self.root / 'example.test_subdomains.csv').read_text())))
+        rows = self.module_csv()
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(row['title'] == expected for row in rows))
 
@@ -318,6 +520,17 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertEqual(victim.read_text(), 'keep this content')
         self.assertEqual(len(self.module_json()), 2)
         self.assertFalse(list(self.root.glob('*.tmp.*')))
+
+    def test_csv_export_failure_is_reflected_in_json_and_checkpoint(self):
+        destination = self.root / 'example.test_subdomains.csv'
+        destination.mkdir()
+        report, _ = self.run_fixture(code=1)
+        self.assertEqual(report['status'], 'partial')
+        self.assertEqual(self.module_report()['errors'], report['errors'])
+        checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
+        self.assertEqual(checkpoint['status'], 'partial')
+        self.assertEqual(checkpoint['errors'], report['errors'])
+        self.assertTrue(destination.is_dir())
 
     def test_destination_symlink_is_replaced_without_truncating_its_target(self):
         victim = self.root / 'keep.txt'

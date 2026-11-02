@@ -276,6 +276,26 @@ Options parse(const std::vector<std::string>& args) {
             else if (mode == "fast" || mode == "F" || mode == "f") options.deep = false;
             else throw Error("--mode must be fast or deep (F or D)");
             scope("subdomain");
+        } else if (flag == "--dns-concurrency") {
+            once("dns-concurrency", flag);
+            options.dns_concurrency = integer(value(), 16, 2000, flag);
+            scope("subdomain");
+        } else if (flag == "--dns-retries") {
+            once("dns-retries", flag);
+            options.dns_retries = integer(value(), 0, 2, flag);
+            scope("subdomain");
+        } else if (flag == "--dns-timeout") {
+            once("dns-timeout", flag);
+            options.dns_timeout_ms = integer(value(), 100, 5000, flag);
+            scope("subdomain");
+        } else if (flag == "--js-workers") {
+            once("js-workers", flag);
+            options.js_workers = integer(value(), 1, 8, flag);
+            scope("subdomain");
+        } else if (flag == "--js-budget") {
+            once("js-budget", flag);
+            options.js_budget_seconds = integer(value(), 1, 300, flag);
+            scope("subdomain");
         } else if (flag == "--wordlist") {
             once("wordlist", flag);
             options.wordlist = value();
@@ -522,12 +542,19 @@ std::string help(const std::string& module) {
             << "      --bruteforce         Use the large discovered wordlist in fast mode too\n"
             << "      --passive-only       Skip wordlist, permutations and JavaScript discovery\n"
             << "      --threads N          Enrichment workers, 1..512 (default: 200)\n"
+            << "      --dns-concurrency N  Candidate A/AAAA queries in flight, 16..2000\n"
+            << "                         Defaults: 256 fast, 512 deep; adapts to DNS errors\n"
+            << "      --dns-retries N      Retry temporary DNS failures, 0..2 (default: 1)\n"
+            << "      --dns-timeout MS     Initial DNS query timeout, 100..5000 (default: 500)\n"
+            << "                         Retries use longer timeouts, capped at 5000 ms\n"
             << "      --permutations / --no-permutations   Bounded name variants\n"
             << "      --deep-passive / --no-deep-passive   Additional passive sources\n"
             << "      --http / --no-http                   HTTP metadata checks\n"
             << "      --cname / --no-cname                 CNAME DNS annotations\n"
             << "      --tech / --no-tech                   Technology/WAF (requires HTTP)\n"
             << "      --js / --no-js                       Script discovery (requires HTTP)\n"
+            << "      --js-workers N       Parallel JS page/script requests, 1..8 (default: 4)\n"
+            << "      --js-budget SEC      Total JS discovery budget, 1..300 (default: 30)\n"
             << "      --service-hints / --no-service-hints Service inspection (HTTP + CNAME)\n"
             << "      --no-enrich          Disable HTTP, CNAME, tech, JS and service hints\n"
             << "      --full-addresses     Print every address; compact console shows +N otherwise\n"

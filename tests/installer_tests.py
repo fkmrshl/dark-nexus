@@ -63,7 +63,7 @@ if '--build' in sys.argv:
             print(f'[{i}/4] Building object {i}', flush=True)
             time.sleep(0.12)
     target = build / 'dark_nexus'
-    target.write_text('#!/usr/bin/env bash\\nif [[ "${DNX_TEST_VERSION_FAIL:-}" == 1 ]]; then exit 8; fi\\nprintf "dark-nexus 2.0.0\\\\n"\\n')
+    target.write_text('#!/usr/bin/env bash\\nif [[ "${DNX_TEST_VERSION_FAIL:-}" == 1 ]]; then exit 8; fi\\nprintf "dark-nexus 2.1.0\\\\n"\\n')
     target.chmod(0o755)
 else:
     build = Path(sys.argv[sys.argv.index('-B') + 1])
@@ -220,7 +220,7 @@ dnx_packages Core cmake''', code=23)
         result, prefix = self.install()
         self.assertIn('Installation complete', result.stdout)
         self.assertIn('fixture CMake: visible output', result.stdout)
-        self.assertIn('dark-nexus 2.0.0', (prefix / 'bin' / 'dark-nexus').read_text())
+        self.assertIn('dark-nexus 2.1.0', (prefix / 'bin' / 'dark-nexus').read_text())
         self.assertEqual((prefix / 'share/wordlists/dark-nexus/best-dns-wordlist.txt').read_text(), 'www\nmail\n')
         self.assertEqual(list((prefix / 'bin').glob('.dark-nexus.*')), [])
 
@@ -357,7 +357,7 @@ dnx_dependencies''').stdout
         self.assertIn('\x1b[36m', output)
         self.assertIn('[1/4] Building object 1', log)
         self.assertIn('[4/4] Building object 4', log)
-        self.assertIn('2.0.0', (prefix / 'bin/dark-nexus').read_text())
+        self.assertIn('2.1.0', (prefix / 'bin/dark-nexus').read_text())
 
     def test_terminal_panel_no_color(self):
         output, _, _ = self.terminal_install(changes={'NO_COLOR': ''})

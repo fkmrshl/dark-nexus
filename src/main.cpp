@@ -73,6 +73,30 @@ void validate_target(const cli::Options& options) {
     }
 }
 
+// Coalesce a requested automatic report instead of overwriting it in a different format.
+bool uses_automatic_subdomain_output(const cli::Options& options) {
+    if (options.module != "subdomain" || options.output.empty() || options.output == "-") return false;
+    auto domain = options.target;
+    std::transform(domain.begin(), domain.end(), domain.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (!domain.empty() && domain.back() == '.') domain.pop_back();
+    auto destination = [](const std::filesystem::path& path) {
+        const auto absolute = std::filesystem::absolute(path);
+        // Resolve parent symlinks; an atomic replacement does not follow a final-file symlink.
+        return std::filesystem::weakly_canonical(absolute.parent_path()) / absolute.filename();
+    };
+    const auto requested = destination(options.output);
+    for (const auto& report : std::vector<std::pair<std::string, std::string>>{
+            {domain + "_subdomains.json", "json"}, {domain + "_subdomains.csv", "csv"},
+            {domain + "_subdomains_checkpoint.json", "json"}}) {
+        if (requested != destination(report.first)) continue;
+        if (OutputWriter::format_for(options.output, options.format) != report.second)
+            throw cli::Error("--output conflicts with automatic subdomain report format: " + report.first);
+        return true;
+    }
+    return false;
+}
+
 void run_module(const cli::Options& options) {
     const auto& module = options.module;
     const auto& target = options.target;
@@ -103,7 +127,9 @@ void run_module(const cli::Options& options) {
                               (options.deep || options.permutations) && !options.no_permutations && !options.passive_only,
                               options.deep, enrich,
                               (options.deep || options.deep_passive) && !options.no_deep_passive,
-                              options.passive_only, features);
+                              options.passive_only, features,
+                              options.dns_concurrency, options.dns_retries, options.dns_timeout_ms,
+                              options.js_workers, options.js_budget_seconds);
     }
 
     const auto family = family_for(options.family);
@@ -157,7 +183,7 @@ int main(int argc, char** argv) {
                            terminal::ColorMode::Auto;
         terminal::configure(color);
         if (options.help) { std::cout << cli::help(options.doctor ? "doctor" : options.module); return 0; }
-        if (options.version) { std::cout << "dark-nexus 2.0.0\n"; return 0; }
+        if (options.version) { std::cout << "dark-nexus 2.1.0\n"; return 0; }
         if (options.list_modules) { std::cout << cli::modules(); return 0; }
         if (options.doctor) {
             signal(SIGPIPE, SIG_IGN);
@@ -171,6 +197,7 @@ int main(int argc, char** argv) {
             return report.exit_code();
         }
         validate_target(options);
+        const bool automatic_output = uses_automatic_subdomain_output(options);
         if (!drop_privileges()) throw std::runtime_error("failed to drop privileges");
         if (!options.no_log && !options.log_file.empty()) {
             if (!Logger::get().init(options.log_file))
@@ -188,6 +215,8 @@ int main(int argc, char** argv) {
         g_result.scan_type = options.module == "portscan" ? "port_scan" : options.module;
         const auto start = std::chrono::steady_clock::now();
         const auto start_text = now_str();
+        g_result.start_time = start_text;
+        g_result.status = "running";
         LOG_INFO("main", "started module=" + options.module + " target=" + options.target);
         {
             ScanOutput output(options);
@@ -201,16 +230,7 @@ int main(int argc, char** argv) {
                 if (!interrupted) g_result.errors.push_back(sanitize(error.what()));
             }
         }
-        const bool has_results = !g_result.dns_records.empty() || !g_result.whois_records.empty() ||
-            !g_result.ports.empty() || !g_result.subdomains.empty() ||
-            !g_result.subdomain_candidates.empty() ||
-            !g_result.trace.empty() || !g_result.open_ports.empty() || !g_result.os_guess.empty() ||
-            !g_result.geo_country.empty() || !g_result.geo_city.empty();
-        g_result.status = interrupted ? "cancelled" : g_result.errors.empty() ? "complete" :
-                          has_results ? "partial" : "failed";
-        for (const auto& error : g_result.errors) std::cerr << "dark-nexus: " << sanitize(error) << '\n';
-        if (!options.quiet)
-            for (const auto& warning : g_result.warnings) std::cerr << "dark-nexus: warning: " << sanitize(warning) << '\n';
+        g_result.status = OutputWriter::completion_status(g_result, interrupted != 0);
         // Command metadata describes the full run, including chained modules.
         g_result.target = options.target;
         g_result.start_time = start_text;
@@ -219,17 +239,38 @@ int main(int argc, char** argv) {
             std::chrono::steady_clock::now() - start).count();
         g_result.duration_ms = static_cast<int>(std::min<long long>(elapsed, std::numeric_limits<int>::max()));
 
-        if (!options.output.empty()) {
+        if (options.module == "subdomain") {
+            if (OutputWriter::write_subdomain_reports(g_result) && !options.quiet)
+                std::cerr << "Subdomain reports saved in the working directory.\n";
+        }
+        for (const auto& error : g_result.errors) std::cerr << "dark-nexus: " << sanitize(error) << '\n';
+        if (!options.quiet)
+            for (const auto& warning : g_result.warnings) std::cerr << "dark-nexus: warning: " << sanitize(warning) << '\n';
+
+        if (!options.output.empty() && !automatic_output) {
             const std::string format = OutputWriter::format_for(options.output, options.format);
             if (options.output == "-") {
                 std::ostream report(terminal::stdout_buffer());
-                if (!OutputWriter::write_stream(g_result, report, format))
+                if (!OutputWriter::write_stream(g_result, report, format)) {
+                    g_result.errors.push_back("failed to write report to stdout");
+                    g_result.status = OutputWriter::completion_status(g_result, interrupted != 0);
+                    if (options.module == "subdomain") OutputWriter::write_subdomain_reports(g_result);
                     throw std::runtime_error("failed to write report to stdout");
+                }
             } else {
                 const std::filesystem::path path(options.output);
-                if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
-                if (!OutputWriter::write(g_result, options.output, format))
-                    throw std::runtime_error("failed to write report: " + options.output);
+                std::string export_error;
+                try {
+                    if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
+                    if (!OutputWriter::write(g_result, options.output, format))
+                        export_error = "failed to write report: " + options.output;
+                } catch (const std::exception& error) { export_error = error.what(); }
+                if (!export_error.empty()) {
+                    g_result.errors.push_back(sanitize(export_error));
+                    g_result.status = OutputWriter::completion_status(g_result, interrupted != 0);
+                    if (options.module == "subdomain") OutputWriter::write_subdomain_reports(g_result);
+                    throw std::runtime_error(export_error);
+                }
                 if (!options.quiet) std::cerr << "Report saved: " << options.output << '\n';
             }
         }

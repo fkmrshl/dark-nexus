@@ -47,6 +47,13 @@ void valid_cases() {
     check(cli::help("doctor").find("CAP_NET_RAW") != std::string::npos, "doctor detailed help");
     check(cli::parse({"--subdomain", "example.test", "--full-addresses"}).full_addresses,
           "complete address presentation is explicitly selectable");
+    const auto dns_limits = cli::parse({"--subdomain", "example.test", "--dns-concurrency", "128", "--dns-retries=2", "--dns-timeout", "1000"});
+    check(dns_limits.dns_concurrency == 128 && dns_limits.dns_retries == 2 && dns_limits.dns_timeout_ms == 1000,
+          "subdomain DNS limits are independent of enrichment threads");
+    check(cli::parse({"--subdomain", "example.test", "--dns-retries", "0"}).dns_retries == 0,
+          "DNS retries can be disabled");
+    const auto js_limits = cli::parse({"--subdomain", "example.test", "--js-workers=8", "--js-budget", "10"});
+    check(js_limits.js_workers == 8 && js_limits.js_budget_seconds == 10, "independent JS work limits");
     for (const auto& args : std::vector<std::vector<std::string>> {
             {"--help", "portscan"}, {"--help=portscan"},
             {"--portscan", "--help"}, {"--help", "--portscan"},
@@ -245,6 +252,17 @@ void invalid_cases() {
         {"--portscan", "x", "--top-ports", "500"},
         {"--portscan", "x", "--timing=3", "-T4"},
         {"--subdomain", "x", "--mode="}, {"--subdomain", "x", "--mode", "other"},
+        {"--subdomain", "x", "--dns-concurrency=15"}, {"--subdomain", "x", "--dns-concurrency=2001"},
+        {"--subdomain", "x", "--dns-concurrency=32", "--dns-concurrency=64"},
+        {"--subdomain", "x", "--dns-retries=-1"}, {"--subdomain", "x", "--dns-retries=3"},
+        {"--subdomain", "x", "--dns-retries=0", "--dns-retries=1"},
+        {"--subdomain", "x", "--dns-timeout=99"}, {"--subdomain", "x", "--dns-timeout=5001"},
+        {"--dns", "x", "--dns-timeout=1000"},
+        {"--dns", "x", "--dns-concurrency=64"}, {"--portscan", "x", "--dns-retries=1"},
+        {"--subdomain", "x", "--js-workers=0"}, {"--subdomain", "x", "--js-workers=9"},
+        {"--subdomain", "x", "--js-budget=0"}, {"--subdomain", "x", "--js-budget=301"},
+        {"--subdomain", "x", "--js-workers=2", "--js-workers=4"},
+        {"--dns", "x", "--js-budget=10"}, {"--portscan", "x", "--js-workers=2"},
         {"--subdomain", "x", "--passive-only", "--bruteforce"},
         {"--subdomain", "x", "--bruteforce", "--passive-only"},
         {"--subdomain", "x", "--passive-only", "--wordlist", "a"},

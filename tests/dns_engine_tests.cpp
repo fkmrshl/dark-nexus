@@ -149,9 +149,18 @@ int main() {
         check(!data.at("negative.test").failed && data.at("negative.test").ipv4.empty(), "NXDOMAIN is a successful negative");
         check(!data.at("nodata.test").failed && data.at("nodata.test").ipv6.empty(), "NODATA is a successful negative");
         check(data.at("partial.test").failed && !data.at("partial.test").ipv4.empty() && data.at("partial.test").ipv6.empty(), "one-family failure preserves the other family");
+        check(!data.at("partial.test").ipv4_failed && data.at("partial.test").ipv6_failed &&
+              !data.at("partial.test").ipv4_retryable && data.at("partial.test").ipv6_retryable,
+              "temporary failure is recorded only for the failing family");
         check(data.at("error.test").failed && !data.at("error.test").error.empty(), "SERVFAIL is an operational failure");
+        check(data.at("error.test").ipv4_retryable && data.at("error.test").ipv6_retryable,
+              "SERVFAIL is retryable for both families");
+        check(!data.at("negative.test").ipv4_retryable && !data.at("negative.test").ipv6_retryable,
+              "NXDOMAIN is not retryable");
         check(!data.at("alias.test").failed && !data.at("alias.test").ipv4.empty(), "correlated CNAME chain accepted");
         check(data.at("foreign.test").failed && data.at("foreign.test").ipv4.empty(), "unrelated address owner rejected");
+        check(!data.at("foreign.test").ipv4_retryable && !data.at("foreign.test").ipv6_retryable,
+              "invalid address ownership is not a temporary failure");
         check(engine.resolve_cname("alias.test") == "edge.test", "CNAME enrichment validates the question and owner");
         check(engine.resolve_cname("bad-cname.test").empty(), "unrelated CNAME enrichment rejected");
         std::vector<std::string> slow;
@@ -160,6 +169,15 @@ int main() {
         data = engine.resolve_batch_checked(slow, 1, 80);
         check(std::chrono::steady_clock::now() - start < std::chrono::seconds(1), "whole-batch deadline is bounded");
         check(data.size() == slow.size() && std::all_of(data.begin(), data.end(), [](const auto& entry) { return entry.second.failed; }), "submitted and unsubmitted queries both report failure");
+        check(std::all_of(data.begin(), data.end(), [](const auto& entry) {
+            return entry.second.ipv4_retryable && entry.second.ipv6_retryable;
+        }), "deadline-expired and unsubmitted queries can be retried");
+        for (const int limit : {1, 3, 17}) {
+            const int before = server.requests.load();
+            engine.resolve_batch_checked(slow, limit, 80);
+            const int sent = server.requests.load() - before;
+            check(sent > 0 && sent <= limit, "A and AAAA together respect the concurrency cap");
+        }
         data = engine.resolve_batch_checked({"error.test", "timeout.mixed.test"}, 4, 80);
         check(data.at("error.test").error.find(ares_strerror(ARES_ESERVFAIL)) != std::string::npos,
               "completed SERVFAIL diagnosis survives another host reaching the batch deadline");
@@ -171,6 +189,8 @@ int main() {
         const auto count = server.requests.load();
         data = engine.resolve_batch_checked({"dual.test"}, 1, 1000);
         check(data.at("dual.test").failed && server.requests == count, "pre-cancelled lookup makes no requests");
+        check(!data.at("dual.test").ipv4_retryable && !data.at("dual.test").ipv6_retryable,
+              "cancelled lookups are not retryable");
         g_cancel_token.cancelled = false;
         for (const auto& content : {std::string(""), std::string("# empty\n"), std::string("999.1.1.1\n"), std::string("127.0.0.1:0\n")}) {
             write(content);

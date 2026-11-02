@@ -2,20 +2,36 @@
 
 #include "../include/dark_nexus.hpp"
 #include <functional>
+#include <chrono>
 #include <optional>
 #include <random>
 #include <set>
 #include <string>
 #include <vector>
 
-struct CurlResponse {
+struct CurlResponse : SubdomainHttpObservation {
     std::string headers;
     std::string body;
-    long        http_code = 0;
-    int transport_code = -1;
-    bool success = false, cancelled = false, timed_out = false, truncated = false, callback_failed = false;
-    std::string effective_url, error;
+    std::vector<SubdomainHttpObservation> attempts;
 };
+
+struct SubdomainJsTarget { std::string url; std::optional<std::string> html; };
+struct SubdomainJsOptions {
+    int workers = 4, budget_ms = 30000;
+    std::size_t page_limit = 32, page_attempt_limit = 64, script_limit = 50,
+                candidate_limit = 5000, redirect_limit = 3;
+};
+struct SubdomainJsProgress {
+    std::size_t pages_attempted = 0, pages_processed = 0, cached_pages = 0,
+                scripts_completed = 0, scripts_total = 0, candidates = 0;
+    bool budget_exhausted = false;
+};
+struct SubdomainJsResult { std::set<std::string> names; SubdomainJsProgress progress; };
+bool is_html_response(const CurlResponse& response);
+SubdomainJsResult scrape_js_subdomains(const std::vector<SubdomainJsTarget>& targets,
+    const std::string& domain, const SubdomainJsOptions& options = {},
+    const std::function<void(const SubdomainJsProgress&)>& progress = {});
+CurlResponse libcurl_get_deadline(const std::string& url, std::chrono::steady_clock::time_point deadline);
 
 enum class SubdomainHttpMode { Verified, TargetProbe };
 void subdomain_warning(const std::string& message);
@@ -37,7 +53,8 @@ CurlResponse libcurl_get(const std::string& url,
 CurlResponse libcurl_post(const std::string& url, const std::string& ua, int timeout_s,
                          const std::vector<std::string>& headers, const std::string& body,
                          const std::string& credentials = "");
-CurlResponse fast_probe(const std::string& sub, int timeout_s);
+CurlResponse fast_probe(const std::string& sub, int timeout_s, bool head = false,
+                        const std::vector<std::string>& addresses = {});
 long fast_check(const std::string& sub, int timeout_s);
 WAFInfo detect_waf(const std::string& hdrs, const std::string& body, const std::string& cookies);
 TechInfo detect_tech(const std::string& headers, const std::string& body, const std::string& cookies);

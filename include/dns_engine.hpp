@@ -14,6 +14,9 @@
 struct DnsLookupResult {
     std::vector<std::string> ipv4, ipv6;
     bool failed = false;
+    bool ipv4_failed = false, ipv6_failed = false;
+    bool ipv4_retryable = false, ipv6_retryable = false;
+    std::string ipv4_error, ipv6_error;
     std::string error;
 };
 
@@ -37,7 +40,7 @@ public:
     // retain any addresses collected from the other family.
     std::unordered_map<std::string, DnsLookupResult>
     resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency = 800,
-                          int timeout_ms = 30000);
+                          int timeout_ms = 30000, int query_timeout_ms = 500);
 
     void set_concurrency(int c);
     void clear_cache();

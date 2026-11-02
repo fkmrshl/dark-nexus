@@ -173,7 +173,7 @@ static const std::vector<std::string> USER_AGENTS = {
 };
 
 inline const std::string& random_ua() {
-    static std::mt19937 rng(std::random_device{}());
+    static thread_local std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<size_t> dist(0, USER_AGENTS.size() - 1);
     return USER_AGENTS[dist(rng)];
 }

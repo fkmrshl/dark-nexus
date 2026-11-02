@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(dark_nexus VERSION 2.0.0 LANGUAGES CXX C)
+project(dark_nexus VERSION 2.1.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -127,6 +127,7 @@ if(BUILD_TESTING)
     add_test(NAME report_output COMMAND output_tests)
     if(Python3_Interpreter_FOUND)
         add_executable(subdomain_http_fixture tests/subdomain_http_fixture.cpp src/subdomain_http.cpp src/globals.cpp)
+        target_link_options(subdomain_http_fixture PRIVATE -Wl,--wrap=curl_easy_init)
         target_include_directories(subdomain_http_fixture PRIVATE include src)
         target_compile_options(subdomain_http_fixture PRIVATE -Wall -Wextra -Wpedantic)
         target_link_libraries(subdomain_http_fixture PRIVATE c-ares::cares_static
@@ -134,7 +135,7 @@ if(BUILD_TESTING)
         add_test(NAME subdomain_http COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/subdomain_http_tests.py $<TARGET_FILE:subdomain_http_fixture>)
         set_tests_properties(subdomain_http PROPERTIES TIMEOUT 30)
-        add_executable(subdomain_integration_fixture src/subdomain.cpp src/subdomain_generate.cpp
+        add_executable(subdomain_integration_fixture src/subdomain.cpp src/subdomain_generate.cpp src/subdomain_js.cpp
             src/environment.cpp src/dns_query.cpp src/output.cpp src/terminal.cpp src/globals.cpp
             tests/subdomain_integration.cpp)
         target_include_directories(subdomain_integration_fixture PRIVATE include src)
@@ -144,6 +145,13 @@ if(BUILD_TESTING)
         add_test(NAME subdomain_pipeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/subdomain_integration.py $<TARGET_FILE:subdomain_integration_fixture>)
         set_tests_properties(subdomain_pipeline PROPERTIES TIMEOUT 120)
+        add_executable(subdomain_js_tests tests/subdomain_js_tests.cpp src/subdomain_js.cpp src/subdomain_generate.cpp)
+        target_include_directories(subdomain_js_tests PRIVATE include src)
+        target_compile_options(subdomain_js_tests PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic -ffunction-sections -fdata-sections)
+        target_link_options(subdomain_js_tests PRIVATE -Wl,--gc-sections)
+        target_link_libraries(subdomain_js_tests PRIVATE c-ares::cares_static ${DARK_NEXUS_CURL} pthread)
+        add_test(NAME subdomain_js COMMAND subdomain_js_tests)
+        set_tests_properties(subdomain_js PROPERTIES TIMEOUT 30)
         add_test(NAME cli_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_integration.py $<TARGET_FILE:dark_nexus>)
         add_test(NAME doctor_integration COMMAND ${Python3_EXECUTABLE}
