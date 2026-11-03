@@ -1,8 +1,8 @@
 # Subdomain Scanner changes for v2.1
 
-Release version: **2.1.0 (v2.1)**. CMake, `--version` and doctor text/JSON use the same release number. These are local changes pending publication; the system-installed executable is not replaced by a test build.
+Release version: **2.1.0 (v2.1)**. CMake, `--version` and doctor text/JSON use the same release number. The initial hardening release was published as commit `51539803714ab24bb4aed083eb941119480d2fc2`. Subsequent DNS scheduling corrections and their validation are described in [DNS degradation follow-up](subdomain-dns-degradation.md). Updating an installed executable requires installing the updated source.
 
-Source baseline was refreshed to `c97eaf22c41b80bd37566d56c70f6a88f8892161` from GitHub `main` on 2026-10-30. Its only difference from the original audit baseline `2274da1` is a README edit. The scanner changes below are local work pending publication.
+Source baseline was refreshed to `c97eaf22c41b80bd37566d56c70f6a88f8892161` from GitHub `main` on 2026-10-30. Its only difference from the original audit baseline `2274da1` is a README edit. The scanner changes below describe that initial v2.1 release; the linked follow-up supersedes its fixed DNS batch deadlines and retry details.
 
 ## DNS recovery
 

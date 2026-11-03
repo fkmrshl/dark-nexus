@@ -28,6 +28,7 @@ void write_csv_report(const ScanResult& result, std::ostream& out) {
             {{"schema_version", result.schema_version}, {"resolved_ip", result.resolved_ip},
              {"start_time", result.start_time}, {"end_time", result.end_time},
              {"duration_ms", result.duration_ms}, {"status", result.status},
+             {"subdomain_dns", result.subdomain_dns},
              {"subdomain_counts", {{"resolved", result.subdomains.size()},
                                    {"candidates", result.subdomain_candidates.size()},
                                    {"total", result.subdomains.size() + result.subdomain_candidates.size()}}}});

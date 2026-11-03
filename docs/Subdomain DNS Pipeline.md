@@ -68,7 +68,7 @@ The scanner resolves candidates in batches.
 
 Current behavior:
 
-- Wordlist candidates are streamed into fixed-size batches.
+- Wordlist candidates use bounded input buffers, subdivided by DNS concurrency and query timeout.
 - Duplicates are removed inside the active batch.
 - Resolved hosts are queued into the HTTP enrichment pipeline.
 - Empty answers are not cached as successful DNS results.
@@ -211,7 +211,7 @@ The scanner resolves candidates in batches.
 
 Current behavior:
 
-- Wordlist candidates are streamed into fixed-size batches.
+- Wordlist candidates use bounded input buffers, subdivided by DNS concurrency and query timeout.
 - Duplicates are removed inside the active batch.
 - Resolved hosts are queued into the HTTP enrichment pipeline.
 - Empty answers are not cached as successful DNS results.
@@ -288,3 +288,7 @@ Typical deep scan behavior now shows:
 - Permutation batches using the same DNS and HTTP pipeline.
 
 Actual speed depends on resolver quality, network path, VM networking, packet loss, and the number of positive hosts that require HTTP enrichment.
+
+## DNS degradation follow-up
+
+The capacity-aware batching, single-resolver checked calls, selective retries, outage guard, and report counters are documented in [DNS degradation validation](subdomain-dns-degradation.md). That follow-up supersedes earlier fixed-batch and implicit resolver-retry descriptions in this document.

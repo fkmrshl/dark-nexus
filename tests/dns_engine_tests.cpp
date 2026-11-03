@@ -152,6 +152,22 @@ int main() {
         check(!data.at("partial.test").ipv4_failed && data.at("partial.test").ipv6_failed &&
               !data.at("partial.test").ipv4_retryable && data.at("partial.test").ipv6_retryable,
               "temporary failure is recorded only for the failing family");
+        const auto partial_before = server.requests.load();
+        auto retried = engine.resolve_batch_checked({"partial.test"}, 2, 1000, 500, &data);
+        check(server.requests.load() - partial_before == 1 &&
+              !retried.at("partial.test").ipv4_attempted && retried.at("partial.test").ipv6_attempted &&
+              retried.at("partial.test").ipv4 == data.at("partial.test").ipv4,
+              "selective retry submits only AAAA and retains successful A");
+        const auto missing_before = server.requests.load();
+        const auto missing = engine.resolve_batch_checked({"missing.test"}, 2, 1000, 500, &data);
+        check(missing.at("missing.test").failed && missing.at("missing.test").ipv4_failed &&
+              missing.at("missing.test").ipv6_failed && !missing.at("missing.test").ipv4_retryable &&
+              !missing.at("missing.test").ipv6_retryable && !missing.at("missing.test").ipv4_attempted &&
+              !missing.at("missing.test").ipv6_attempted &&
+              missing.at("missing.test").ipv4_error == "Missing previous DNS result for retry" &&
+              missing.at("missing.test").ipv6_error == "Missing previous DNS result for retry" &&
+              server.requests.load() == missing_before,
+              "missing previous result fails explicitly without queries");
         check(data.at("error.test").failed && !data.at("error.test").error.empty(), "SERVFAIL is an operational failure");
         check(data.at("error.test").ipv4_retryable && data.at("error.test").ipv6_retryable,
               "SERVFAIL is retryable for both families");
@@ -172,6 +188,9 @@ int main() {
         check(std::all_of(data.begin(), data.end(), [](const auto& entry) {
             return entry.second.ipv4_retryable && entry.second.ipv6_retryable;
         }), "deadline-expired and unsubmitted queries can be retried");
+        check(data.at(slow.front()).ipv4_attempted && data.at(slow.front()).ipv4_deadline_exceeded &&
+              !data.at(slow.back()).ipv4_attempted && data.at(slow.back()).ipv4_deadline_exceeded,
+              "deadline marks submitted and queued families separately");
         for (const int limit : {1, 3, 17}) {
             const int before = server.requests.load();
             engine.resolve_batch_checked(slow, limit, 80);
@@ -191,7 +210,33 @@ int main() {
         check(data.at("dual.test").failed && server.requests == count, "pre-cancelled lookup makes no requests");
         check(!data.at("dual.test").ipv4_retryable && !data.at("dual.test").ipv6_retryable,
               "cancelled lookups are not retryable");
+        check(!data.at("dual.test").ipv4_attempted && !data.at("dual.test").ipv4_deadline_exceeded,
+              "pre-cancellation is neither an attempt nor a deadline");
         g_cancel_token.cancelled = false;
+        {
+            LocalDns second, third, fourth;
+            write(server.endpoint + '\n' + second.endpoint + '\n' + third.endpoint + '\n' + fourth.endpoint + '\n');
+            engine.load_resolvers(file.string());
+            server.silent = second.silent = third.silent = fourth.silent = true;
+            const int before = server.requests + second.requests + third.requests + fourth.requests;
+            const auto timed = engine.resolve_batch_checked({"timeout.one.test"}, 1, 2000, 100);
+            const int sent = server.requests + second.requests + third.requests + fourth.requests - before;
+            check(sent == 2 && timed.at("timeout.one.test").ipv4_attempted &&
+                  timed.at("timeout.one.test").ipv6_attempted &&
+                  !timed.at("timeout.one.test").ipv4_deadline_exceeded &&
+                  timed.at("timeout.one.test").ipv4_retryable,
+                  "one resolver attempt per family and query timeout is distinct from batch deadline");
+            server.silent = false;
+            const int silent_before = second.requests + third.requests + fourth.requests;
+            bool fallback_ok = true;
+            for (int i = 0; i < 4; ++i) {
+                fallback_ok = fallback_ok && !engine.resolve_aaaa("fallback" + std::to_string(i) + ".test").empty();
+            }
+            check(fallback_ok && second.requests + third.requests + fourth.requests > silent_before,
+                  "legacy AAAA lookup falls back from silent resolvers");
+            write(server.endpoint + '\n');
+            engine.load_resolvers(file.string());
+        }
         for (const auto& content : {std::string(""), std::string("# empty\n"), std::string("999.1.1.1\n"), std::string("127.0.0.1:0\n")}) {
             write(content);
             check(throws([&] { engine.load_resolvers(file.string()); }), "empty or invalid resolver file fails explicitly");

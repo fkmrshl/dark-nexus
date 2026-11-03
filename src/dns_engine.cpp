@@ -841,43 +841,65 @@ void DnsEngine::load_resolvers(const std::string& path) {
 
 std::unordered_map<std::string, DnsLookupResult>
 DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency,
-                                 int timeout_ms, int query_timeout_ms) {
+                                 int timeout_ms, int query_timeout_ms,
+                                 const std::unordered_map<std::string, DnsLookupResult>* retry_previous) {
+    return resolve_batch_checked_impl(hosts, concurrency, timeout_ms, query_timeout_ms, retry_previous, 1);
+}
+
+std::unordered_map<std::string, DnsLookupResult>
+DnsEngine::resolve_batch_checked_impl(const std::vector<std::string>& hosts, int concurrency,
+                                      int timeout_ms, int query_timeout_ms,
+                                      const std::unordered_map<std::string, DnsLookupResult>* retry_previous,
+                                      int resolvers_per_channel) {
     std::unordered_map<std::string, DnsLookupResult> output;
     std::vector<std::string> names;
     names.reserve(hosts.size());
     for (const auto& host : hosts) {
-        if (output.emplace(host, DnsLookupResult{}).second) names.push_back(host);
+        DnsLookupResult initial;
+        if (retry_previous) {
+            const auto previous = retry_previous->find(host);
+            if (previous != retry_previous->end()) initial = previous->second;
+            else {
+                initial.failed = initial.ipv4_failed = initial.ipv6_failed = true;
+                initial.ipv4_error = initial.ipv6_error = "Missing previous DNS result for retry";
+                initial.error = "A: " + initial.ipv4_error + "; AAAA: " + initial.ipv6_error;
+            }
+        }
+        initial.ipv4_attempted = initial.ipv6_attempted = false;
+        if (output.emplace(host, std::move(initial)).second) names.push_back(host);
     }
-    if (names.empty()) return output;
+    struct HostState { CheckedFamily ipv4, ipv6; bool selected4 = false, selected6 = false;
+                       bool attempted4 = false, attempted6 = false; };
+    struct Query { std::size_t index; int type; };
+    std::vector<HostState> states(names.size());
+    std::vector<Query> queries;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const auto previous = retry_previous ? retry_previous->find(names[i]) : output.end();
+        const bool has_previous = retry_previous && previous != retry_previous->end();
+        states[i].selected4 = !retry_previous || (has_previous && previous->second.ipv4_retryable);
+        states[i].selected6 = !retry_previous || (has_previous && previous->second.ipv6_retryable);
+        if (states[i].selected4) queries.push_back({i, ns_t_a});
+        if (states[i].selected6) queries.push_back({i, ns_t_aaaa});
+    }
+    if (queries.empty()) return output;
     const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::milliseconds(std::clamp(timeout_ms, 1, 30000));
-    auto fail_all = [&](const std::string& error) {
-        for (auto& entry : output) {
-            entry.second.failed = entry.second.ipv4_failed = entry.second.ipv6_failed = true;
-            entry.second.ipv4_error = entry.second.ipv6_error = entry.second.error = error;
-        }
-    };
-    if (g_cancel_token.cancelled) { fail_all("DNS lookup cancelled"); return output; }
     std::vector<std::string> resolvers;
-    try { resolvers = resolver_pool_snapshot(); }
-    catch (const std::exception& error) { fail_all(error.what()); return output; }
-    if (resolvers.empty()) { fail_all("No healthy DNS resolvers available"); return output; }
-
-    struct HostState { CheckedFamily ipv4, ipv6; };
-    std::vector<HostState> states(names.size());
+    std::string setup_error;
+    if (!g_cancel_token.cancelled) {
+        try { resolvers = resolver_pool_snapshot(); }
+        catch (const std::exception& error) { setup_error = error.what(); }
+        if (resolvers.empty() && setup_error.empty()) setup_error = "No healthy DNS resolvers available";
+    }
     const int total_slots = clamp_total_concurrency(concurrency);
-    const int channels = std::min<int>({N_CHANNELS, total_slots, static_cast<int>(std::min<std::size_t>(names.size(), N_CHANNELS))});
-    const std::size_t query_count = names.size() * 2;
-    // Advance by one so pools divisible by the channel count also change order on retries.
+    const int channels = std::min<int>({N_CHANNELS, total_slots, static_cast<int>(std::min<std::size_t>(queries.size(), N_CHANNELS))});
     const auto rotation = resolver_rotation_.fetch_add(1);
     std::atomic<std::size_t> next{0};
-    std::atomic<bool> worker_failure{false};
+    std::atomic<bool> worker_failure{!setup_error.empty()};
     auto worker = [&](int channel_index) noexcept {
         try {
             const int slots = std::min(MAX_PER_CHANNEL_CONCURRENCY,
                 total_slots / channels + (channel_index < total_slots % channels ? 1 : 0));
-            // The channel is destroyed before pending, and callbacks retain
-            // references only to the stable names/states arrays above.
             std::atomic<int> pending{0};
             AresChannelGuard guard;
             ares_options options{};
@@ -886,7 +908,7 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int conc
             const int initialized = ares_init_options(&guard.channel, &options, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES);
             if (initialized != ARES_SUCCESS ||
                 ares_set_servers_ports_csv(guard.channel,
-                    make_shard_csv(resolvers, rotation, channel_index, RESOLVERS_PER_CHANNEL).c_str()) != ARES_SUCCESS) {
+                    make_shard_csv(resolvers, rotation, channel_index, resolvers_per_channel).c_str()) != ARES_SUCCESS) {
                 worker_failure = true;
                 return;
             }
@@ -894,62 +916,67 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int conc
                 while (pending.load(std::memory_order_acquire) < slots && !g_cancel_token.cancelled &&
                        !worker_failure && std::chrono::steady_clock::now() < deadline) {
                     const auto query_index = next.fetch_add(1);
-                    if (query_index >= query_count) break;
-                    const auto index = query_index / 2;
-                    const int type = query_index % 2 == 0 ? ns_t_a : ns_t_aaaa;
-                    auto* family = type == ns_t_a ? &states[index].ipv4 : &states[index].ipv6;
-                    const auto key = dns_name_key(names[index]);
+                    if (query_index >= queries.size()) break;
+                    const auto query = queries[query_index];
+                    auto& state = states[query.index];
+                    auto* family = query.type == ns_t_a ? &state.ipv4 : &state.ipv6;
+                    const auto key = dns_name_key(names[query.index]);
                     if (!InputGuard::is_valid_host(key) || key.find(':') != std::string::npos) {
                         family->completed = true; family->failed = true; family->error = "Invalid DNS hostname";
                         continue;
                     }
-                    auto* context = new CheckedContext{family, &pending, &names[index], type};
+                    auto* context = new CheckedContext{family, &pending, &names[query.index], query.type};
+                    if (query.type == ns_t_a) state.attempted4 = true; else state.attempted6 = true;
                     pending.fetch_add(1, std::memory_order_release);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                    ares_query(guard.channel, names[index].c_str(), ns_c_in, type, checked_address_callback, context);
+                    ares_query(guard.channel, names[query.index].c_str(), ns_c_in, query.type, checked_address_callback, context);
 #pragma GCC diagnostic pop
                 }
-                if (pending.load(std::memory_order_acquire) == 0 && next.load() >= query_count) break;
+                if (pending.load(std::memory_order_acquire) == 0 && next.load() >= queries.size()) break;
                 poll_loop_step(guard.channel);
             }
         } catch (...) { worker_failure = true; }
     };
     std::vector<std::thread> threads;
     threads.reserve(channels);
-    try {
-        for (int i = 0; i < channels; ++i) threads.emplace_back(worker, i);
-    } catch (...) { worker_failure = true; }
+    if (!g_cancel_token.cancelled && !worker_failure) {
+        try {
+            for (int i = 0; i < channels; ++i) threads.emplace_back(worker, i);
+        } catch (...) { worker_failure = true; }
+    }
     for (auto& thread : threads) if (thread.joinable()) thread.join();
     for (std::size_t i = 0; i < names.size(); ++i) {
         auto& result = output.at(names[i]);
-        result.ipv4 = std::move(states[i].ipv4.addresses);
-        result.ipv6 = std::move(states[i].ipv6.addresses);
-        const std::array<std::pair<const char*, CheckedFamily*>, 2> families{{
-            {"A", &states[i].ipv4}, {"AAAA", &states[i].ipv6}}};
-        for (const auto family : families) {
-            if (family.second->completed && !family.second->failed) continue;
-            result.failed = true;
-            std::string family_error;
-            if (g_cancel_token.cancelled) family_error = "DNS lookup cancelled";
-            else if (family.second->completed && !family.second->error.empty()) family_error = family.second->error;
-            else if (worker_failure) family_error = "DNS worker or channel initialization failed";
-            else if (!family.second->completed || std::chrono::steady_clock::now() >= deadline)
-                family_error = "DNS deadline exceeded or query was not completed";
-            else family_error = family.second->error.empty() ? "DNS response processing failed" : family.second->error;
+        auto apply = [&](CheckedFamily& family, bool selected, bool attempted, bool is_v4) {
+            if (!selected) return;
+            auto& addresses = is_v4 ? result.ipv4 : result.ipv6;
+            auto& failed = is_v4 ? result.ipv4_failed : result.ipv6_failed;
+            auto& retryable = is_v4 ? result.ipv4_retryable : result.ipv6_retryable;
+            auto& error = is_v4 ? result.ipv4_error : result.ipv6_error;
+            (is_v4 ? result.ipv4_attempted : result.ipv6_attempted) = attempted;
+            const bool expired = !family.completed && !g_cancel_token.cancelled && !worker_failure &&
+                                 std::chrono::steady_clock::now() >= deadline;
+            (is_v4 ? result.ipv4_deadline_exceeded : result.ipv6_deadline_exceeded) = expired;
+            addresses = std::move(family.addresses);
+            failed = !family.completed || family.failed;
+            retryable = !g_cancel_token.cancelled && !worker_failure && (family.retryable || expired);
+            error.clear();
+            if (!failed) return;
+            if (g_cancel_token.cancelled) error = "DNS lookup cancelled";
+            else if (family.completed && !family.error.empty()) error = family.error;
+            else if (worker_failure) error = setup_error.empty() ? "DNS worker or channel initialization failed" : setup_error;
+            else if (expired) error = "DNS deadline exceeded or query was not completed";
+            else error = family.error.empty() ? "DNS response processing failed" : family.error;
+        };
+        apply(states[i].ipv4, states[i].selected4, states[i].attempted4, true);
+        apply(states[i].ipv6, states[i].selected6, states[i].attempted6, false);
+        result.failed = result.ipv4_failed || result.ipv6_failed;
+        result.error.clear();
+        if (result.ipv4_failed) result.error = "A: " + result.ipv4_error;
+        if (result.ipv6_failed) {
             if (!result.error.empty()) result.error += "; ";
-            result.error += std::string(family.first) + ": " + family_error;
-            const bool retryable = !g_cancel_token.cancelled && !worker_failure &&
-                (family.second->retryable || !family.second->completed);
-            if (family.first[0] == 'A' && family.first[1] == '\0') {
-                result.ipv4_failed = true;
-                result.ipv4_retryable = retryable;
-                result.ipv4_error = family_error;
-            } else {
-                result.ipv6_failed = true;
-                result.ipv6_retryable = retryable;
-                result.ipv6_error = std::move(family_error);
-            }
+            result.error += "AAAA: " + result.ipv6_error;
         }
     }
     return output;
@@ -960,7 +987,8 @@ DnsEngine::run_ares_batch(const std::vector<std::string>& hosts,
                            int concurrency,
                            int deadline_s)
 {
-    auto checked = resolve_batch_checked(hosts, concurrency, std::clamp(deadline_s, 1, 30) * 1000);
+    auto checked = resolve_batch_checked_impl(hosts, concurrency, std::clamp(deadline_s, 1, 30) * 1000,
+                                              500, nullptr, RESOLVERS_PER_CHANNEL);
     std::unordered_map<std::string, std::vector<std::string>> output;
     for (auto& entry : checked) output.emplace(entry.first, std::move(entry.second.ipv4));
     return output;
@@ -1089,7 +1117,7 @@ std::vector<std::string> DnsEngine::resolve_aaaa(const std::string& host) {
     const auto key = host + ":AAAA";
     const auto cached = cache_get(key);
     if (!cached.empty()) return cached;
-    auto result = resolve_batch_checked({host}, 2, 5000);
+    auto result = resolve_batch_checked_impl({host}, 2, 5000, 500, nullptr, RESOLVERS_PER_CHANNEL);
     auto addresses = std::move(result.at(host).ipv6);
     if (!addresses.empty()) cache_put(key, addresses);
     return addresses;

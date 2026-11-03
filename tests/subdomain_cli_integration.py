@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real CLI, c-ares and libcurl against loopback fixtures that never forward."""
 import csv
+import heapq
 import io
 import ipaddress
 import json
@@ -42,7 +43,7 @@ def question(packet):
 
 
 class LocalDNS:
-    def __init__(self):
+    def __init__(self, delay_ms=0, loss_every=0, outage=False, positive_index=None):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
         self.socket.bind(('127.0.0.1', 0))
@@ -54,11 +55,23 @@ class LocalDNS:
         self.query_counts = {}
         self.errors = []
         self.wildcard = False
+        self.delay_ms = delay_ms
+        self.loss_every = loss_every
+        self.outage = outage
+        self.positive_index = positive_index
+        self.pending = []
+        self.sequence = 0
         self.worker = threading.Thread(target=self.serve, daemon=True)
         self.worker.start()
 
     def serve(self):
         while not self.stop.is_set():
+            now = time.monotonic()
+            while self.pending and self.pending[0][0] <= now:
+                _, _, response, recipient = heapq.heappop(self.pending)
+                self.socket.sendto(response, recipient)
+            wait = max(0.0001, min(0.01, self.pending[0][0] - now)) if self.pending else 0.01
+            self.socket.settimeout(wait)
             try:
                 packet, peer = self.socket.recvfrom(65535)
             except socket.timeout:
@@ -73,6 +86,14 @@ class LocalDNS:
                 if name == 'hold.example.test':
                     self.held.set()
                     continue
+                benchmark_name = name.startswith('bench') and name.endswith('.example.test')
+                if benchmark_name:
+                    if self.outage:
+                        continue
+                    # Deterministic first-attempt AAAA losses exercise selective retries.
+                    index = int(name.split('.')[0][5:])
+                    if self.loss_every and index % self.loss_every == 0 and rtype == 28 and self.query_counts[key] == 1:
+                        continue
                 rcode, address = 0, None
                 if name == 'example.com' and rtype == 1:
                     address = '192.0.2.1'
@@ -83,6 +104,8 @@ class LocalDNS:
                         address = f'192.0.2.{40 + len(self.requests) % 6}'
                 elif name.startswith('dnxwc-'):
                     rcode = 3
+                elif benchmark_name and index == self.positive_index:
+                    address = '192.0.2.20' if rtype == 1 else '2001:db8::20' if rtype == 28 else None
                 elif name in ('dual.example.test', 'good.example.test'):
                     address = '192.0.2.20' if rtype == 1 else '2001:db8::20' if rtype == 28 else None
                 elif name == 'v6.example.test':
@@ -102,7 +125,13 @@ class LocalDNS:
                     data = ipaddress.ip_address(address).packed
                     record = b'\xc0\x0c' + struct.pack('!HHIH', rtype, 1, 60, len(data)) + data
                 header = packet[:2] + struct.pack('!HHHHH', 0x8180 | rcode, 1, bool(record), 0, 0)
-                self.socket.sendto(header + packet[12:end] + record, peer)
+                response = header + packet[12:end] + record
+                if benchmark_name and self.delay_ms:
+                    self.sequence += 1
+                    heapq.heappush(self.pending, (time.monotonic() + self.delay_ms / 1000,
+                                                  self.sequence, response, peer))
+                else:
+                    self.socket.sendto(response, peer)
             except Exception as error:
                 self.errors.append(repr(error))
 
@@ -193,6 +222,27 @@ class SubdomainCLITests(unittest.TestCase):
         if output == '-' and fmt == 'csv':
             self.assertEqual((self.root / 'example.test_subdomains.csv').read_text(), result.stdout)
         return result
+
+    def test_delayed_negative_answers_cover_the_entire_wordlist(self):
+        self.dns.delay_ms = 8
+        report = json.loads(self.run_case([f'bench{i}' for i in range(1200)]).stdout)
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['subdomain_dns']['candidate_checks'], 1200)
+        self.assertEqual(report['subdomain_dns']['unattempted_queries'], 0)
+        self.assertFalse(report['subdomain_dns']['stopped_early'])
+        self.assertTrue(all(self.dns.query_counts.get((f'bench{i}.example.test', family)) == 1
+                            for i in range(1200) for family in (1, 28)))
+
+    def test_dropped_aaaa_retries_do_not_repeat_successful_a(self):
+        self.dns.delay_ms = 5
+        self.dns.loss_every = 7
+        report = json.loads(self.run_case([f'bench{i}' for i in range(100)]).stdout)
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['subdomain_dns']['candidate_checks'], 100)
+        self.assertEqual(report['subdomain_dns']['incomplete_checks'], 0)
+        for i in range(100):
+            self.assertEqual(self.dns.query_counts[(f'bench{i}.example.test', 1)], 1)
+            self.assertEqual(self.dns.query_counts[(f'bench{i}.example.test', 28)], 2 if i % 7 == 0 else 1)
 
     def test_dual_stack_and_ipv6_only_results_in_all_formats(self):
         for fmt in ('json', 'csv', 'txt'):

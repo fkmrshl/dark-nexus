@@ -24,6 +24,8 @@ std::map<std::string, int> request_counts;
 std::atomic<int> http_calls{0}, active_http{0}, http_after_cancel{0};
 std::atomic<int> head_calls{0}, get_calls{0}, cname_calls{0}, tech_calls{0}, waf_calls{0}, page_calls{0};
 std::atomic<bool> finished{false};
+uint64_t observed_checkpoint_checks = 0;
+bool observed_running_empty_checkpoint = false;
 
 bool wildcard_probe(const std::string& host) { return host.rfind("dnxwc-", 0) == 0; }
 bool provider_fixture() { return scenario == "doh-provider-keep" || scenario == "doh-provider-merge" || scenario == "doh-native-recovery"; }
@@ -83,9 +85,19 @@ int DnsEngine::max_per_channel_concurrency() const { return 1; }
 std::size_t DnsEngine::resolver_count() const { return 1; }
 
 std::unordered_map<std::string, DnsLookupResult>
-DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency, int deadline_ms, int query_timeout_ms) {
+DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency, int deadline_ms, int query_timeout_ms,
+                                 const std::unordered_map<std::string, DnsLookupResult>* retry_previous) {
     std::unordered_map<std::string, DnsLookupResult> output;
     if (std::any_of(hosts.begin(), hosts.end(), [](const auto& host) { return !wildcard_probe(host); })) {
+        if (scenario == "checkpoint-progress") {
+            std::ifstream checkpoint("example.test_subdomains_checkpoint.json");
+            if (checkpoint) {
+                const auto saved = nlohmann::json::parse(checkpoint);
+                observed_checkpoint_checks = saved.at("subdomain_dns").at("candidate_checks");
+                observed_running_empty_checkpoint = saved.at("status") == "running" &&
+                    saved.at("subdomains").empty() && !saved.at("checkpoint").at("final").get<bool>();
+            }
+        }
         candidate_concurrencies.push_back(concurrency);
         candidate_timeouts.push_back(query_timeout_ms);
     } else {
@@ -139,7 +151,19 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int conc
             }
             continue;
         }
-        if (scenario == "dns-permanent") {
+        if (scenario == "dns-queue-recovery" && calls == 1) {
+            answer.failed = answer.ipv4_failed = answer.ipv6_failed = true;
+            answer.ipv4_retryable = answer.ipv6_retryable = true;
+            answer.ipv4_deadline_exceeded = answer.ipv6_deadline_exceeded = true;
+            answer.ipv4_error = answer.ipv6_error = answer.error = "fixture queue deadline";
+        } else if (scenario == "dns-outage-recovery") {
+            const auto number = std::stoi(host.substr(4));
+            if (number < 640) {
+                answer.failed = answer.ipv4_failed = answer.ipv6_failed = true;
+                answer.ipv4_retryable = answer.ipv6_retryable = true;
+                answer.ipv4_error = answer.ipv6_error = answer.error = "fixture temporary outage";
+            }
+        } else if (scenario == "dns-permanent") {
             answer.failed = answer.ipv4_failed = answer.ipv6_failed = true;
             answer.ipv4_error = answer.ipv6_error = answer.error = "fixture malformed DNS response";
         } else if (scenario == "dns-exhausted" || scenario == "dns-no-retry" ||
@@ -164,7 +188,7 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int conc
                    (scenario == "doh-native-recovery" && (host == "kept.example.test" || (host == "second.example.test" && calls == 1)))) {
             answer.failed = true;
             answer.error = "fixture resolver timeout";
-        } else if (scenario == "nxdomain" || (scenario == "streaming-tail" && host != "tailmarker.example.test")) {
+        } else if (scenario == "nxdomain" || scenario == "checkpoint-progress" || (scenario == "streaming-tail" && host != "tailmarker.example.test")) {
             // A successful negative reply has no addresses and no error.
         } else if (scenario == "ipv6" || scenario == "http-ipv6" || (scenario == "duplicate-family" && calls > 1))
             answer.ipv6 = {"2001:db8::20"};
@@ -176,6 +200,28 @@ DnsEngine::resolve_batch_checked(const std::vector<std::string>& hosts, int conc
             answer.ipv4 = {"192.0.2.20", "192.0.2.21"};
             answer.ipv6 = {"2001:db8::20"};
         } else answer.ipv4 = {"192.0.2.20"};
+    }
+    for (auto& [host, answer] : output) {
+        answer.ipv4_attempted = !answer.ipv4_deadline_exceeded;
+        answer.ipv6_attempted = !answer.ipv6_deadline_exceeded;
+        if (retry_previous) {
+            const auto previous = retry_previous->find(host);
+            if (previous != retry_previous->end()) {
+                const auto& old = previous->second;
+                if (!old.ipv4_retryable) {
+                    answer.ipv4 = old.ipv4; answer.ipv4_failed = old.ipv4_failed;
+                    answer.ipv4_retryable = false; answer.ipv4_error = old.ipv4_error;
+                    answer.ipv4_attempted = false;
+                }
+                if (!old.ipv6_retryable) {
+                    answer.ipv6 = old.ipv6; answer.ipv6_failed = old.ipv6_failed;
+                    answer.ipv6_retryable = false; answer.ipv6_error = old.ipv6_error;
+                    answer.ipv6_attempted = false;
+                }
+                answer.failed = answer.ipv4_failed || answer.ipv6_failed;
+                if (!answer.failed) answer.error.clear();
+            }
+        }
     }
     return output;
 }
@@ -435,7 +481,9 @@ int main(int argc, char** argv) {
     g_result.status = OutputWriter::completion_status(g_result, g_cancel_token.cancelled);
     if (scenario.rfind("atomic-", 0) != 0) OutputWriter::write_subdomain_reports(g_result);
     nlohmann::json result = g_result;
-    result["fixture"] = {{"http_calls", http_calls.load()}, {"active_http", active_http.load()},
+    result["fixture"] = {{"observed_checkpoint_checks", observed_checkpoint_checks},
+                          {"observed_running_empty_checkpoint", observed_running_empty_checkpoint},
+                          {"http_calls", http_calls.load()}, {"active_http", active_http.load()},
                           {"http_after_cancel", http_after_cancel.load()}, {"requested", requested_names},
                           {"dns_concurrencies", candidate_concurrencies},
                           {"dns_timeouts", candidate_timeouts},

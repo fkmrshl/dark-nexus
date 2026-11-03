@@ -61,6 +61,10 @@ int main() {
     result.status = "partial";
     result.errors = {"helper failed, partial reply"};
     result.warnings = {"optional lookup unavailable"};
+    result.subdomain_dns.candidate_checks = 1200;
+    result.subdomain_dns.submitted_queries = 4800;
+    result.subdomain_dns.stopped_early = true;
+    result.subdomain_dns.stop_reason = "fixture outage";
     std::ostringstream json_out;
     if (!OutputWriter::write_stream(result, json_out, "json")) return 1;
     const auto parsed = json::parse(json_out.str());
@@ -73,6 +77,8 @@ int main() {
     if (parsed.at("status") != "partial" || parsed.at("whois_records").size() != 2 ||
         parsed.at("errors").size() != 1 || parsed.at("warnings").size() != 1) return 1;
     const auto roundtrip = parsed.get<ScanResult>();
+    if (json(roundtrip.subdomain_dns) != json(result.subdomain_dns) ||
+        parsed.at("tool_version") != "dark-nexus/2.1.0") return 1;
     if (roundtrip.subdomains[0].stack != subdomain.stack ||
         roundtrip.subdomains[0].discovery_sources != subdomain.discovery_sources ||
         roundtrip.subdomains[0].doh_fallback != "used") return 1;
@@ -100,8 +106,10 @@ int main() {
     legacy["subdomains"][0].erase("dns_status");
     legacy["subdomains"][0].erase("http_observations");
     legacy.erase("subdomain_candidates");
+    legacy.erase("subdomain_dns");
     for (const auto* field : {"status", "errors", "warnings", "whois_records"}) legacy.erase(field);
     const auto old_report = legacy.get<ScanResult>();
+    if (old_report.subdomain_dns.candidate_checks != 0 || old_report.subdomain_dns.stopped_early) return 1;
     if (!old_report.subdomains.at(0).ipv6.empty() || old_report.subdomains.at(0).wildcard_match ||
         !old_report.subdomains.at(0).stack.empty() || !old_report.subdomains.at(0).discovery_sources.empty() ||
         !old_report.subdomains.at(0).doh_fallback.empty()) return 1;

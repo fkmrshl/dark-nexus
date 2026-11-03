@@ -2,6 +2,7 @@
 #include "../include/dns_engine.hpp"
 #include "../include/output.hpp"
 #include "subdomain_common.hpp"
+#include "subdomain_dns.hpp"
 #include "atomic_file.hpp"
 #include "dns_query.hpp"
 #include <curl/curl.h>
@@ -132,12 +133,14 @@ static void merge_dns_retry(DnsLookupResult& answer, const DnsLookupResult& retr
         answer.ipv4_failed = retry.ipv4_failed;
         answer.ipv4_retryable = retry.ipv4_retryable;
         answer.ipv4_error = retry.ipv4_error;
+        answer.ipv4_deadline_exceeded = retry.ipv4_deadline_exceeded;
     }
     if (answer.ipv6_retryable) {
         answer.ipv6 = retry.ipv6;
         answer.ipv6_failed = retry.ipv6_failed;
         answer.ipv6_retryable = retry.ipv6_retryable;
         answer.ipv6_error = retry.ipv6_error;
+        answer.ipv6_deadline_exceeded = retry.ipv6_deadline_exceeded;
     }
     answer.failed = answer.ipv4_failed || answer.ipv6_failed;
     answer.error.clear();
@@ -325,10 +328,56 @@ void subdomain_scan(const std::string& domain,
     js_options.workers = std::clamp(js_workers, 1, 8);
     js_options.budget_ms = std::clamp(js_budget_seconds, 1, 300) * 1000;
     int dns_concurrency_current = DNS_CONCURRENCY_MAX;
+    SubdomainDnsStats dns_stats;
+    dns_stats.concurrency_initial = dns_stats.concurrency_min =
+        dns_stats.concurrency_final = DNS_CONCURRENCY_MAX;
+    bool dns_stopped = false;
+    unsigned int unavailable_batches = 0;
+    auto publish_dns_stats = [&] {
+        std::lock_guard<std::mutex> lock(g_result_mtx);
+        g_result.subdomain_dns = dns_stats;
+    };
+    publish_dns_stats();
+    auto checked_chunks = [&](const std::vector<std::string>& hosts, int slots, int timeout,
+                              const std::unordered_map<std::string, DnsLookupResult>* previous,
+                              bool candidate_checks) {
+        std::unordered_map<std::string, DnsLookupResult> answers;
+        const auto limit = subdomain_dns_batch_limit(slots, timeout);
+        for (std::size_t start = 0; start < hosts.size() && !g_cancel_token.cancelled; start += limit) {
+            const auto end = std::min(hosts.size(), start + limit);
+            const std::vector<std::string> chunk(hosts.begin() + static_cast<std::ptrdiff_t>(start),
+                                                  hosts.begin() + static_cast<std::ptrdiff_t>(end));
+            const auto began = std::chrono::steady_clock::now();
+            auto part = dns.resolve_batch_checked(chunk, slots,
+                subdomain_dns_deadline(chunk.size(), slots, timeout), timeout, previous);
+            if (candidate_checks) {
+                dns_stats.elapsed_ms += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - began).count());
+                if (previous) ++dns_stats.retry_batches; else ++dns_stats.batches;
+                for (const auto& [host, answer] : part) {
+                    const auto old = previous ? previous->find(host) : part.end();
+                    const bool selected4 = !previous || (old != previous->end() && old->second.ipv4_retryable);
+                    const bool selected6 = !previous || (old != previous->end() && old->second.ipv6_retryable);
+                    auto count = [&](bool selected, bool attempted, bool deadline, bool retryable) {
+                        if (!selected) return;
+                        dns_stats.submitted_queries += attempted ? 1 : 0;
+                        dns_stats.deadline_queries += deadline ? 1 : 0;
+                        dns_stats.unattempted_queries += !attempted && deadline ? 1 : 0;
+                        dns_stats.temporary_failures += attempted && retryable && !deadline ? 1 : 0;
+                    };
+                    count(selected4, answer.ipv4_attempted, answer.ipv4_deadline_exceeded, answer.ipv4_retryable);
+                    count(selected6, answer.ipv6_attempted, answer.ipv6_deadline_exceeded, answer.ipv6_retryable);
+                }
+                publish_dns_stats();
+            }
+            answers.merge(part);
+        }
+        return answers;
+    };
 
     std::cout << BLOOD_RED << "  [*] mode: " << WHITE << (deep_passive ? "DEEP" : "FAST")
               << BLOOD_RED << " | enrichment workers: " << WHITE << HTTP_WORKERS
-              << BLOOD_RED << " | DNS batch: " << WHITE << DNS_BATCH_SIZE
+              << BLOOD_RED << " | DNS input buffer: " << WHITE << DNS_BATCH_SIZE
               << BLOOD_RED << " | DNS concurrency: " << WHITE << DNS_CONCURRENCY_MAX
               << BLOOD_RED << " | DNS retries: " << WHITE << DNS_RETRIES
               << BLOOD_RED << " | DNS timeout: " << WHITE << DNS_TIMEOUT_MS << "ms"
@@ -412,12 +461,7 @@ void subdomain_scan(const std::string& domain,
         }
         if (probes.empty() || g_cancel_token.cancelled) return;
         const int concurrency = std::min(64, dns_concurrency_current);
-        auto probe_deadline = [](std::size_t count, int slots, int timeout_ms) {
-            const auto waves = (count * 2 + static_cast<std::size_t>(slots) - 1) / static_cast<std::size_t>(slots);
-            return static_cast<int>(std::clamp<std::size_t>(waves * static_cast<std::size_t>(timeout_ms) + 1000, 5000, 30000));
-        };
-        auto answers = dns.resolve_batch_checked(probes, concurrency,
-            probe_deadline(probes.size(), concurrency, DNS_TIMEOUT_MS), DNS_TIMEOUT_MS);
+        auto answers = checked_chunks(probes, concurrency, DNS_TIMEOUT_MS, nullptr, false);
         for (int attempt = 0; attempt < DNS_RETRIES && !g_cancel_token.cancelled; ++attempt) {
             std::vector<std::string> retry_names;
             for (const auto& [parent, names] : pending) {
@@ -445,8 +489,7 @@ void subdomain_scan(const std::string& domain,
                           << retry_names.size() << " probes; concurrency=" << retry_concurrency
                           << " timeout=" << retry_timeout << "ms\n";
             }
-            const auto retried = dns.resolve_batch_checked(retry_names, retry_concurrency,
-                probe_deadline(retry_names.size(), retry_concurrency, retry_timeout), retry_timeout);
+            const auto retried = checked_chunks(retry_names, retry_concurrency, retry_timeout, &answers, false);
             for (const auto& name : retry_names) {
                 const auto found = retried.find(name);
                 if (found != retried.end()) merge_dns_retry(answers.at(name), found->second);
@@ -559,6 +602,7 @@ void subdomain_scan(const std::string& domain,
     const auto checkpoint_interval = std::chrono::seconds(60);
     std::chrono::steady_clock::time_point last_checkpoint_attempt;
     size_t last_checkpoint_count = 0;
+    uint64_t last_checkpoint_checks = 0;
     const std::string checkpoint_file = scan_domain + "_subdomains_checkpoint.json";
     auto maybe_write_checkpoint = [&](bool force, const std::string& reason) {
         ScanResult snapshot;
@@ -579,8 +623,8 @@ void subdomain_scan(const std::string& domain,
             {
                 std::lock_guard<std::mutex> lk(g_result_mtx);
                 snapshot_count = g_result.subdomains.size() + g_result.subdomain_candidates.size();
-                if (!force && snapshot_count == 0) return;
-                if (!force && snapshot_count == last_checkpoint_count) return;
+                if (!force && snapshot_count == last_checkpoint_count &&
+                    g_result.subdomain_dns.candidate_checks == last_checkpoint_checks) return;
                 snapshot = g_result;
             }
 
@@ -589,7 +633,10 @@ void subdomain_scan(const std::string& domain,
                     OutputWriter::subdomain_checkpoint(snapshot, false).dump(2, ' ', false,
                         nlohmann::json::error_handler_t::replace) + '\n', checkpoint_error);
             } catch (const std::exception& error) { checkpoint_error = error.what(); }
-            if (checkpoint_ok) last_checkpoint_count = snapshot_count;
+            if (checkpoint_ok) {
+                last_checkpoint_count = snapshot_count;
+                last_checkpoint_checks = snapshot.subdomain_dns.candidate_checks;
+            }
             should_log = true;
         }
 
@@ -806,7 +853,7 @@ void subdomain_scan(const std::string& domain,
     std::size_t dns_retry_checks = 0, dns_recovered = 0;
     std::size_t dns_incomplete = 0, dns_partial = 0;
     std::string dns_failure_example;
-    auto resolve_and_queue_batch = [&](const std::vector<std::string>& input,
+    auto resolve_and_queue_slice = [&](const std::vector<std::string>& input,
                                        const std::string& source_hint,
                                        bool allow_passive_doh,
                                        const std::string& resolved_doh_provider) {
@@ -831,15 +878,18 @@ void subdomain_scan(const std::string& domain,
             batch.push_back(host);
         }
         if (batch.empty() || g_cancel_token.cancelled) return;
-        auto answers = dns.resolve_batch_checked(batch, dns_concurrency_current, 30000, DNS_TIMEOUT_MS);
+        auto answers = checked_chunks(batch, dns_concurrency_current, DNS_TIMEOUT_MS, nullptr, true);
         const auto temporary_failures = std::count_if(answers.begin(), answers.end(), [](const auto& entry) {
-            return entry.second.ipv4_retryable || entry.second.ipv6_retryable;
+            return (entry.second.ipv4_attempted && entry.second.ipv4_retryable && !entry.second.ipv4_deadline_exceeded) ||
+                   (entry.second.ipv6_attempted && entry.second.ipv6_retryable && !entry.second.ipv6_deadline_exceeded);
         });
         if (temporary_failures > 0 && static_cast<std::size_t>(temporary_failures) * 20 >= batch.size())
             dns_concurrency_current = std::max(16, dns_concurrency_current / 2);
-        else if (temporary_failures == 0)
+        else if (temporary_failures == 0 && std::none_of(answers.begin(), answers.end(), [](const auto& entry) { return entry.second.failed; }))
             dns_concurrency_current = std::min(DNS_CONCURRENCY_MAX, dns_concurrency_current + 64);
 
+        dns_stats.concurrency_min = std::min(dns_stats.concurrency_min, dns_concurrency_current);
+        dns_stats.concurrency_final = dns_concurrency_current;
         for (int attempt = 0; attempt < DNS_RETRIES && !g_cancel_token.cancelled; ++attempt) {
             std::vector<std::string> retry_hosts;
             for (const auto& host : batch) {
@@ -852,7 +902,7 @@ void subdomain_scan(const std::string& domain,
             for (int tick = 0; tick < 10 * (attempt + 1) && !g_cancel_token.cancelled; ++tick)
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (g_cancel_token.cancelled) break;
-            const int retry_concurrency = std::max(16, std::min(256, dns_concurrency_current / 2));
+            const int retry_concurrency = std::min(256, dns_concurrency_current);
             const int retry_timeout = std::min(5000, DNS_TIMEOUT_MS * (attempt + 2));
             {
                 std::lock_guard<std::mutex> lock(g_print_mtx);
@@ -861,7 +911,7 @@ void subdomain_scan(const std::string& domain,
                           << " timeout=" << retry_timeout << "ms\n";
             }
             dns_retry_checks += retry_hosts.size();
-            const auto retried = dns.resolve_batch_checked(retry_hosts, retry_concurrency, 30000, retry_timeout);
+            const auto retried = checked_chunks(retry_hosts, retry_concurrency, retry_timeout, &answers, true);
             for (const auto& host : retry_hosts) {
                 const auto it = retried.find(host);
                 if (it == retried.end()) continue;
@@ -869,6 +919,19 @@ void subdomain_scan(const std::string& domain,
                 merge_dns_retry(answer, it->second);
                 if (!answer.failed) ++dns_recovered;
             }
+        }
+        const auto unavailable = std::count_if(answers.begin(), answers.end(), [](const auto& entry) {
+            return entry.second.failed && entry.second.ipv4.empty() && entry.second.ipv6.empty();
+        });
+        // Negative DNS answers are successful observations, never an outage.
+        if (!g_cancel_token.cancelled && batch.size() >= 8 &&
+            static_cast<std::size_t>(unavailable) * 100 >= batch.size() * 95)
+            ++unavailable_batches;
+        else unavailable_batches = 0;
+        if (unavailable_batches >= 3) {
+            dns_stopped = dns_stats.stopped_early = true;
+            dns_stats.stop_reason = "DNS discovery stopped after 3 consecutive batches with at least 95% failed, addressless checks after retries; remaining candidates were not checked. Check resolver connectivity and rerun.";
+            subdomain_error(dns_stats.stop_reason);
         }
         std::vector<DnsPending> pending;
         for (const auto& host : batch) {
@@ -890,11 +953,17 @@ void subdomain_scan(const std::string& domain,
             if (const auto index = retain_dns(host, answer, resolved_doh_provider, source_hint))
                 pending.push_back({*index});
         }
+        dns_stats.candidate_checks = static_cast<uint64_t>(dns_checked.load());
+        dns_stats.incomplete_checks = dns_incomplete;
+        dns_stats.partial_checks = dns_partial;
+        dns_stats.retry_checks = dns_retry_checks;
+        dns_stats.recovered_checks = dns_recovered;
+        publish_dns_stats();
         for (auto& item : pending) {
             if (g_cancel_token.cancelled) break;
             if (enrich_active) { if (!http_pipe.push(std::move(item))) break; }
         }
-        if (!allow_passive_doh || g_cancel_token.cancelled) return;
+        if (!allow_passive_doh || dns_stopped || g_cancel_token.cancelled) return;
         std::vector<std::string> fallback;
         for (const auto& host : batch) {
             const auto it = answers.find(host);
@@ -930,19 +999,39 @@ void subdomain_scan(const std::string& domain,
         for (auto& future : futures) future.get();
     };
 
-    if (!g_cancel_token.cancelled && !passive_subs.empty()) {
+    auto resolve_and_queue_batch = [&](const std::vector<std::string>& input,
+                                       const std::string& source, bool allow_doh,
+                                       const std::string& provider) {
+        for (std::size_t start = 0; start < input.size() && !dns_stopped && !g_cancel_token.cancelled;) {
+            const auto end = std::min(input.size(), start + subdomain_dns_batch_limit(dns_concurrency_current, DNS_TIMEOUT_MS));
+            const std::vector<std::string> slice(input.begin() + static_cast<std::ptrdiff_t>(start),
+                                                  input.begin() + static_cast<std::ptrdiff_t>(end));
+            resolve_and_queue_slice(slice, source, allow_doh, provider);
+            start = end;
+            if (input.size() > slice.size()) {
+                std::lock_guard<std::mutex> lock(g_print_mtx);
+                std::cout << "  [dns progress] checked=" << dns_stats.candidate_checks
+                          << " incomplete=" << dns_stats.incomplete_checks
+                          << " concurrency=" << dns_concurrency_current
+                          << (dns_stopped ? " stopped: resolver failures" : "") << '\n' << std::flush;
+            }
+            maybe_write_checkpoint(false, "dns-slice");
+        }
+    };
+
+    if (!dns_stopped && !g_cancel_token.cancelled && !passive_subs.empty()) {
         std::cout << "  resolving " << passive_subs.size() << " passive candidates first...\n";
         std::vector<std::string> passive_batch;
         passive_batch.reserve(DNS_BATCH_SIZE);
         for (const auto& sub : passive_subs) {
-            if (g_cancel_token.cancelled) break;
+            if (dns_stopped || g_cancel_token.cancelled) break;
             passive_batch.push_back(sub);
             if (passive_batch.size() >= static_cast<std::size_t>(DNS_BATCH_SIZE)) {
                 resolve_and_queue_batch(passive_batch, "passive", true, "");
                 passive_batch.clear();
             }
         }
-        if (!g_cancel_token.cancelled)
+        if (!dns_stopped && !g_cancel_token.cancelled)
             resolve_and_queue_batch(passive_batch, "passive", true, "");
     }
 
@@ -998,22 +1087,22 @@ void subdomain_scan(const std::string& domain,
         std::cout << "  generated discovery disabled by --passive-only\n";
     } else if (stream_file_wordlist) {
         std::string line;
-        while (!g_cancel_token.cancelled && std::getline(wordlist_stream, line)) {
+        while (!dns_stopped && !g_cancel_token.cancelled && std::getline(wordlist_stream, line)) {
             queue_wordlist_candidate(line);
         }
         if (wordlist_stream.bad()) {
             subdomain_error("error while reading wordlist: " + wordlist_path);
         }
-        if (!g_cancel_token.cancelled && candidates_queued == 0) {
+        if (!dns_stopped && !g_cancel_token.cancelled && candidates_queued == 0) {
             subdomain_error("explicit wordlist contains no valid candidates: " + wordlist_path);
         }
     } else {
         for (const auto& word : builtin_wordlist()) {
-            if (g_cancel_token.cancelled) break;
+            if (dns_stopped || g_cancel_token.cancelled) break;
             queue_wordlist_candidate(word);
         }
     }
-    if (!g_cancel_token.cancelled) flush_wordlist_batch();
+    if (!dns_stopped && !g_cancel_token.cancelled) flush_wordlist_batch();
     {
         std::lock_guard<std::mutex> lk(g_print_mtx);
         std::cout << "\n" << BLOOD_RED << "  [=] wordlist processed=" << WHITE << candidates_seen
@@ -1023,7 +1112,7 @@ void subdomain_scan(const std::string& domain,
     }
 
     std::set<std::string> found_snapshot;
-    if (run_permutations && !passive_only && !g_cancel_token.cancelled) {
+    if (run_permutations && !passive_only && !dns_stopped && !g_cancel_token.cancelled) {
         {
             std::lock_guard<std::mutex> print_lock(g_print_mtx);
             std::cout << BLOOD_RED << "  [*] waiting for base enrichment pipeline...\n" << RESET;
@@ -1039,7 +1128,7 @@ void subdomain_scan(const std::string& domain,
             subdomain_warning("Permutation seed limit of 64 reached; remaining resolved names are not expanded");
         }
     }
-    if (run_permutations && !found_snapshot.empty() && !g_cancel_token.cancelled) {
+    if (run_permutations && !found_snapshot.empty() && !dns_stopped && !g_cancel_token.cancelled) {
         print_section("PERMUTATION ENGINE");
         std::cout << BLOOD_RED << "  [*] streaming permutations resolving...\n" << RESET;
         std::vector<std::string> perm_batch;
@@ -1050,7 +1139,7 @@ void subdomain_scan(const std::string& domain,
         bool permutation_limit = false;
 
         auto flush_perm_batch = [&]() {
-            if (perm_batch.empty() || g_cancel_token.cancelled) return;
+            if (perm_batch.empty() || dns_stopped || g_cancel_token.cancelled) return;
             const size_t batch_index = perm_batches + 1;
             const size_t batch_size = perm_batch.size();
             {
@@ -1079,7 +1168,7 @@ void subdomain_scan(const std::string& domain,
 
         for_each_permutation_candidate(found_snapshot, scan_domain, [&](std::string&& candidate) {
             perm_generated++;
-            if (g_cancel_token.cancelled) return;
+            if (dns_stopped || g_cancel_token.cancelled) return;
             if (perm_queued >= 5000) { permutation_limit = true; return; }
             if (!normalize_subdomain_name(candidate, scan_domain)) return;
             if (derived_dedup.insert(candidate).second) {
@@ -1090,7 +1179,7 @@ void subdomain_scan(const std::string& domain,
         });
         if (permutation_limit)
             subdomain_warning("Permutation candidate limit of 5000 reached; remaining generated variants were skipped");
-        if (!g_cancel_token.cancelled) flush_perm_batch();
+        if (!dns_stopped && !g_cancel_token.cancelled) flush_perm_batch();
         {
             std::lock_guard<std::mutex> print_lock(g_print_mtx);
             std::cout << BLOOD_RED << "  [=] permutations generated=" << WHITE << perm_generated
@@ -1100,7 +1189,7 @@ void subdomain_scan(const std::string& domain,
     }
 
     std::vector<SubdomainJsTarget> js_targets;
-    if (features.js && !g_cancel_token.cancelled) {
+    if (features.js && !dns_stopped && !g_cancel_token.cancelled) {
         size_t pipe_size = http_pipe.size();
         size_t found_size = current_found_size();
         {
@@ -1143,7 +1232,7 @@ void subdomain_scan(const std::string& domain,
         }
         std::cout << BLOOD_RED << "  [*] JS targets: " << WHITE << js_targets.size() << "\n" << RESET;
     }
-    if (features.js && !js_targets.empty() && !g_cancel_token.cancelled) {
+    if (features.js && !js_targets.empty() && !dns_stopped && !g_cancel_token.cancelled) {
         print_section("JS SCRAPING");
         const auto js_result = scrape_js_subdomains(js_targets, scan_domain, js_options,
             [&](const SubdomainJsProgress& progress) {
@@ -1156,7 +1245,7 @@ void subdomain_scan(const std::string& domain,
             });
         std::vector<std::string> new_js;
         for (const auto& s : js_result.names) {
-            if (g_cancel_token.cancelled) break;
+            if (dns_stopped || g_cancel_token.cancelled) break;
             std::lock_guard<std::mutex> lock(state_mtx);
             const auto existing = result_indices.find(s);
             if (existing != result_indices.end()) {
@@ -1173,7 +1262,7 @@ void subdomain_scan(const std::string& domain,
                   << BLOOD_RED << " new JS candidates resolving...\n" << RESET;
         if (!new_js.empty()) {
             int total_batches = ((int)new_js.size() + DNS_BATCH_SIZE - 1) / DNS_BATCH_SIZE;
-            for (int bs=0; bs<(int)new_js.size() && !g_cancel_token.cancelled; bs+=DNS_BATCH_SIZE) {
+            for (int bs=0; bs<(int)new_js.size() && !dns_stopped && !g_cancel_token.cancelled; bs+=DNS_BATCH_SIZE) {
                 int be = std::min(bs+DNS_BATCH_SIZE, (int)new_js.size());
                 int batch_index = bs / DNS_BATCH_SIZE + 1;
                 std::vector<std::string> batch(new_js.begin()+bs, new_js.begin()+be);
@@ -1203,6 +1292,7 @@ void subdomain_scan(const std::string& domain,
         }
     }
 
+    publish_dns_stats();
     maybe_write_checkpoint(true, "dns-complete");
     {
         std::lock_guard<std::mutex> print_lock(g_print_mtx);

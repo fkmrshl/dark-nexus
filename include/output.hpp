@@ -21,6 +21,7 @@ public:
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PortEntry, port, protocol, service, banner, version, risk, latency_ms, tls, tls_version, tls_cn, tls_expired, vulns)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubdomainHttpObservation, requested_url, effective_url, method, error, http_code, transport_code, success, cancelled, timed_out, truncated, callback_failed, headers_complete, body_complete, primary_ip, dns_pinned)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubEntry, sub, ips, ipv6, cname, http_code, server, waf, language, cms, source, stack, discovery_sources, doh_fallback, title, takeover_possible, wildcard_match, dns_status, http_observations)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubdomainDnsStats, candidate_checks, incomplete_checks, partial_checks, retry_checks, recovered_checks, submitted_queries, unattempted_queries, deadline_queries, temporary_failures, batches, retry_batches, elapsed_ms, concurrency_initial, concurrency_min, concurrency_final, stopped_early, stop_reason)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TraceHop, ttl, addr, hostname, avg_rtt_ms, loss_pct, asn)
 
 namespace nlohmann {
@@ -51,6 +52,7 @@ namespace nlohmann {
                 {"ports", r.ports},
                 {"subdomains", r.subdomains},
                 {"subdomain_candidates", r.subdomain_candidates},
+                {"subdomain_dns", r.subdomain_dns},
                 {"subdomain_counts", {{"resolved", r.subdomains.size()},
                                       {"candidates", r.subdomain_candidates.size()},
                                       {"total", r.subdomains.size() + r.subdomain_candidates.size()}}},
@@ -84,6 +86,7 @@ namespace nlohmann {
             j.at("ports").get_to(r.ports);
             j.at("subdomains").get_to(r.subdomains);
             r.subdomain_candidates = j.value("subdomain_candidates", std::vector<SubEntry>{});
+            r.subdomain_dns = j.value("subdomain_dns", SubdomainDnsStats{});
             j.at("trace").get_to(r.trace);
             j.at("dns_records").get_to(r.dns_records);
         }

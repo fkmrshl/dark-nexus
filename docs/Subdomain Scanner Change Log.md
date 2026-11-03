@@ -2,6 +2,10 @@
 
 This file lists major architectural changes to the subdomain scanner. Small fixes, typo corrections, and one-line safety patches are intentionally omitted.
 
+## DNS degradation follow-up
+
+A large input buffer is now split according to query concurrency and timeout. Checked DNS calls use one resolver per channel, and only unfinished retryable families are retried. Actual DNS failures and local queue deadline expiry are counted separately. Sustained addressless failure stops discovery with an explicit incomplete-run error. Canonical JSON, checkpoints and CSV metadata include DNS diagnostics, and report tool metadata now identifies 2.1.0 correctly. See [implementation and validation](subdomain-dns-degradation.md).
+
 ## Scanner architecture split
 
 The subdomain scanner was split out of a single large source file into smaller internal components.

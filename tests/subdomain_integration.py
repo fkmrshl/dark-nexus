@@ -68,6 +68,7 @@ class SubdomainPipelineTests(unittest.TestCase):
                 automatic = self.module_report()
                 self.assertEqual(automatic, canonical)
                 self.assertEqual(automatic['schema_version'], '3.0')
+                self.assertEqual(automatic['tool_version'], 'dark-nexus/2.1.0')
                 self.assertNotIn('results', automatic)
                 expected_counts = {'resolved': len(report['subdomains']),
                                    'candidates': len(report['subdomain_candidates']),
@@ -273,15 +274,50 @@ class SubdomainPipelineTests(unittest.TestCase):
         self.assertEqual(len(self.non_probe_names(report)), 6)
         self.assertEqual(report['fixture']['dns_timeouts'], [500, 1000, 1500])
 
-    def test_dns_failures_across_batches_produce_one_summary(self):
+    def test_dns_progress_is_checkpointed_without_positive_discoveries(self):
+        report, _ = self.run_fixture('checkpoint-progress', words=[f'host{i}' for i in range(1000)])
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['subdomains'], [])
+        self.assertTrue(report['fixture']['observed_running_empty_checkpoint'])
+        self.assertGreater(report['fixture']['observed_checkpoint_checks'], 0)
+        self.assertLess(report['fixture']['observed_checkpoint_checks'], 1000)
+        self.assertEqual(report['subdomain_dns']['candidate_checks'], 1000)
+
+    def test_sustained_dns_outage_stops_discovery_and_exports_reason(self):
         words = [f'host{index}' for index in range(10005)]
         report, _ = self.run_fixture('dns-exhausted', words=words, code=1)
-        self.assertEqual(len(report['errors']), 1)
-        self.assertIn('10005 candidate checks', report['errors'][0])
-        self.assertEqual(len(self.non_probe_names(report)), len(words) * 2)
-        first, first_retry, second, second_retry = report['fixture']['dns_concurrencies']
-        self.assertLess(second, first)
-        self.assertLessEqual(second_retry, first_retry)
+        stats = report['subdomain_dns']
+        self.assertTrue(stats['stopped_early'])
+        self.assertIn('remaining candidates were not checked', stats['stop_reason'])
+        self.assertEqual(report['status'], 'failed')
+        self.assertLess(stats['candidate_checks'], len(words))
+        self.assertEqual(stats['incomplete_checks'], stats['candidate_checks'])
+        self.assertEqual(len(self.non_probe_names(report)), stats['candidate_checks'] * 2)
+        self.assertEqual(len(report['errors']), 2)
+        self.assertTrue(any(stats['stop_reason'] == error for error in report['errors']))
+        self.assertEqual(self.module_report()['subdomain_dns'], stats)
+        self.assertEqual(stats['unattempted_queries'], 0)
+
+    def test_recovery_and_negative_replies_do_not_trigger_outage_stop(self):
+        words = [f'host{index}' for index in range(10005)]
+        report, _ = self.run_fixture('dns-outage-recovery', words=words, code=1)
+        stats = report['subdomain_dns']
+        self.assertFalse(stats['stopped_early'])
+        self.assertEqual(stats['candidate_checks'], len(words))
+        self.assertEqual(stats['incomplete_checks'], 640)
+        self.assertIn('host10004.example.test', self.non_probe_names(report))
+        self.assertEqual(stats['concurrency_final'], stats['concurrency_initial'])
+
+    def test_local_queue_deadline_does_not_reduce_resolver_concurrency(self):
+        report, _ = self.run_fixture('dns-queue-recovery')
+        self.assertEqual(report['status'], 'complete')
+        self.assertEqual(report['fixture']['dns_concurrencies'], [128, 128])
+        stats = report['subdomain_dns']
+        self.assertEqual(stats['temporary_failures'], 0)
+        self.assertEqual(stats['deadline_queries'], 4)
+        self.assertEqual(stats['unattempted_queries'], 4)
+        self.assertEqual(stats['submitted_queries'], 4)
+        self.assertEqual(stats['recovered_checks'], 2)
 
     def test_repeated_hostname_keeps_addresses_observed_in_later_batches(self):
         report, _ = self.run_fixture('duplicate-family')
@@ -340,14 +376,17 @@ class SubdomainPipelineTests(unittest.TestCase):
         words = [f'host{index}' for index in range(2500)]
         report, elapsed = self.run_fixture('cancel', words=words, code=130)
         self.assertEqual(report['status'], 'cancelled')
-        self.assertEqual(len(report['subdomains']), len(words))
+        discovered = set(self.non_probe_names(report))
+        self.assertGreater(len(discovered), 0)
+        self.assertLess(len(discovered), len(words))
+        self.assertEqual({row['sub'] for row in report['subdomains']}, discovered)
         self.assertGreater(report['fixture']['http_calls'], 0)
         self.assertLess(report['fixture']['http_calls'], 10)
         # Bound scan/worker shutdown; final report serialization is amplified by sanitizers.
         self.assertLess(report['duration_ms'], 4000)
-        self.assertEqual(len(self.module_json()), len(words))
+        self.assertEqual(len(self.module_json()), len(discovered))
         checkpoint = json.loads((self.root / 'example.test_subdomains_checkpoint.json').read_text())
-        self.assertEqual(checkpoint['subdomain_counts']['total'], len(words))
+        self.assertEqual(checkpoint['subdomain_counts']['total'], len(discovered))
 
     def test_worker_exception_preserves_dns_instead_of_terminating(self):
         report, _ = self.run_fixture('worker-throw', code=1)
@@ -459,9 +498,13 @@ class SubdomainPipelineTests(unittest.TestCase):
 
     def test_wildcard_batch_deadline_accounts_for_queued_queries_and_remains_bounded(self):
         report, _ = self.run_fixture('probe-deadline', words=('www',))
-        self.assertEqual(report['fixture']['probe_concurrencies'], [16, 16])
-        self.assertEqual(report['fixture']['probe_timeouts'], [5000, 5000])
-        self.assertEqual(report['fixture']['probe_deadlines'], [6000, 30000])
+        fixture = report['fixture']
+        self.assertGreater(len(fixture['probe_deadlines']), 2)
+        self.assertTrue(all(slots == 16 for slots in fixture['probe_concurrencies']))
+        self.assertTrue(all(timeout == 5000 for timeout in fixture['probe_timeouts']))
+        self.assertTrue(all(10000 <= deadline <= 30000 for deadline in fixture['probe_deadlines']))
+        probes = {host for host in fixture['requested'] if host.startswith('dnxwc-')}
+        self.assertEqual(len(probes), 6 + 63 * 3)
         self.assertTrue(report['subdomain_candidates'])  # Untested scopes exceed the independent 64-scope ceiling.
 
     def test_scope_probe_budget_keeps_unprobed_passive_names_uncertain(self):

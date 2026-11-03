@@ -20,6 +20,7 @@
 #include <numeric>
 #include <cstring>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <cmath>
@@ -123,9 +124,19 @@ struct TraceHop {
     std::string asn;
 };
 
+struct SubdomainDnsStats {
+    uint64_t candidate_checks = 0, incomplete_checks = 0, partial_checks = 0;
+    uint64_t retry_checks = 0, recovered_checks = 0;
+    uint64_t submitted_queries = 0, unattempted_queries = 0, deadline_queries = 0;
+    uint64_t temporary_failures = 0, batches = 0, retry_batches = 0, elapsed_ms = 0;
+    int concurrency_initial = 0, concurrency_min = 0, concurrency_final = 0;
+    bool stopped_early = false;
+    std::string stop_reason;
+};
+
 struct ScanResult {
     std::string schema_version = "3.0";
-    std::string tool_version = "dark-nexus/2.0";
+    std::string tool_version = "dark-nexus/2.1.0";
     std::string scan_type;
     std::string target;
     std::string resolved_ip;
@@ -146,6 +157,7 @@ struct ScanResult {
     std::vector<PortEntry> ports;
     std::vector<SubEntry> subdomains;
     std::vector<SubEntry> subdomain_candidates;
+    SubdomainDnsStats subdomain_dns;
     std::vector<TraceHop> trace;
     std::vector<std::string> dns_records;
     std::vector<std::string> whois_records;

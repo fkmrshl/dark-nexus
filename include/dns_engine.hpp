@@ -16,6 +16,9 @@ struct DnsLookupResult {
     bool failed = false;
     bool ipv4_failed = false, ipv6_failed = false;
     bool ipv4_retryable = false, ipv6_retryable = false;
+    // Attempted describes this call; deadline flags for unselected families are preserved.
+    bool ipv4_attempted = false, ipv6_attempted = false;
+    bool ipv4_deadline_exceeded = false, ipv6_deadline_exceeded = false;
     std::string ipv4_error, ipv6_error;
     std::string error;
 };
@@ -40,7 +43,8 @@ public:
     // retain any addresses collected from the other family.
     std::unordered_map<std::string, DnsLookupResult>
     resolve_batch_checked(const std::vector<std::string>& hosts, int concurrency = 800,
-                          int timeout_ms = 30000, int query_timeout_ms = 500);
+                          int timeout_ms = 30000, int query_timeout_ms = 500,
+                          const std::unordered_map<std::string, DnsLookupResult>* retry_previous = nullptr);
 
     void set_concurrency(int c);
     void clear_cache();
@@ -79,6 +83,12 @@ private:
     run_ares_batch(const std::vector<std::string>& hosts,
                    int concurrency,
                    int deadline_s);
+
+    std::unordered_map<std::string, DnsLookupResult>
+    resolve_batch_checked_impl(const std::vector<std::string>& hosts, int concurrency,
+                               int timeout_ms, int query_timeout_ms,
+                               const std::unordered_map<std::string, DnsLookupResult>* retry_previous,
+                               int resolvers_per_channel);
 
     bool detect_io_uring();
 };
