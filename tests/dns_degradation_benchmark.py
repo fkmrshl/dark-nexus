@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
+from benchmark_process import run_measured
 
 
 def fixtures(binary):
@@ -63,11 +63,10 @@ def run_case(binary, fixture, name, options, legacy):
                        '--no-enrich', '--no-permutations', '--no-deep-passive', '--quiet',
                        '--dns-concurrency', str(options['concurrency']), '--dns-timeout', str(options['timeout']),
                        '--dns-retries', '1', '--output', '-', '--format', 'json']
-            began = time.monotonic()
-            process = subprocess.run(command, cwd=root, env=environment, capture_output=True,
-                                     text=True, stdin=subprocess.DEVNULL, timeout=240)
-            elapsed = time.monotonic() - began
+            process = run_measured(command, cwd=root, env=environment, timeout=240)
+            elapsed = process.elapsed_seconds
             report = json.loads(process.stdout)
+            assert process.memory_samples > 0 and process.peak_rss_kib > 0
             assert process.returncode in (0, 1), (process.returncode, process.stderr)
             assert not dns.errors, dns.errors
             assert proxy.requests and all(line == 'CONNECT crt.sh:443 HTTP/1.1' for line in proxy.requests), proxy.requests
@@ -94,7 +93,8 @@ def run_case(binary, fixture, name, options, legacy):
                     assert tail['sub'] == f"bench{options['count'] - 1}.example.test"
                     assert tail['ips'] == ['192.0.2.20'] and tail['ipv6'] == ['2001:db8::20']
                     assert all(queried[(f'bench{i}.example.test', 1)] == 1 for i in range(options['count']))
-            return dict(case=name, options=options, elapsed_seconds=round(elapsed, 3),
+            return dict(case=name, options=options, elapsed_seconds=elapsed, peak_rss_kib=process.peak_rss_kib,
+                        memory_samples=process.memory_samples, wait4_peak_rss_kib=process.wait4_peak_rss_kib,
                         status=report['status'], resolved=len(report['subdomains']), query_packets=sum(queried.values()),
                         unique_family_queries=len(queried), expected_family_queries=options['count'] * 2,
                         dns=stats, errors=report['errors'])
@@ -110,6 +110,8 @@ def main():
     parser.add_argument('--legacy', action='store_true', help='record baseline incompleteness without new-policy assertions')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if not __debug__:
+        parser.error('fixture assertions require Python without -O/PYTHONOPTIMIZE')
     if os.geteuid() == 0:
         parser.error('run as an unprivileged user; no root is needed for loopback fixtures')
     binary = args.binary.resolve(strict=True)

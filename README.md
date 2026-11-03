@@ -4,7 +4,21 @@ Network reconnaissance and infrastructure analysis from a single C++17 command-l
 
 Explicit flags, module-specific help, and JSON, CSV, or text reports. Run one module per invocation; running without arguments shows help.
 
-[CLI reference](docs/cli.md) · [Module guide](#modules) · [License](LICENSE)
+[CLI reference](docs/cli.md) · [Module guide](#modules) · [Benchmarks](docs/benchmarks/subdomain.md) · [License](LICENSE)
+
+## Subdomain benchmarks
+
+Repeated local-fixture measurements on an Intel Core i5-13420H, C++17 Release build:
+
+| Workload | Median result | Verified work |
+| --- | --- | --- |
+| DNS-only CLI, 10,000 candidate names | **179 ms · 55.8k names/s** | All 20,000 A/AAAA queries; known tail record found |
+| JS discovery, four workers | **493 ms · 3.58× speedup over one worker** | 32 HTML pages, 50 scripts, 50 candidate names |
+| JS discovery with cached HTML, four workers | **316 ms** | 50 scripts, 50 candidate names; cache population excluded |
+
+Five measured runs after warm-up; medians shown. DNS uses predominantly negative loopback replies and disables web enrichment. JS requests have a controlled 20 ms service delay. Median sampled DNS-process peak RSS is **17.5 MiB**. The report also includes delayed/lossy/unavailable DNS cases, baseline comparisons and every measured run.
+
+[Full benchmark, methodology and raw data](docs/benchmarks/subdomain.md). Real Internet deep-scan time depends on DNS, passive providers, target services and wordlist size.
 
 ## Install
 

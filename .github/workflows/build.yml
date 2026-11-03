@@ -79,6 +79,9 @@ jobs:
             cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
             cmake --build build --parallel 2
             ctest --test-dir build --output-on-failure --timeout 120
+            cmake --build build --target subdomain_js_benchmark --parallel 2
+            python3 tests/subdomain_js_benchmark.py ./build/subdomain_js_benchmark --repetitions 1 --warmups 0 --output build/js-benchmark-smoke.json
+            python3 tests/dns_degradation_benchmark.py ./build/dark_nexus --cases healthy loss --output build/dns-benchmark-smoke.json
             ./build/dark_nexus doctor
             ./build/dark_nexus doctor --json - > build/doctor.json
             python3 -c "import json; r=json.load(open(\"build/doctor.json\")); assert r[\"status\"] != \"fail\""

@@ -126,6 +126,12 @@ if(BUILD_TESTING)
     target_link_libraries(output_tests PRIVATE c-ares::cares_static nlohmann_json::nlohmann_json)
     add_test(NAME report_output COMMAND output_tests)
     if(Python3_Interpreter_FOUND)
+        add_executable(subdomain_js_benchmark EXCLUDE_FROM_ALL tests/subdomain_js_benchmark.cpp
+            src/subdomain_js.cpp src/subdomain_generate.cpp src/subdomain_http.cpp src/globals.cpp src/environment.cpp)
+        target_include_directories(subdomain_js_benchmark PRIVATE include src)
+        target_compile_options(subdomain_js_benchmark PRIVATE -O2 -Wall -Wextra -Wpedantic)
+        target_link_libraries(subdomain_js_benchmark PRIVATE c-ares::cares_static
+            ${DARK_NEXUS_CURL} nlohmann_json::nlohmann_json pthread)
         add_executable(subdomain_http_fixture tests/subdomain_http_fixture.cpp src/subdomain_http.cpp src/globals.cpp)
         target_link_options(subdomain_http_fixture PRIVATE -Wl,--wrap=curl_easy_init)
         target_include_directories(subdomain_http_fixture PRIVATE include src)
