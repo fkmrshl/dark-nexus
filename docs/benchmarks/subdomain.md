@@ -43,7 +43,7 @@ Four workers deliver **3.58× the throughput** of one worker in the uncached JS 
 
 | Item | Recorded value |
 | --- | --- |
-| CPU | 13th Gen Intel(R) Core(TM) i5-13420H (12 logical CPUs) |
+| CPU | 13th Gen Intel(R) Core(TM) i5-13500HX|
 | OS/kernel | CachyOS, Linux 7.3.0-4-cachyos, x86_64 |
 | OS-reported memory | 15.31 GiB |
 | Compiler | c++ (GCC) 16.2.1 20260810 |
