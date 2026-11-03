@@ -48,13 +48,12 @@ def release_build(binary):
             'release_linker_flags': values.get('CMAKE_EXE_LINKER_FLAGS_RELEASE', '')}
 
 
-def host_info():
-    cpu = next((line.split(':', 1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines()
-                if line.startswith('model name')), 'unknown')
+def host_info(cpu_label=None):
     memory = next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines()
                   if line.startswith('MemTotal:'))
     return {'system': platform.system(), 'kernel': platform.release(), 'architecture': platform.machine(),
-            'cpu': cpu, 'logical_cpus': os.cpu_count(), 'memory_kib': int(memory),
+            'cpu': cpu_label, 'cpu_source': 'owner-provided public label' if cpu_label else 'withheld',
+            'logical_cpus': os.cpu_count(), 'memory_kib': int(memory),
             'python': platform.python_version(),
             'compiler': subprocess.check_output(['c++', '--version'], text=True).splitlines()[0],
             'libraries': {name: subprocess.check_output(['pkg-config', '--modversion', name], text=True).strip()
@@ -69,6 +68,7 @@ def main():
     parser.add_argument('--js-binary', type=Path, required=True)
     parser.add_argument('--current-revision', required=True)
     parser.add_argument('--baseline-revision', required=True)
+    parser.add_argument('--cpu-label', help='optional owner-provided public CPU label; model omitted by default')
     parser.add_argument('--quick-repetitions', type=int, default=5)
     parser.add_argument('--stress-repetitions', type=int, default=3)
     parser.add_argument('--js-repetitions', type=int, default=5)
@@ -86,7 +86,7 @@ def main():
     harness_files = ['benchmark_process.py', 'dns_degradation_benchmark.py', 'subdomain_benchmark.py',
                      'subdomain_cli_integration.py', 'subdomain_js_benchmark.py', 'subdomain_js_benchmark.cpp']
     data = {'schema': 'dark-nexus-local-benchmark/1', 'started_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'host': host_info(), 'build': {'cmake_type': 'Release', 'app_optimization': '-O2',
+            'host': host_info(args.cpu_label), 'build': {'cmake_type': 'Release', 'app_optimization': '-O2',
                                         'js_optimization': '-O2', 'cxx_standard': 17, 'sanitizers': False},
             'products': {key: {'revision': getattr(args, key + '_revision'), 'binary_sha256': digest(binary),
                                'build': release_build(binary)}

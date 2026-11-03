@@ -59,7 +59,7 @@ The delayed case deliberately exceeds the old 30-second queue deadline. It can t
 
 ## Validation results
 
-Measured on CachyOS, Linux 7.3.0-4, Intel Core i5-13420H, with the ordinary CMake app target (`-O2`). Baseline and corrected runs were serial, one measured run per case. Process startup and automatic exports are included; local proxy rejection replaces passive-provider latency. This is a deterministic local stress comparison, not a public-domain scan benchmark.
+Measured on CachyOS, Linux 7.3.0-4, with the ordinary CMake app target (`-O2`). Public CPU label supplied by the owner after measurement: Intel Core i5-13500HX; this label is not independently verified benchmark hardware metadata. Baseline and corrected runs were serial, one measured run per case. Process startup and automatic exports are included; local proxy rejection replaces passive-provider latency. This is a deterministic local stress comparison, not a public-domain scan benchmark.
 
 | Scenario | Baseline seconds | Corrected seconds | Baseline unique A/AAAA queries | Corrected unique A/AAAA queries | Known tail record |
 | --- | ---: | ---: | ---: | ---: | --- |

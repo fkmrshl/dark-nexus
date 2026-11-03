@@ -43,7 +43,8 @@ Four workers deliver **3.58× the throughput** of one worker in the uncached JS 
 
 | Item | Recorded value |
 | --- | --- |
-| CPU | 13th Gen Intel(R) Core(TM) i5-13500HX|
+| Public CPU label (owner-provided) | Intel Core i5-13500HX |
+| Observed logical CPUs | 12 |
 | OS/kernel | CachyOS, Linux 7.3.0-4-cachyos, x86_64 |
 | OS-reported memory | 15.31 GiB |
 | Compiler | c++ (GCC) 16.2.1 20260810 |
@@ -51,7 +52,9 @@ Four workers deliver **3.58× the throughput** of one worker in the uncached JS 
 | c-ares | 1.28.1 (CMake pinned source) |
 | libcurl / OpenSSL / liburing | 8.23.0 / 3.6.5 / 2.15 |
 
-CMake Release supplies `-O3 -DNDEBUG`; the app and JS harness append `-O2`, which selects their optimization level. Dependencies use their Release configuration. Both product builds use matching flags. Binary SHA-256 values, harness hashes and per-run diagnostics are in the raw JSON.
+The CPU label was supplied by the owner after the run and is not independently verified benchmark hardware metadata. Timings, memory measurements and the observed logical CPU count are unchanged. Future reports omit the CPU model by default; use `--cpu-label` to supply an optional public label.
+
+CMake Release supplies `-O3 -DNDEBUG`; the app and JS harness append `-O2`, which selects their optimization level. Dependencies use their Release configuration. Both product builds use matching flags. Binary SHA-256 values, harness hashes and per-run diagnostics are in the raw JSON; these hashes describe the harness used at measurement time, before the metadata privacy update.
 
 The Release build and all **19 CTest targets** pass locally. Benchmark helper checks cover capture, nonzero exit, timeout cleanup and memory observations. DNS runs check query coverage and canonical exports; JS runs check every requested page/script and all 50 candidate names. Independent review of the harness found no remaining defects after corrections.
 

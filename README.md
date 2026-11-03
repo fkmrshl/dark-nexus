@@ -8,7 +8,7 @@ Explicit flags, module-specific help, and JSON, CSV, or text reports. Run one mo
 
 ## Subdomain benchmarks
 
-Repeated local-fixture measurements on an Intel Core i5-13420H, C++17 Release build:
+Repeated local-fixture measurements, C++17 Release build. Public CPU label supplied by the owner: Intel Core i5-13500HX; this label is not independently verified benchmark hardware metadata.
 
 | Workload | Median result | Verified work |
 | --- | --- | --- |
